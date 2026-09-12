@@ -124,6 +124,61 @@ impl PakConfig {
     pub fn save(&self, path: &Path) -> Result<()> {
         write_atomic(path, &self.to_yaml())
     }
+
+    /// Bringt die Konfiguration mit dem tatsächlichen Verzeichnisinhalt in
+    /// Einklang. Reihenfolge und Aktivierungszustand bestehender Einträge
+    /// bleiben unangetastet.
+    pub fn reconcile(&mut self, present: &[String]) -> Reconciliation {
+        let vorhanden: std::collections::HashSet<&str> =
+            present.iter().map(String::as_str).collect();
+
+        let mut removed = Vec::new();
+        self.entries.retain(|e| {
+            if vorhanden.contains(e.pak.as_str()) {
+                true
+            } else {
+                removed.push(e.pak.clone());
+                false
+            }
+        });
+
+        // `present` ist eine `&[String]`, kein Set: ein Verzeichnis kann
+        // denselben Namen zwar nicht doppelt enthalten, ein Aufrufer könnte
+        // ihn aber doppelt melden. `bekannt` wird deshalb beim Aufbau von
+        // `added` laufend erweitert (nicht nur einmal vorab berechnet), damit
+        // ein wiederholter Name nur einmal aufgenommen wird.
+        let mut bekannt: std::collections::HashSet<&str> =
+            self.entries.iter().map(|e| e.pak.as_str()).collect();
+
+        let mut added: Vec<String> = Vec::new();
+        for pak in present {
+            if bekannt.insert(pak.as_str()) {
+                added.push(pak.clone());
+            }
+        }
+        added.sort();
+
+        for pak in &added {
+            self.entries.push(PakEntry { pak: pak.clone(), disabled: false });
+        }
+
+        Reconciliation { added, removed }
+    }
+}
+
+/// Was ein Abgleich zwischen Verzeichnis und Konfiguration verändert hat.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Reconciliation {
+    /// Paks, die im Verzeichnis lagen, aber nicht in der Konfiguration standen.
+    pub added: Vec<String>,
+    /// Einträge, deren Datei fehlt.
+    pub removed: Vec<String>,
+}
+
+impl Reconciliation {
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.removed.is_empty()
+    }
 }
 
 /// Setzt einen Dateinamen in Anführungszeichen, wenn er sonst als anderes
@@ -196,6 +251,97 @@ mod tests {
 
     fn eintrag(pak: &str, disabled: bool) -> PakEntry {
         PakEntry { pak: pak.to_string(), disabled }
+    }
+
+    fn namen(cfg: &PakConfig) -> Vec<&str> {
+        cfg.entries.iter().map(|e| e.pak.as_str()).collect()
+    }
+
+    #[test]
+    fn ergaenzt_unbekannte_paks_aktiv_am_ende() {
+        // Nicht aufgeführte Paks lädt die Engine ohnehin – also aktiv aufnehmen,
+        // damit sie steuerbar werden.
+        let mut cfg = PakConfig { entries: vec![eintrag("a.pak", false)] };
+        let ergebnis = cfg.reconcile(&["a.pak".into(), "neu.pak".into()]);
+
+        assert_eq!(namen(&cfg), vec!["a.pak", "neu.pak"]);
+        assert!(!cfg.entries[1].disabled);
+        assert_eq!(ergebnis.added, vec!["neu.pak"]);
+        assert!(ergebnis.removed.is_empty());
+    }
+
+    #[test]
+    fn entfernt_eintraege_ohne_datei() {
+        let mut cfg = PakConfig {
+            entries: vec![eintrag("a.pak", false), eintrag("weg.pak", true)],
+        };
+        let ergebnis = cfg.reconcile(&["a.pak".into()]);
+
+        assert_eq!(namen(&cfg), vec!["a.pak"]);
+        assert_eq!(ergebnis.removed, vec!["weg.pak"]);
+    }
+
+    #[test]
+    fn erhaelt_reihenfolge_und_zustand_vorhandener_eintraege() {
+        let mut cfg = PakConfig {
+            entries: vec![eintrag("z.pak", true), eintrag("a.pak", false)],
+        };
+        cfg.reconcile(&["a.pak".into(), "z.pak".into()]);
+
+        assert_eq!(namen(&cfg), vec!["z.pak", "a.pak"], "Reihenfolge darf sich nicht ändern");
+        assert!(cfg.entries[0].disabled, "Deaktivierung darf nicht verloren gehen");
+    }
+
+    #[test]
+    fn ergaenzt_mehrere_neue_paks_alphabetisch() {
+        let mut cfg = PakConfig::default();
+        let ergebnis = cfg.reconcile(&["b.pak".into(), "a.pak".into()]);
+
+        assert_eq!(namen(&cfg), vec!["a.pak", "b.pak"]);
+        assert_eq!(ergebnis.added, vec!["a.pak", "b.pak"]);
+    }
+
+    #[test]
+    fn abgleich_ohne_aenderung_meldet_nichts() {
+        let mut cfg = PakConfig { entries: vec![eintrag("a.pak", false)] };
+        let ergebnis = cfg.reconcile(&["a.pak".into()]);
+
+        assert!(ergebnis.is_empty());
+    }
+
+    /// Ein Verzeichnis kann denselben Dateinamen nicht doppelt enthalten,
+    /// aber `present` ist ein `&[String]`, kein Set – ein Aufrufer könnte
+    /// (versehentlich, z. B. durch doppeltes Einlesen) denselben Namen
+    /// zweimal übergeben. Ohne Deduplizierung würde `reconcile` daraus zwei
+    /// identische Einträge in der Konfiguration machen – stille
+    /// Datenkorruption.
+    #[test]
+    fn dedupliziert_mehrfach_gemeldete_dateinamen() {
+        let mut cfg = PakConfig::default();
+        let ergebnis = cfg.reconcile(&["a.pak".into(), "a.pak".into()]);
+
+        assert_eq!(namen(&cfg), vec!["a.pak"], "darf keinen doppelten Eintrag erzeugen");
+        assert_eq!(ergebnis.added, vec!["a.pak"]);
+    }
+
+    /// Eine von Hand bearbeitete Konfiguration kann bereits einen Pak-Namen
+    /// doppelt enthalten. `reconcile` darf bestehende Einträge nicht
+    /// zusammenführen oder umordnen (siehe `erhaelt_reihenfolge_...`) – ein
+    /// bereits vorhandenes Duplikat bleibt also unangetastet bestehen, statt
+    /// dass reconcile es „repariert“ oder ein weiteres Duplikat hinzufügt.
+    #[test]
+    fn laesst_bereits_vorhandene_duplikate_in_der_konfiguration_unangetastet() {
+        let mut cfg = PakConfig {
+            entries: vec![eintrag("a.pak", false), eintrag("a.pak", true)],
+        };
+        let ergebnis = cfg.reconcile(&["a.pak".into()]);
+
+        assert_eq!(
+            cfg.entries,
+            vec![eintrag("a.pak", false), eintrag("a.pak", true)],
+            "bestehende Duplikate werden weder entfernt noch verändert"
+        );
+        assert!(ergebnis.is_empty(), "ein bereits bekannter Name ist kein neuer Fund");
     }
 
     #[test]
