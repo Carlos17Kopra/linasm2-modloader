@@ -1,5 +1,6 @@
 pub mod atomic;
 pub mod error;
+pub mod pak_config;
 
 pub use error::{Error, Result};
 
