@@ -129,12 +129,12 @@ impl PakConfig {
     /// Einklang. Reihenfolge und Aktivierungszustand bestehender Einträge
     /// bleiben unangetastet.
     pub fn reconcile(&mut self, present: &[String]) -> Reconciliation {
-        let vorhanden: std::collections::HashSet<&str> =
+        let present_set: std::collections::HashSet<&str> =
             present.iter().map(String::as_str).collect();
 
         let mut removed = Vec::new();
         self.entries.retain(|e| {
-            if vorhanden.contains(e.pak.as_str()) {
+            if present_set.contains(e.pak.as_str()) {
                 true
             } else {
                 removed.push(e.pak.clone());
@@ -144,15 +144,15 @@ impl PakConfig {
 
         // `present` ist eine `&[String]`, kein Set: ein Verzeichnis kann
         // denselben Namen zwar nicht doppelt enthalten, ein Aufrufer könnte
-        // ihn aber doppelt melden. `bekannt` wird deshalb beim Aufbau von
+        // ihn aber doppelt melden. `known` wird deshalb beim Aufbau von
         // `added` laufend erweitert (nicht nur einmal vorab berechnet), damit
         // ein wiederholter Name nur einmal aufgenommen wird.
-        let mut bekannt: std::collections::HashSet<&str> =
+        let mut known: std::collections::HashSet<&str> =
             self.entries.iter().map(|e| e.pak.as_str()).collect();
 
         let mut added: Vec<String> = Vec::new();
         for pak in present {
-            if bekannt.insert(pak.as_str()) {
+            if known.insert(pak.as_str()) {
                 added.push(pak.clone());
             }
         }
@@ -195,7 +195,7 @@ impl Reconciliation {
 /// (das erfasst auch eingebettete Zeilenumbrüche, die als eigenständiges
 /// Plain-Scalar zu einem Leerzeichen gefaltet würden).
 fn quote_if_needed(name: &str) -> String {
-    let braucht_quotes = name.is_empty()
+    let needs_quotes = name.is_empty()
         || name.contains(':')
         || name.contains('#')
         || name.contains('"')
@@ -204,7 +204,7 @@ fn quote_if_needed(name: &str) -> String {
         || name.trim() != name
         || resolves_to_non_string_scalar(name);
 
-    if braucht_quotes {
+    if needs_quotes {
         format!(
             "\"{}\"",
             name.replace('\\', "\\\\")
@@ -249,64 +249,64 @@ fn describe_yaml_scalar(value: &Yaml) -> String {
 mod tests {
     use super::*;
 
-    fn eintrag(pak: &str, disabled: bool) -> PakEntry {
+    fn entry(pak: &str, disabled: bool) -> PakEntry {
         PakEntry { pak: pak.to_string(), disabled }
     }
 
-    fn namen(cfg: &PakConfig) -> Vec<&str> {
+    fn names(cfg: &PakConfig) -> Vec<&str> {
         cfg.entries.iter().map(|e| e.pak.as_str()).collect()
     }
 
     #[test]
-    fn ergaenzt_unbekannte_paks_aktiv_am_ende() {
+    fn adds_unknown_paks_as_enabled_at_end() {
         // Nicht aufgeführte Paks lädt die Engine ohnehin – also aktiv aufnehmen,
         // damit sie steuerbar werden.
-        let mut cfg = PakConfig { entries: vec![eintrag("a.pak", false)] };
-        let ergebnis = cfg.reconcile(&["a.pak".into(), "neu.pak".into()]);
+        let mut cfg = PakConfig { entries: vec![entry("a.pak", false)] };
+        let result = cfg.reconcile(&["a.pak".into(), "neu.pak".into()]);
 
-        assert_eq!(namen(&cfg), vec!["a.pak", "neu.pak"]);
+        assert_eq!(names(&cfg), vec!["a.pak", "neu.pak"]);
         assert!(!cfg.entries[1].disabled);
-        assert_eq!(ergebnis.added, vec!["neu.pak"]);
-        assert!(ergebnis.removed.is_empty());
+        assert_eq!(result.added, vec!["neu.pak"]);
+        assert!(result.removed.is_empty());
     }
 
     #[test]
-    fn entfernt_eintraege_ohne_datei() {
+    fn removes_entries_without_file() {
         let mut cfg = PakConfig {
-            entries: vec![eintrag("a.pak", false), eintrag("weg.pak", true)],
+            entries: vec![entry("a.pak", false), entry("weg.pak", true)],
         };
-        let ergebnis = cfg.reconcile(&["a.pak".into()]);
+        let result = cfg.reconcile(&["a.pak".into()]);
 
-        assert_eq!(namen(&cfg), vec!["a.pak"]);
-        assert_eq!(ergebnis.removed, vec!["weg.pak"]);
+        assert_eq!(names(&cfg), vec!["a.pak"]);
+        assert_eq!(result.removed, vec!["weg.pak"]);
     }
 
     #[test]
-    fn erhaelt_reihenfolge_und_zustand_vorhandener_eintraege() {
+    fn keeps_order_and_state_of_existing_entries() {
         let mut cfg = PakConfig {
-            entries: vec![eintrag("z.pak", true), eintrag("a.pak", false)],
+            entries: vec![entry("z.pak", true), entry("a.pak", false)],
         };
         cfg.reconcile(&["a.pak".into(), "z.pak".into()]);
 
-        assert_eq!(namen(&cfg), vec!["z.pak", "a.pak"], "Reihenfolge darf sich nicht ändern");
+        assert_eq!(names(&cfg), vec!["z.pak", "a.pak"], "Reihenfolge darf sich nicht ändern");
         assert!(cfg.entries[0].disabled, "Deaktivierung darf nicht verloren gehen");
     }
 
     #[test]
-    fn ergaenzt_mehrere_neue_paks_alphabetisch() {
+    fn adds_multiple_new_paks_alphabetically() {
         let mut cfg = PakConfig::default();
-        let ergebnis = cfg.reconcile(&["b.pak".into(), "a.pak".into()]);
+        let result = cfg.reconcile(&["b.pak".into(), "a.pak".into()]);
 
-        assert_eq!(namen(&cfg), vec!["a.pak", "b.pak"]);
-        assert_eq!(ergebnis.added, vec!["a.pak", "b.pak"]);
+        assert_eq!(names(&cfg), vec!["a.pak", "b.pak"]);
+        assert_eq!(result.added, vec!["a.pak", "b.pak"]);
     }
 
     #[test]
-    fn abgleich_ohne_aenderung_meldet_nichts() {
-        let mut cfg = PakConfig { entries: vec![eintrag("a.pak", false)] };
-        let ergebnis = cfg.reconcile(&["a.pak".into()]);
+    fn reconcile_without_change_reports_nothing() {
+        let mut cfg = PakConfig { entries: vec![entry("a.pak", false)] };
+        let result = cfg.reconcile(&["a.pak".into()]);
 
-        assert!(ergebnis.is_empty());
+        assert!(result.is_empty());
     }
 
     /// Ein Verzeichnis kann denselben Dateinamen nicht doppelt enthalten,
@@ -316,196 +316,196 @@ mod tests {
     /// identische Einträge in der Konfiguration machen – stille
     /// Datenkorruption.
     #[test]
-    fn dedupliziert_mehrfach_gemeldete_dateinamen() {
+    fn deduplicates_repeatedly_reported_filenames() {
         let mut cfg = PakConfig::default();
-        let ergebnis = cfg.reconcile(&["a.pak".into(), "a.pak".into()]);
+        let result = cfg.reconcile(&["a.pak".into(), "a.pak".into()]);
 
-        assert_eq!(namen(&cfg), vec!["a.pak"], "darf keinen doppelten Eintrag erzeugen");
-        assert_eq!(ergebnis.added, vec!["a.pak"]);
+        assert_eq!(names(&cfg), vec!["a.pak"], "darf keinen doppelten Eintrag erzeugen");
+        assert_eq!(result.added, vec!["a.pak"]);
     }
 
     /// Eine von Hand bearbeitete Konfiguration kann bereits einen Pak-Namen
     /// doppelt enthalten. `reconcile` darf bestehende Einträge nicht
-    /// zusammenführen oder umordnen (siehe `erhaelt_reihenfolge_...`) – ein
+    /// zusammenführen oder umordnen (siehe `keeps_order_and_state_of_existing_entries`) – ein
     /// bereits vorhandenes Duplikat bleibt also unangetastet bestehen, statt
     /// dass reconcile es „repariert“ oder ein weiteres Duplikat hinzufügt.
     #[test]
-    fn laesst_bereits_vorhandene_duplikate_in_der_konfiguration_unangetastet() {
+    fn leaves_existing_duplicates_in_config_untouched() {
         let mut cfg = PakConfig {
-            entries: vec![eintrag("a.pak", false), eintrag("a.pak", true)],
+            entries: vec![entry("a.pak", false), entry("a.pak", true)],
         };
-        let ergebnis = cfg.reconcile(&["a.pak".into()]);
+        let result = cfg.reconcile(&["a.pak".into()]);
 
         assert_eq!(
             cfg.entries,
-            vec![eintrag("a.pak", false), eintrag("a.pak", true)],
+            vec![entry("a.pak", false), entry("a.pak", true)],
             "bestehende Duplikate werden weder entfernt noch verändert"
         );
-        assert!(ergebnis.is_empty(), "ein bereits bekannter Name ist kein neuer Fund");
+        assert!(result.is_empty(), "ein bereits bekannter Name ist kein neuer Fund");
     }
 
     #[test]
-    fn liest_das_beispiel_aus_der_engine_readme() {
+    fn reads_the_example_from_the_engine_readme() {
         let text = "- pak: mod_a.pak\n- pak: mod_b.pak\n  disabled: true\n";
         let cfg = PakConfig::parse(text).unwrap();
-        assert_eq!(cfg.entries, vec![eintrag("mod_a.pak", false), eintrag("mod_b.pak", true)]);
+        assert_eq!(cfg.entries, vec![entry("mod_a.pak", false), entry("mod_b.pak", true)]);
     }
 
     #[test]
-    fn liest_die_echte_config_des_referenzsystems() {
+    fn reads_the_real_config_from_the_reference_system() {
         let cfg = PakConfig::parse("- pak: wa_astartes_14_1.pak\n").unwrap();
-        assert_eq!(cfg.entries, vec![eintrag("wa_astartes_14_1.pak", false)]);
+        assert_eq!(cfg.entries, vec![entry("wa_astartes_14_1.pak", false)]);
     }
 
     #[test]
-    fn behaelt_die_reihenfolge_bei() {
+    fn keeps_the_order() {
         let text = "- pak: z.pak\n- pak: a.pak\n- pak: m.pak\n";
         let cfg = PakConfig::parse(text).unwrap();
-        let namen: Vec<&str> = cfg.entries.iter().map(|e| e.pak.as_str()).collect();
-        assert_eq!(namen, vec!["z.pak", "a.pak", "m.pak"], "Reihenfolge ist die Ladereihenfolge");
+        let names: Vec<&str> = cfg.entries.iter().map(|e| e.pak.as_str()).collect();
+        assert_eq!(names, vec!["z.pak", "a.pak", "m.pak"], "Reihenfolge ist die Ladereihenfolge");
     }
 
     #[test]
-    fn leere_datei_ergibt_leere_konfiguration() {
+    fn empty_file_yields_empty_config() {
         assert_eq!(PakConfig::parse("").unwrap(), PakConfig::default());
         assert_eq!(PakConfig::parse("\n\n").unwrap(), PakConfig::default());
         assert_eq!(PakConfig::parse("[]\n").unwrap(), PakConfig::default());
     }
 
     #[test]
-    fn toleriert_kommentare_und_anfuehrungszeichen() {
+    fn tolerates_comments_and_quotes() {
         let text = "# von Hand bearbeitet\n- pak: \"mit leerzeichen.pak\"\n  disabled: false\n";
         let cfg = PakConfig::parse(text).unwrap();
-        assert_eq!(cfg.entries, vec![eintrag("mit leerzeichen.pak", false)]);
+        assert_eq!(cfg.entries, vec![entry("mit leerzeichen.pak", false)]);
     }
 
     #[test]
-    fn weist_nicht_listenfoermige_wurzel_zurueck() {
-        let fehler = PakConfig::parse("pak: a.pak\n").unwrap_err();
-        assert!(matches!(fehler, Error::PakConfig(_)));
+    fn rejects_non_list_root() {
+        let error = PakConfig::parse("pak: a.pak\n").unwrap_err();
+        assert!(matches!(error, Error::PakConfig(_)));
     }
 
     #[test]
-    fn weist_eintrag_ohne_pak_schluessel_zurueck() {
-        let fehler = PakConfig::parse("- disabled: true\n").unwrap_err();
-        assert!(matches!(fehler, Error::PakConfig(_)));
+    fn rejects_entry_without_pak_key() {
+        let error = PakConfig::parse("- disabled: true\n").unwrap_err();
+        assert!(matches!(error, Error::PakConfig(_)));
     }
 
     #[test]
-    fn enabled_filtert_deaktivierte_heraus() {
+    fn enabled_filters_out_disabled() {
         let cfg = PakConfig::parse("- pak: a.pak\n- pak: b.pak\n  disabled: true\n- pak: c.pak\n").unwrap();
-        let namen: Vec<&str> = cfg.enabled().map(|e| e.pak.as_str()).collect();
-        assert_eq!(namen, vec!["a.pak", "c.pak"]);
+        let names: Vec<&str> = cfg.enabled().map(|e| e.pak.as_str()).collect();
+        assert_eq!(names, vec!["a.pak", "c.pak"]);
     }
 
     #[test]
-    fn meldet_yaml_syntaxfehler_auf_deutsch_mit_position() {
+    fn reports_yaml_syntax_error_in_german_with_position() {
         // doppelter Schlüssel in derselben Zuordnung ist laut YAML-Spezifikation
         // ein Scanner-Fehler in yaml-rust2, nicht nur ein Überschreiben.
         let text = "- pak: a.pak\n  pak: b.pak\n";
-        let fehler = PakConfig::parse(text).unwrap_err();
-        let Error::PakConfig(meldung) = fehler else {
-            panic!("erwartete Error::PakConfig, bekam {fehler:?}");
+        let error = PakConfig::parse(text).unwrap_err();
+        let Error::PakConfig(message) = error else {
+            panic!("erwartete Error::PakConfig, bekam {error:?}");
         };
-        for englisches_fragment in ["duplicated key", "mapping", "byte", "at byte"] {
+        for english_fragment in ["duplicated key", "mapping", "byte", "at byte"] {
             assert!(
-                !meldung.contains(englisches_fragment),
+                !message.contains(english_fragment),
                 "Meldung darf keinen rohen englischen Scanner-Text enthalten \
-                 (gefunden: {englisches_fragment:?}): {meldung:?}"
+                 (gefunden: {english_fragment:?}): {message:?}"
             );
         }
         assert!(
-            meldung.contains("Zeile") && meldung.contains("Spalte"),
-            "Meldung soll die Position benennen: {meldung:?}"
+            message.contains("Zeile") && message.contains("Spalte"),
+            "Meldung soll die Position benennen: {message:?}"
         );
     }
 
     #[test]
-    fn weist_nicht_booleschen_disabled_wert_zurueck() {
+    fn rejects_non_boolean_disabled_value() {
         for text in [
             "- pak: a.pak\n  disabled: yes\n",
             "- pak: a.pak\n  disabled: on\n",
             "- pak: a.pak\n  disabled: 1\n",
             "- pak: a.pak\n  disabled: \"true\"\n",
         ] {
-            let fehler = PakConfig::parse(text).unwrap_err();
-            let Error::PakConfig(meldung) = fehler else {
-                panic!("erwartete Error::PakConfig für {text:?}, bekam {fehler:?}");
+            let error = PakConfig::parse(text).unwrap_err();
+            let Error::PakConfig(message) = error else {
+                panic!("erwartete Error::PakConfig für {text:?}, bekam {error:?}");
             };
             assert!(
-                meldung.contains("Eintrag 1") && meldung.contains("disabled"),
-                "Meldung soll den Eintrag benennen: {meldung:?} (Eingabe: {text:?})"
+                message.contains("Eintrag 1") && message.contains("disabled"),
+                "Meldung soll den Eintrag benennen: {message:?} (Eingabe: {text:?})"
             );
         }
     }
 
     #[test]
-    fn ignoriert_utf8_bom_am_dateianfang() {
+    fn ignores_utf8_bom_at_start_of_file() {
         let text = "\u{feff}- pak: mod_a.pak\n- pak: mod_b.pak\n  disabled: true\n";
         let cfg = PakConfig::parse(text).unwrap();
-        assert_eq!(cfg.entries, vec![eintrag("mod_a.pak", false), eintrag("mod_b.pak", true)]);
+        assert_eq!(cfg.entries, vec![entry("mod_a.pak", false), entry("mod_b.pak", true)]);
     }
 
     #[test]
-    fn bom_allein_ergibt_leere_konfiguration() {
+    fn bom_alone_yields_empty_config() {
         assert_eq!(PakConfig::parse("\u{feff}").unwrap(), PakConfig::default());
     }
 
     #[test]
-    fn schreibt_das_format_der_engine_readme() {
+    fn writes_the_format_from_the_engine_readme() {
         let cfg = PakConfig {
-            entries: vec![eintrag("mod_a.pak", false), eintrag("mod_b.pak", true)],
+            entries: vec![entry("mod_a.pak", false), entry("mod_b.pak", true)],
         };
         assert_eq!(cfg.to_yaml(), "- pak: mod_a.pak\n- pak: mod_b.pak\n  disabled: true\n");
     }
 
     #[test]
-    fn laesst_disabled_bei_aktiven_eintraegen_weg() {
-        let cfg = PakConfig { entries: vec![eintrag("a.pak", false)] };
+    fn omits_disabled_for_active_entries() {
+        let cfg = PakConfig { entries: vec![entry("a.pak", false)] };
         assert_eq!(cfg.to_yaml(), "- pak: a.pak\n");
     }
 
     #[test]
-    fn schreibt_leere_liste_als_gueltiges_yaml() {
+    fn writes_empty_list_as_valid_yaml() {
         // Eine leere Datei wäre YAML-Null, keine Liste. "[]" ist eindeutig.
         assert_eq!(PakConfig::default().to_yaml(), "[]\n");
     }
 
     #[test]
-    fn setzt_namen_mit_sonderzeichen_in_anfuehrungszeichen() {
-        let cfg = PakConfig { entries: vec![eintrag("mit: doppelpunkt.pak", false)] };
+    fn quotes_names_with_special_characters() {
+        let cfg = PakConfig { entries: vec![entry("mit: doppelpunkt.pak", false)] };
         assert_eq!(cfg.to_yaml(), "- pak: \"mit: doppelpunkt.pak\"\n");
     }
 
     #[test]
-    fn round_trip_erhaelt_die_konfiguration() {
+    fn round_trip_preserves_the_config() {
         let original = PakConfig {
             entries: vec![
-                eintrag("z.pak", false),
-                eintrag("mit: doppelpunkt.pak", true),
-                eintrag("a.pak", false),
+                entry("z.pak", false),
+                entry("mit: doppelpunkt.pak", true),
+                entry("a.pak", false),
             ],
         };
-        let wieder = PakConfig::parse(&original.to_yaml()).unwrap();
-        assert_eq!(wieder, original);
+        let roundtripped = PakConfig::parse(&original.to_yaml()).unwrap();
+        assert_eq!(roundtripped, original);
     }
 
     #[test]
-    fn load_bei_fehlender_datei_ergibt_leere_konfiguration() {
+    fn load_with_missing_file_yields_empty_config() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = PakConfig::load(&dir.path().join("gibt_es_nicht.yaml")).unwrap();
         assert_eq!(cfg, PakConfig::default());
     }
 
     #[test]
-    fn save_und_load_sind_zueinander_invers() {
+    fn save_and_load_are_inverses() {
         let dir = tempfile::tempdir().unwrap();
-        let pfad = dir.path().join("pak_config.yaml");
-        let cfg = PakConfig { entries: vec![eintrag("a.pak", true), eintrag("b.pak", false)] };
+        let path = dir.path().join("pak_config.yaml");
+        let cfg = PakConfig { entries: vec![entry("a.pak", true), entry("b.pak", false)] };
 
-        cfg.save(&pfad).unwrap();
+        cfg.save(&path).unwrap();
 
-        assert_eq!(PakConfig::load(&pfad).unwrap(), cfg);
+        assert_eq!(PakConfig::load(&path).unwrap(), cfg);
     }
 
     /// Namen, die keines der "offensichtlichen" Sonderzeichen enthalten,
@@ -513,14 +513,14 @@ mod tests {
     /// würden. Ohne die zusätzliche Skalar-Prüfung in `quote_if_needed`
     /// würde `parse` diese Einträge als fehlend am 'pak'-Schlüssel ablehnen.
     #[test]
-    fn rundet_namen_die_als_yaml_skalare_gelesen_wuerden() {
+    fn round_trips_names_that_would_be_read_as_yaml_scalars() {
         for name in [
             "true", "True", "TRUE", "false", "False", "FALSE", "null", "~", "123", "-123", "0",
             "0x1F", "0o17", "1.5", "-1.5", ".inf", "-.inf", ".nan",
         ] {
-            let cfg = PakConfig { entries: vec![eintrag(name, false)] };
-            let wieder = PakConfig::parse(&cfg.to_yaml()).unwrap();
-            assert_eq!(wieder, cfg, "Name {name:?} übersteht den Rundtrip nicht");
+            let cfg = PakConfig { entries: vec![entry(name, false)] };
+            let roundtripped = PakConfig::parse(&cfg.to_yaml()).unwrap();
+            assert_eq!(roundtripped, cfg, "Name {name:?} übersteht den Rundtrip nicht");
         }
     }
 
@@ -529,11 +529,11 @@ mod tests {
     /// müssen, damit sie beim Wiedereinlesen nicht die YAML-Struktur
     /// sprengen oder zu einem Leerzeichen gefaltet werden.
     #[test]
-    fn rundet_namen_mit_eingebetteten_sonderzeichen() {
+    fn round_trips_names_with_embedded_special_characters() {
         for name in ["a\nb.pak", "a\rb.pak", "a\\b.pak", "a'b.pak", "  a.pak  "] {
-            let cfg = PakConfig { entries: vec![eintrag(name, false)] };
-            let wieder = PakConfig::parse(&cfg.to_yaml()).unwrap();
-            assert_eq!(wieder, cfg, "Name {name:?} übersteht den Rundtrip nicht");
+            let cfg = PakConfig { entries: vec![entry(name, false)] };
+            let roundtripped = PakConfig::parse(&cfg.to_yaml()).unwrap();
+            assert_eq!(roundtripped, cfg, "Name {name:?} übersteht den Rundtrip nicht");
         }
     }
 }

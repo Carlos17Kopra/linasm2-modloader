@@ -28,25 +28,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schreibt_inhalt_und_hinterlaesst_keine_temp_dateien() {
+    fn writes_content_and_leaves_no_temp_files() {
         let dir = tempfile::tempdir().unwrap();
-        let ziel = dir.path().join("pak_config.yaml");
+        let target = dir.path().join("pak_config.yaml");
 
-        write_atomic(&ziel, "- pak: a.pak\n").unwrap();
+        write_atomic(&target, "- pak: a.pak\n").unwrap();
 
-        assert_eq!(std::fs::read_to_string(&ziel).unwrap(), "- pak: a.pak\n");
-        let eintraege: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
-        assert_eq!(eintraege.len(), 1, "temporäre Datei wurde nicht aufgeräumt");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "- pak: a.pak\n");
+        let entries: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(entries.len(), 1, "temporäre Datei wurde nicht aufgeräumt");
     }
 
     #[test]
-    fn ueberschreibt_vorhandene_datei_vollstaendig() {
+    fn overwrites_existing_file_completely() {
         let dir = tempfile::tempdir().unwrap();
-        let ziel = dir.path().join("pak_config.yaml");
-        std::fs::write(&ziel, "sehr langer alter Inhalt der weg muss").unwrap();
+        let target = dir.path().join("pak_config.yaml");
+        std::fs::write(&target, "sehr langer alter Inhalt der weg muss").unwrap();
 
-        write_atomic(&ziel, "kurz\n").unwrap();
+        write_atomic(&target, "kurz\n").unwrap();
 
-        assert_eq!(std::fs::read_to_string(&ziel).unwrap(), "kurz\n");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "kurz\n");
     }
 }
