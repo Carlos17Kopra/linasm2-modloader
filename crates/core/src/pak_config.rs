@@ -17,12 +17,24 @@ pub struct PakConfig {
 
 impl PakConfig {
     pub fn parse(text: &str) -> Result<Self> {
+        // Windows-Editoren (z. B. Notepad) schreiben gerne ein UTF-8-BOM voran.
+        // Ohne das zu entfernen, liest yaml-rust2 das Dokument als Hash statt
+        // als Array und die Wurzel-Prüfung unten schlägt mit einer
+        // irreführenden Meldung fehl.
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+
         if text.trim().is_empty() {
             return Ok(Self::default());
         }
 
-        let docs = YamlLoader::load_from_str(text)
-            .map_err(|e| Error::PakConfig(e.to_string()))?;
+        let docs = YamlLoader::load_from_str(text).map_err(|e| {
+            let marker = e.marker();
+            Error::PakConfig(format!(
+                "die YAML-Syntax ist ungültig (Zeile {}, Spalte {})",
+                marker.line(),
+                marker.col() + 1,
+            ))
+        })?;
 
         let Some(doc) = docs.first() else {
             return Ok(Self::default());
@@ -51,10 +63,17 @@ impl PakConfig {
                     "Eintrag {} hat keinen gültigen 'pak'-Schlüssel", i + 1
                 )))?;
 
-            let disabled = map
-                .get(&Yaml::String("disabled".into()))
-                .and_then(Yaml::as_bool)
-                .unwrap_or(false);
+            let disabled = match map.get(&Yaml::String("disabled".into())) {
+                None => false,
+                Some(value) => value.as_bool().ok_or_else(|| {
+                    Error::PakConfig(format!(
+                        "Eintrag {} hat einen ungültigen Wert für 'disabled': {} \
+                         (erwartet: true oder false)",
+                        i + 1,
+                        describe_yaml_scalar(value),
+                    ))
+                })?,
+            };
 
             entries.push(PakEntry { pak: pak.to_string(), disabled });
         }
@@ -65,6 +84,22 @@ impl PakConfig {
     /// Die aktiven Einträge in Ladereihenfolge.
     pub fn enabled(&self) -> impl Iterator<Item = &PakEntry> {
         self.entries.iter().filter(|e| !e.disabled)
+    }
+}
+
+/// Stellt einen YAML-Skalar für eine Fehlermeldung dar. `yaml-rust2` hat
+/// kein `Display` für `Yaml`, daher hier eine kleine, für Nutzer lesbare
+/// Übersetzung der gängigen Fälle mit einem `Debug`-Fallback für den Rest.
+fn describe_yaml_scalar(value: &Yaml) -> String {
+    match value {
+        Yaml::String(s) => format!("\"{s}\""),
+        Yaml::Integer(n) => n.to_string(),
+        Yaml::Real(s) => s.clone(),
+        Yaml::Boolean(b) => b.to_string(),
+        Yaml::Null => "null".to_string(),
+        Yaml::Array(_) => "eine Liste".to_string(),
+        Yaml::Hash(_) => "ein Objekt".to_string(),
+        other => format!("{other:?}"),
     }
 }
 
@@ -128,5 +163,58 @@ mod tests {
         let cfg = PakConfig::parse("- pak: a.pak\n- pak: b.pak\n  disabled: true\n- pak: c.pak\n").unwrap();
         let namen: Vec<&str> = cfg.enabled().map(|e| e.pak.as_str()).collect();
         assert_eq!(namen, vec!["a.pak", "c.pak"]);
+    }
+
+    #[test]
+    fn meldet_yaml_syntaxfehler_auf_deutsch_mit_position() {
+        // doppelter Schlüssel in derselben Zuordnung ist laut YAML-Spezifikation
+        // ein Scanner-Fehler in yaml-rust2, nicht nur ein Überschreiben.
+        let text = "- pak: a.pak\n  pak: b.pak\n";
+        let fehler = PakConfig::parse(text).unwrap_err();
+        let Error::PakConfig(meldung) = fehler else {
+            panic!("erwartete Error::PakConfig, bekam {fehler:?}");
+        };
+        for englisches_fragment in ["duplicated key", "mapping", "byte", "at byte"] {
+            assert!(
+                !meldung.contains(englisches_fragment),
+                "Meldung darf keinen rohen englischen Scanner-Text enthalten \
+                 (gefunden: {englisches_fragment:?}): {meldung:?}"
+            );
+        }
+        assert!(
+            meldung.contains("Zeile") && meldung.contains("Spalte"),
+            "Meldung soll die Position benennen: {meldung:?}"
+        );
+    }
+
+    #[test]
+    fn weist_nicht_booleschen_disabled_wert_zurueck() {
+        for text in [
+            "- pak: a.pak\n  disabled: yes\n",
+            "- pak: a.pak\n  disabled: on\n",
+            "- pak: a.pak\n  disabled: 1\n",
+            "- pak: a.pak\n  disabled: \"true\"\n",
+        ] {
+            let fehler = PakConfig::parse(text).unwrap_err();
+            let Error::PakConfig(meldung) = fehler else {
+                panic!("erwartete Error::PakConfig für {text:?}, bekam {fehler:?}");
+            };
+            assert!(
+                meldung.contains("Eintrag 1") && meldung.contains("disabled"),
+                "Meldung soll den Eintrag benennen: {meldung:?} (Eingabe: {text:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn ignoriert_utf8_bom_am_dateianfang() {
+        let text = "\u{feff}- pak: mod_a.pak\n- pak: mod_b.pak\n  disabled: true\n";
+        let cfg = PakConfig::parse(text).unwrap();
+        assert_eq!(cfg.entries, vec![eintrag("mod_a.pak", false), eintrag("mod_b.pak", true)]);
+    }
+
+    #[test]
+    fn bom_allein_ergibt_leere_konfiguration() {
+        assert_eq!(PakConfig::parse("\u{feff}").unwrap(), PakConfig::default());
     }
 }
