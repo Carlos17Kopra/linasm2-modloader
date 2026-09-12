@@ -1964,7 +1964,7 @@ git commit -m "feat(core): Mod-Import aus pak, zip, 7z und rar"
 - Modify: `crates/core/src/lib.rs`
 
 **Interfaces:**
-- Consumes: `hash_file`, `import::{jetzt_rfc3339}`, `atomic::write_atomic`, `Error`, `Result`
+- Consumes: `import::{jetzt_rfc3339}`, `atomic::write_atomic`, `Error`, `Result`
 - Produces:
   - `BackupManifest { created_at: String, source: String, files: BTreeMap<String, FileRecord> }` — `Serialize, Deserialize, Debug, Clone, PartialEq`
   - `FileRecord { hash: String, size: u64 }` — `Serialize, Deserialize, Debug, Clone, PartialEq`
@@ -1985,7 +1985,6 @@ git commit -m "feat(core): Mod-Import aus pak, zip, 7z und rar"
 use crate::atomic::write_atomic;
 use crate::error::{Error, Result};
 use crate::import::jetzt_rfc3339;
-use crate::library::hash_file;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -2067,6 +2066,34 @@ mod tests {
     }
 
     #[test]
+    fn zwei_backups_in_derselben_sekunde_ueberschreiben_sich_nicht() {
+        let (_tmp, saves, backups) = save_fixture();
+
+        let erst = backup(&saves, &backups, Some("gleich")).unwrap();
+        std::fs::write(saves.join("profile.sav"), b"SPAETER").unwrap();
+        let zweit = backup(&saves, &backups, Some("gleich")).unwrap();
+
+        assert_ne!(erst.archive, zweit.archive, "Namenskollision innerhalb einer Sekunde");
+        verify(&erst).unwrap();
+        verify(&zweit).unwrap();
+    }
+
+    #[test]
+    fn zweimaliges_wiederherstellen_zerstoert_kein_archiv() {
+        // restore() sichert vor dem Lesen – die Sicherung darf das zu lesende
+        // Archiv niemals überschreiben.
+        let (_tmp, saves, backups) = save_fixture();
+        let original = backup(&saves, &backups, None).unwrap();
+
+        std::fs::write(saves.join("profile.sav"), b"ZWISCHENSTAND").unwrap();
+        let sicherung = restore(&original, &saves, &backups).unwrap();
+        assert_eq!(std::fs::read(saves.join("profile.sav")).unwrap(), b"PROFILDATEN");
+
+        restore(&sicherung, &saves, &backups).unwrap();
+        assert_eq!(std::fs::read(saves.join("profile.sav")).unwrap(), b"ZWISCHENSTAND");
+    }
+
+    #[test]
     fn list_backups_liefert_neueste_zuerst() {
         let (_tmp, saves, backups) = save_fixture();
         let erst = backup(&saves, &backups, Some("a")).unwrap();
@@ -2144,6 +2171,24 @@ fn zeitstempel_fuer_dateinamen(rfc: &str) -> String {
     rfc.trim_end_matches('Z').replace(':', "").replace('T', "_")
 }
 
+/// Findet ein noch unbelegtes Paar aus Archiv- und Manifestnamen.
+fn freier_name(backup_root: &Path, basis: &str) -> (PathBuf, PathBuf) {
+    let mut versuch = 0u32;
+    loop {
+        let name = if versuch == 0 {
+            basis.to_string()
+        } else {
+            format!("{basis}-{versuch}")
+        };
+        let archiv = backup_root.join(format!("{name}.zip"));
+        let manifest = backup_root.join(format!("{name}.json"));
+        if !archiv.exists() && !manifest.exists() {
+            return (archiv, manifest);
+        }
+        versuch += 1;
+    }
+}
+
 fn etikett_saeubern(label: &str) -> String {
     label
         .chars()
@@ -2171,8 +2216,11 @@ pub fn backup(save_dir: &Path, backup_root: &Path, label: Option<&str>) -> Resul
         }
     }
 
-    let archiv_pfad = backup_root.join(format!("{basis}.zip"));
-    let manifest_pfad = backup_root.join(format!("{basis}.json"));
+    // Der Zeitstempel hat Sekundenauflösung. Zwei Backups in derselben Sekunde
+    // dürfen einander nicht überschreiben – restore() legt unmittelbar vor dem
+    // Lesen eines Archivs eine Sicherung an und würde sonst genau das Archiv
+    // zerstören, das es gleich einliest.
+    let (archiv_pfad, manifest_pfad) = freier_name(backup_root, &basis);
 
     let dateien = dateien_rekursiv(save_dir)?;
     let mut records = BTreeMap::new();
@@ -2305,7 +2353,13 @@ pub fn list_backups(backup_root: &Path) -> Result<Vec<BackupEntry>> {
         }
     }
 
-    ergebnis.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    // Neueste zuerst. Bei gleicher Sekunde entscheidet der Dateiname, damit die
+    // Reihenfolge nicht von der Verzeichnisreihenfolge abhängt.
+    ergebnis.sort_by(|a, b| {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| b.archive.cmp(&a.archive))
+    });
     Ok(ergebnis)
 }
 
@@ -2375,7 +2429,7 @@ pub mod saves;
 - [ ] **Schritt 6: Tests laufen lassen**
 
 Run: `cargo test -p sm2-core saves`
-Expected: PASS, 6 Tests
+Expected: PASS, 8 Tests
 
 - [ ] **Schritt 7: Commit**
 
