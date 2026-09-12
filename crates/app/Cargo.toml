@@ -1,0 +1,12 @@
+[package]
+name = "sm2-modloader"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sm2-core = { path = "../core" }
+anyhow.workspace = true
+tracing.workspace = true
+clap.workspace = true

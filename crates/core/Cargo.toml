@@ -1,0 +1,20 @@
+[package]
+name = "sm2-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+tempfile.workspace = true
+blake3.workspace = true
+yaml-rust2.workspace = true
+steamlocate.workspace = true
+zip.workspace = true
+sevenz-rust2.workspace = true
+directories.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
