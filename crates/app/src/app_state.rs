@@ -97,6 +97,15 @@ impl AppState {
         Ok(())
     }
 
+    /// Ermittelt das Savegame-Verzeichnis, unter Berücksichtigung einer
+    /// Vorgabe in `settings.steam_user` (siehe `GamePaths::save_dir`s
+    /// Doc-Kommentar für die genaue Auflösungsreihenfolge). Einziger
+    /// Aufrufpunkt in der CLI, damit `steam_user` nicht an jeder einzelnen
+    /// Stelle, die das Save-Verzeichnis braucht, erneut verdrahtet wird.
+    pub fn save_dir(&self) -> Result<PathBuf> {
+        self.paths.save_dir(self.settings.steam_user.as_deref()).map_err(Into::into)
+    }
+
     pub fn profiles_dir(&self) -> PathBuf {
         self.dirs.data.join("profiles")
     }
@@ -268,6 +277,53 @@ mod tests {
         let names: Vec<&str> = state.config.entries.iter().map(|e| e.pak.as_str()).collect();
         assert_eq!(names, vec!["a.pak", "b.pak", "c.pak"], "b.pak muss an seine alte Position zurückkehren");
         assert!(state.config.entries[1].disabled, "b.pak war deaktiviert und muss es wieder sein");
+    }
+
+    /// Baut unter `base` (derselben Wurzel, die `test_fixture` als
+    /// `library_dir` verwendet) zwei Proton-Save-Nutzerverzeichnisse auf, wie
+    /// sie bei mehreren Steam-Profilen im selben Prefix entstehen.
+    fn write_two_save_users(base: &Path) -> (String, String) {
+        let user_root = base
+            .join("steamapps/compatdata/2183900/pfx/drive_c/users/steamuser")
+            .join("AppData/Local/Saber/Space Marine 2/storage/steam/user");
+        let a = "76561198000000001".to_string();
+        let b = "76561198000000002".to_string();
+        std::fs::create_dir_all(user_root.join(&a).join("Main")).unwrap();
+        std::fs::create_dir_all(user_root.join(&b).join("Main")).unwrap();
+        (a, b)
+    }
+
+    /// 2b: `settings.steam_user` ist keine Schmuck-Einstellung mehr, sondern
+    /// wird tatsächlich gelesen und löst die sonst tödliche Mehrdeutigkeit
+    /// mehrerer Save-Nutzerprofile auf.
+    #[test]
+    fn save_dir_uses_the_configured_steam_user_to_resolve_ambiguity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+        let (a, _b) = write_two_save_users(tmp.path());
+        state.settings.steam_user = Some(a.clone());
+
+        let saves = state.save_dir().unwrap();
+
+        assert!(saves.ends_with(format!("{a}/Main")));
+    }
+
+    /// Ein `steam_user`, der zu keinem gefundenen Profil passt (z. B. ein
+    /// Tippfehler in `settings.toml`), muss einen klaren, die vorhandenen
+    /// Profile nennenden Fehler ergeben.
+    #[test]
+    fn save_dir_reports_a_clear_error_when_the_configured_steam_user_matches_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+        write_two_save_users(tmp.path());
+        state.settings.steam_user = Some("00000000000000000".to_string());
+
+        let err = state.save_dir().unwrap_err();
+
+        assert!(
+            err.to_string().contains("00000000000000000"),
+            "Fehler muss die (nicht gefundene) Vorgabe nennen: {err}"
+        );
     }
 
     #[test]

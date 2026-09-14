@@ -111,6 +111,15 @@ impl Profile {
         format!("{}.toml", Self::file_stem(&self.name))
     }
 
+    /// Der Pfad, unter dem `save(dir)` dieses Profil ablegt bzw. abgelegt
+    /// hat. Öffentlich, damit ein Aufrufer (z. B. `profile delete` in der
+    /// CLI), der ein bereits über `list_profiles` geladenes `Profile` vor
+    /// sich hat, dessen Datei ansprechen kann, ohne das
+    /// Namens-zu-Dateiname-Schema (`file_stem`) selbst nachzubauen.
+    pub fn path_in(&self, dir: &Path) -> PathBuf {
+        dir.join(self.file_name())
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path).map_err(|e| Error::io(path, e))?;
         toml::from_str(&text).map_err(|e| {
@@ -276,6 +285,16 @@ mod tests {
         let path = profile.save(dir.path()).unwrap();
 
         assert_eq!(Profile::load(&path).unwrap(), profile);
+    }
+
+    #[test]
+    fn path_in_matches_the_path_save_actually_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = Profile::from_config("Mein Profil", &config(&[]));
+
+        let saved_path = profile.save(dir.path()).unwrap();
+
+        assert_eq!(profile.path_in(dir.path()), saved_path);
     }
 
     #[test]

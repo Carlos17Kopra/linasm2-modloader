@@ -109,7 +109,7 @@ fn from_import_through_profile_to_restoration() {
     );
 
     // Savegame sichern, kaputtmachen, wiederherstellen.
-    let save_dir = paths.save_dir().unwrap();
+    let save_dir = paths.save_dir(None).unwrap();
     let backup_entry = saves::backup(&save_dir, &backup_root, Some("vor Modded-Start")).unwrap();
     saves::verify(&backup_entry).unwrap();
 

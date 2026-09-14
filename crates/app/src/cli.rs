@@ -3,10 +3,13 @@
 use crate::app_state::AppState;
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
+use sm2_core::import::now_rfc3339;
 use sm2_core::launch::{launch, no_eac_available, LaunchMode};
 use sm2_core::pak_config::PakEntry;
+use sm2_core::paths::GamePaths;
 use sm2_core::platform::{Current, Platform};
 use sm2_core::profile::{list_profiles, Profile};
+use sm2_core::saves::BackupEntry;
 use sm2_core::{import, saves};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -80,6 +83,8 @@ enum ProfileCommand {
     Save { name: String },
     /// Wendet ein Profil an
     Apply { name: String },
+    /// Löscht ein Profil
+    Delete { name: String },
 }
 
 #[derive(Subcommand)]
@@ -92,8 +97,24 @@ enum SaveCommand {
     List,
     /// Stellt ein Backup wieder her (Standard: das neueste)
     Restore {
+        /// 1-basierter Index aus `save list` (Standard: 1, das neueste)
         #[arg(long)]
         index: Option<usize>,
+        // `--index` verschiebt sich mit jeder Wiederherstellung, weil
+        // `restore` selbst ein neues "vor Wiederherstellung"-Backup anlegt
+        // (siehe `run_save_command`s Doc-Kommentar) – `--at` bleibt dagegen
+        // unabhängig davon eindeutig.
+        /// Exakter Zeitstempel aus `save list` – eindeutig, verschiebt sich
+        /// anders als `--index` nicht durch spätere Wiederherstellungen
+        #[arg(long, conflicts_with = "index")]
+        at: Option<String>,
+        // Spec §6.5/§9 R2: Cloud-Synchronisation kann den zurückgespielten
+        // Stand im Hintergrund überschreiben – der Normalfall ist deshalb
+        // die Ablehnung, `--force` ist die bewusste Ausnahme.
+        /// Erzwingt die Wiederherstellung trotz laufendem Steam (Risiko:
+        /// Cloud-Synchronisation kann den Stand überschreiben)
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -138,7 +159,7 @@ pub fn run() -> Result<()> {
             println!("Spiel:   {}", state.paths.game_dir.display());
             println!("Mods:    {}", state.paths.mods_dir().display());
             println!("Config:  {}", state.paths.pak_config_path().display());
-            match state.paths.save_dir() {
+            match state.save_dir() {
                 Ok(p) => println!("Saves:   {}", p.display()),
                 Err(e) => println!("Saves:   nicht verfügbar – {e}"),
             }
@@ -149,7 +170,7 @@ pub fn run() -> Result<()> {
             let path = match target {
                 OpenTarget::Game => state.paths.game_dir.clone(),
                 OpenTarget::Mods => state.paths.mods_dir(),
-                OpenTarget::Saves => state.paths.save_dir()?,
+                OpenTarget::Saves => state.save_dir()?,
                 OpenTarget::Backups => {
                     let dir = state.backups_dir();
                     std::fs::create_dir_all(&dir)
@@ -320,10 +341,7 @@ fn run_profile_command(state: &mut AppState, cmd: ProfileCommand) -> Result<()> 
             println!("✓ Profil '{name}' gespeichert: {}", path.display());
         }
         ProfileCommand::Apply { name } => {
-            let profile = list_profiles(&dir)?
-                .into_iter()
-                .find(|p| p.name.eq_ignore_ascii_case(&name))
-                .with_context(|| format!("Profil '{name}' nicht gefunden"))?;
+            let profile = find_profile_by_name(&dir, &name)?;
 
             let (new_config, missing) = profile.apply(&state.paths.list_paks()?);
             for pak in &missing {
@@ -333,8 +351,43 @@ fn run_profile_command(state: &mut AppState, cmd: ProfileCommand) -> Result<()> 
             state.persist()?;
             println!("✓ Profil '{}' angewendet", profile.name);
         }
+        ProfileCommand::Delete { name } => {
+            let profile = find_profile_by_name(&dir, &name)?;
+            let path = profile.path_in(&dir);
+            std::fs::remove_file(&path)
+                .with_context(|| format!("{} konnte nicht gelöscht werden", path.display()))?;
+            println!("✓ Profil '{}' gelöscht ({})", profile.name, path.display());
+        }
     }
     Ok(())
+}
+
+/// Findet genau ein Profil zu `name` unter `dir`, groß-/kleinschreibungs-
+/// unabhängig (Bequemlichkeit: der Nutzer muss den Namen nicht exakt
+/// treffen). `Profile::file_stem` hasht dagegen den exakten Namen – zwei
+/// Profile wie "Test" und "test" landen also in zwei verschiedenen Dateien.
+/// Ohne diese Prüfung würde ein mehrdeutiger Name klaglos das erste (nach
+/// `list_profiles`s alphabetischer Sortierung) Treffer-Profil wählen und das
+/// andere wäre über `apply`/`delete` faktisch unerreichbar, ohne dass der
+/// Nutzer je davon erführe. Ein mehrdeutiger Treffer wird stattdessen mit
+/// allen betroffenen Namen gemeldet, damit der Nutzer den exakten Namen
+/// nachreichen kann.
+fn find_profile_by_name(dir: &std::path::Path, name: &str) -> Result<Profile> {
+    let mut matches: Vec<Profile> =
+        list_profiles(dir)?.into_iter().filter(|p| p.name.eq_ignore_ascii_case(name)).collect();
+
+    match matches.len() {
+        0 => bail!("Profil '{name}' nicht gefunden"),
+        1 => Ok(matches.remove(0)),
+        _ => {
+            let names: Vec<&str> = matches.iter().map(|p| p.name.as_str()).collect();
+            bail!(
+                "mehrere Profile passen zu '{name}' und unterscheiden sich nur in \
+                 Groß-/Kleinschreibung ({}). Bitte den exakten Namen angeben.",
+                names.join(", ")
+            );
+        }
+    }
 }
 
 fn run_save_command(state: &AppState, cmd: SaveCommand) -> Result<()> {
@@ -342,7 +395,7 @@ fn run_save_command(state: &AppState, cmd: SaveCommand) -> Result<()> {
 
     match cmd {
         SaveCommand::Backup { tag } => {
-            let saves_dir = state.paths.save_dir()?;
+            let saves_dir = state.save_dir()?;
             let entry = saves::backup(&saves_dir, &backups, tag.as_deref())?;
             println!("✓ Backup: {}", entry.archive.display());
         }
@@ -356,22 +409,38 @@ fn run_save_command(state: &AppState, cmd: SaveCommand) -> Result<()> {
                 println!("{:>2}. {}  {label}", i + 1, entry.created_at);
             }
         }
-        SaveCommand::Restore { index } => {
+        SaveCommand::Restore { index, at, force } => {
             let list = saves::list_backups(&backups)?;
             if list.is_empty() {
                 bail!("keine Backups vorhanden");
             }
-            let position = resolve_backup_index(index, list.len())?;
-            let entry = &list[position];
+            let entry = resolve_backup_selection(&list, index, at.as_deref())?;
+
+            // Echo, was tatsächlich ausgewählt wurde, BEVOR etwas verändert
+            // wird: `restore` legt vor der Wiederherstellung selbst ein "vor
+            // Wiederherstellung"-Backup an, und `list_backups` ist
+            // neueste-zuerst – jede Wiederherstellung verschiebt also jeden
+            // späteren `--index`. Der Nutzer sieht hier, was `--index`/`--at`
+            // tatsächlich getroffen hat, bevor der Vorgang unumkehrbar wird
+            // (siehe `resolve_backup_selection`s Doc-Kommentar).
+            let label = entry.label.clone().unwrap_or_default();
+            println!("Ausgewähltes Backup: {}  {label}", entry.created_at);
 
             if saves::steam_is_running() {
-                bail!(
-                    "Steam läuft. Die Cloud-Synchronisation kann den wiederhergestellten Stand \
-                     überschreiben. Bitte Steam beenden und erneut versuchen."
+                if !force {
+                    bail!(
+                        "Steam läuft. Die Cloud-Synchronisation kann den wiederhergestellten \
+                         Stand überschreiben. Bitte Steam beenden und erneut versuchen, oder \
+                         mit --force auf eigenes Risiko fortfahren."
+                    );
+                }
+                eprintln!(
+                    "Warnung: Steam läuft – --force erzwingt die Wiederherstellung trotz \
+                     möglicher Cloud-Synchronisation."
                 );
             }
 
-            let saves_dir = state.paths.save_dir()?;
+            let saves_dir = state.save_dir()?;
             let safety_backup = saves::restore(entry, &saves_dir, &backups)?;
             println!("✓ Wiederhergestellt: {}", entry.created_at);
             println!("  Vorheriger Stand gesichert: {}", safety_backup.archive.display());
@@ -395,6 +464,31 @@ fn resolve_backup_index(requested: Option<usize>, count: usize) -> Result<usize>
         bail!("Backup {requested} gibt es nicht ({count} vorhanden)");
     }
     Ok(requested - 1)
+}
+
+/// Wählt ein Backup aus `list` entweder über den exakten Zeitstempel (`at`,
+/// wie ihn `save list` anzeigt) oder über den 1-basierten Index (`index`,
+/// Standard: das neueste). `--at` ist die unzweideutige Wahl: `restore`
+/// legt vor jeder Wiederherstellung selbst ein neues Backup an, und
+/// `list_backups` sortiert neueste zuerst – ein per `--index` gewähltes
+/// Backup verschiebt sich also mit jeder Wiederherstellung um eins. `clap`s
+/// `conflicts_with` verhindert bereits, dass beide zugleich angegeben
+/// werden.
+fn resolve_backup_selection<'a>(
+    list: &'a [BackupEntry],
+    index: Option<usize>,
+    at: Option<&str>,
+) -> Result<&'a BackupEntry> {
+    match at {
+        Some(timestamp) => list
+            .iter()
+            .find(|e| e.created_at == timestamp)
+            .with_context(|| format!("kein Backup mit Zeitstempel '{timestamp}' gefunden")),
+        None => {
+            let position = resolve_backup_index(index, list.len())?;
+            Ok(&list[position])
+        }
+    }
 }
 
 /// Sichert bei `play --vanilla` den aktuellen Zustand als Profil, bevor alle
@@ -433,31 +527,31 @@ fn snapshot_and_disable_all_for_vanilla_start(state: &mut AppState) -> Result<()
 }
 
 /// Menschenlesbarer Zeitstempel ("2026-09-14 21:40") für den Namen einer
-/// Vanilla-Sicherung, auf die Minute genau. Eigene, kleine Umsetzung statt
-/// einer zusätzlichen Abhängigkeit; `sm2_core` hat eine vergleichbare
-/// Funktion, hält sie aber bewusst `pub(crate)`.
+/// Vanilla-Sicherung, auf die Minute genau.
+///
+/// Leitet sich aus `sm2_core::import::now_rfc3339` ab (Sekunden und das
+/// `T`/`Z` von RFC-3339 entfernt), statt dessen Kalenderrechnung
+/// ("civil_from_days") ein zweites Mal zu implementieren – genau das war
+/// zuvor hier byte-genau dupliziert.
 fn timestamp_for_snapshot_name() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let days = now.div_euclid(86_400);
-    let remainder = now.rem_euclid(86_400);
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let day_of_era = z.rem_euclid(146_097);
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let y = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let mp = (5 * day_of_year + 2) / 153;
-    let d = day_of_year - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = if m <= 2 { y + 1 } else { y };
-    format!("{year:04}-{m:02}-{d:02} {:02}:{:02}", remainder / 3600, (remainder % 3600) / 60)
+    let rfc3339 = now_rfc3339();
+    let (date, time) = rfc3339.split_once('T').unwrap_or((&rfc3339, ""));
+    let minute_precision = time.get(0..5).unwrap_or(time);
+    format!("{date} {minute_precision}")
 }
 
 /// Startet das Spiel.
+fn run_play(state: &mut AppState, vanilla: bool, no_eac: bool) -> Result<()> {
+    run_play_with(state, vanilla, no_eac, launch)
+}
+
+/// Kern von `run_play`, mit dem eigentlichen Spielstart als Parameter statt
+/// fest verdrahtet: `run_play` selbst startet immer den echten Prozess über
+/// `sm2_core::launch::launch`, aber jede Verzweigung davor (Vanilla-Wipe,
+/// Auto-Backup, `persist()`-Fehlerverhalten, No-EAC-Gating) lässt sich so
+/// testen, ohne je einen echten Prozess zu starten – die Tests unten
+/// übergeben stattdessen eine Closure, die nur festhält, ob und mit welchem
+/// `LaunchMode` sie aufgerufen wurde.
 ///
 /// Ausfallverhalten für das Save-Backup (bewusst einheitlich für beide
 /// Fehlerquellen): weder ein fehlendes Save-Verzeichnis noch ein
@@ -466,7 +560,11 @@ fn timestamp_for_snapshot_name() -> String {
 /// (abschaltbar über `settings.toml`), kein hartes Erfordernis. Der
 /// Backup-Versuch geschieht außerdem vor `state.persist()` und vor dem Start
 /// selbst – damit hinterlässt ein Fehlschlag nie eine bereits geschriebene
-/// Konfiguration bei einem nie gestarteten Spiel.
+/// Konfiguration bei einem nie gestarteten Spiel. Anders als zuvor gilt das
+/// jetzt auch für `--vanilla`: Spec §6.4 beschreibt den Vanilla-Start
+/// ausdrücklich als identisch zum Modded-Start, Backup eingeschlossen – ein
+/// Nutzer greift zu `--vanilla` oft gerade *nachdem* schon etwas schiefging,
+/// und genau dann ist das Backup am wichtigsten.
 ///
 /// Ausfallverhalten für `persist()` selbst: bei einem gewöhnlichen (nicht
 /// Vanilla-)Start ändert `persist()` höchstens das Ergebnis des Abgleichs aus
@@ -482,7 +580,12 @@ fn timestamp_for_snapshot_name() -> String {
 /// `snapshot_and_disable_all_for_vanilla_start`) ist immer ein hartes
 /// Erfordernis: schlägt sie fehl, wird nichts verändert und nichts
 /// gestartet – ohne sie gäbe es keinen Weg zurück zum bisherigen Setup.
-fn run_play(state: &mut AppState, vanilla: bool, no_eac: bool) -> Result<()> {
+fn run_play_with(
+    state: &mut AppState,
+    vanilla: bool,
+    no_eac: bool,
+    launch_game: impl FnOnce(&GamePaths, LaunchMode) -> sm2_core::Result<()>,
+) -> Result<()> {
     if no_eac && !no_eac_available() {
         bail!(
             "Start ohne EAC ist auf diesem System nicht möglich – umu-launcher wurde nicht \
@@ -494,9 +597,10 @@ fn run_play(state: &mut AppState, vanilla: bool, no_eac: bool) -> Result<()> {
         snapshot_and_disable_all_for_vanilla_start(state)?;
     }
 
-    if !vanilla && state.settings.auto_backup {
-        match state.paths.save_dir() {
-            Ok(saves_dir) => match saves::backup(&saves_dir, &state.backups_dir(), Some("vor Modded-Start")) {
+    if state.settings.auto_backup {
+        let label = if vanilla { "vor Vanilla-Start" } else { "vor Modded-Start" };
+        match state.save_dir() {
+            Ok(saves_dir) => match saves::backup(&saves_dir, &state.backups_dir(), Some(label)) {
                 Ok(entry) => println!("✓ Save gesichert: {}", entry.archive.display()),
                 Err(e) => eprintln!("Warnung: Save-Backup fehlgeschlagen – {e}"),
             },
@@ -514,7 +618,7 @@ fn run_play(state: &mut AppState, vanilla: bool, no_eac: bool) -> Result<()> {
     if no_eac {
         eprintln!("Hinweis: Start ohne EAC – Multiplayer ist damit nicht möglich.");
     }
-    launch(&state.paths, mode)?;
+    launch_game(&state.paths, mode)?;
     println!("✓ Spiel gestartet");
     Ok(())
 }
@@ -718,5 +822,291 @@ mod tests {
             !names.contains(&"viertes.pak"),
             "nach dem Fehlschlag darf die vierte Datei nicht mehr verarbeitet worden sein"
         );
+    }
+
+    // --- resolve_backup_selection (2a: --at neben --index) ---------------
+
+    fn backup_entry(created_at: &str, label: Option<&str>) -> BackupEntry {
+        BackupEntry {
+            archive: PathBuf::from(format!("{created_at}.zip")),
+            manifest: PathBuf::from(format!("{created_at}.json")),
+            created_at: created_at.to_string(),
+            label: label.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn resolve_backup_selection_without_arguments_defaults_to_the_newest() {
+        let list = vec![
+            backup_entry("2026-01-02T00:00:00Z", None),
+            backup_entry("2026-01-01T00:00:00Z", None),
+        ];
+
+        let entry = resolve_backup_selection(&list, None, None).unwrap();
+
+        assert_eq!(entry.created_at, "2026-01-02T00:00:00Z");
+    }
+
+    /// Der eigentliche Grund für `--at`: ein per `--index` gewähltes Backup
+    /// verschiebt sich mit jeder Wiederherstellung. Ein exakter Zeitstempel
+    /// bleibt dagegen eindeutig, unabhängig davon, wie oft zwischenzeitlich
+    /// wiederhergestellt wurde.
+    #[test]
+    fn resolve_backup_selection_by_at_finds_the_exact_timestamp() {
+        let list = vec![
+            backup_entry("2026-01-02T00:00:00Z", None),
+            backup_entry("2026-01-01T00:00:00Z", Some("alt")),
+        ];
+
+        let entry = resolve_backup_selection(&list, None, Some("2026-01-01T00:00:00Z")).unwrap();
+
+        assert_eq!(entry.label.as_deref(), Some("alt"));
+    }
+
+    #[test]
+    fn resolve_backup_selection_by_at_reports_an_unknown_timestamp_clearly() {
+        let list = vec![backup_entry("2026-01-02T00:00:00Z", None)];
+
+        let err = resolve_backup_selection(&list, None, Some("2099-01-01T00:00:00Z")).unwrap_err();
+
+        assert!(err.to_string().contains("2099-01-01T00:00:00Z"), "{err}");
+    }
+
+    #[test]
+    fn resolve_backup_selection_by_index_still_works_alongside_at() {
+        let list = vec![
+            backup_entry("2026-01-02T00:00:00Z", None),
+            backup_entry("2026-01-01T00:00:00Z", None),
+        ];
+
+        let entry = resolve_backup_selection(&list, Some(2), None).unwrap();
+
+        assert_eq!(entry.created_at, "2026-01-01T00:00:00Z");
+    }
+
+    // --- find_profile_by_name (2e: mehrdeutiger groß-/kleinschreibungs- --
+    // --- unabhängiger Treffer wird gemeldet statt still gewählt) ---------
+
+    fn empty_profile(name: &str) -> Profile {
+        Profile::from_config(name, &sm2_core::pak_config::PakConfig::default())
+    }
+
+    #[test]
+    fn find_profile_by_name_matches_case_insensitively_when_unambiguous() {
+        let dir = tempfile::tempdir().unwrap();
+        empty_profile("Astartes").save(dir.path()).unwrap();
+
+        let found = find_profile_by_name(dir.path(), "astartes").unwrap();
+
+        assert_eq!(found.name, "Astartes");
+    }
+
+    #[test]
+    fn find_profile_by_name_reports_ambiguity_instead_of_silently_picking_one() {
+        let dir = tempfile::tempdir().unwrap();
+        empty_profile("Test").save(dir.path()).unwrap();
+        empty_profile("test").save(dir.path()).unwrap();
+
+        let err = find_profile_by_name(dir.path(), "TEST").unwrap_err();
+
+        let message = err.to_string();
+        assert!(message.contains("Test") && message.contains("test"), "{message}");
+    }
+
+    #[test]
+    fn find_profile_by_name_reports_when_nothing_matches() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let err = find_profile_by_name(dir.path(), "gibt es nicht").unwrap_err();
+
+        assert!(err.to_string().contains("gibt es nicht"));
+    }
+
+    // --- profile delete (2d) ----------------------------------------------
+
+    #[test]
+    fn profile_delete_removes_the_file_matched_case_insensitively() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+        run_profile_command(&mut state, ProfileCommand::Save { name: "Zu Löschen".into() }).unwrap();
+        let dir = state.profiles_dir();
+        assert_eq!(list_profiles(&dir).unwrap().len(), 1);
+
+        run_profile_command(&mut state, ProfileCommand::Delete { name: "zu löschen".into() }).unwrap();
+
+        assert!(list_profiles(&dir).unwrap().is_empty());
+    }
+
+    #[test]
+    fn profile_delete_reports_a_clear_error_for_an_unknown_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+
+        let err = run_profile_command(&mut state, ProfileCommand::Delete { name: "unbekannt".into() })
+            .unwrap_err();
+
+        assert!(err.to_string().contains("nicht gefunden"), "{err}");
+    }
+
+    // --- run_play_with (2c/2f: Auto-Backup für --vanilla, injizierbarer --
+    // --- Spielstart) -------------------------------------------------------
+
+    /// `no_eac_available()` liest den echten `$PATH` dieses Systems – auf
+    /// den Testrechnern hier ist `umu-run` nicht installiert, aber dieser
+    /// Test darf trotzdem nicht auf einem System scheitern, auf dem es (z. B.
+    /// versehentlich) doch vorhanden ist.
+    #[test]
+    fn run_play_rejects_no_eac_when_direct_launch_is_unavailable_and_never_launches() {
+        if no_eac_available() {
+            eprintln!("übersprungen: umu-launcher ist auf diesem System installiert");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+
+        let called = std::rc::Rc::new(std::cell::Cell::new(false));
+        let called_clone = called.clone();
+        let result = run_play_with(&mut state, false, true, move |_paths, _mode| {
+            called_clone.set(true);
+            Ok(())
+        });
+
+        assert!(result.is_err(), "ohne verfügbaren Direktstart muss --no-eac abgelehnt werden");
+        assert!(!called.get(), "der Spielstart darf dabei nie aufgerufen werden");
+    }
+
+    /// Ein fehlendes Save-Verzeichnis (hier: `test_fixture` hat keinen
+    /// Proton-Prefix) darf den Start nicht verhindern – das Auto-Backup ist
+    /// eine Komfortfunktion, kein hartes Erfordernis (siehe Doc-Kommentar von
+    /// `run_play_with`).
+    #[test]
+    fn run_play_warns_but_still_launches_when_auto_backup_has_no_save_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+        state.settings.auto_backup = true;
+
+        let called = std::rc::Rc::new(std::cell::Cell::new(None));
+        let called_clone = called.clone();
+        let result = run_play_with(&mut state, false, false, move |_paths, mode| {
+            called_clone.set(Some(mode));
+            Ok(())
+        });
+
+        assert!(result.is_ok(), "fehlendes Save-Verzeichnis darf den Start nicht verhindern: {result:?}");
+        assert_eq!(called.get(), Some(LaunchMode::Steam));
+    }
+
+    /// 2c: Spec §6.4 beschreibt den Vanilla-Start als identisch zum Modded-
+    /// Start, Backup eingeschlossen – zuvor lief das Auto-Backup nur ohne
+    /// `--vanilla`.
+    #[test]
+    fn run_play_vanilla_disables_everything_persists_and_still_launches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+        std::fs::write(state.paths.mods_dir().join("a.pak"), b"x").unwrap();
+        state.config.entries = vec![PakEntry { pak: "a.pak".into(), disabled: false }];
+
+        let called = std::rc::Rc::new(std::cell::Cell::new(None));
+        let called_clone = called.clone();
+        run_play_with(&mut state, true, false, move |_paths, mode| {
+            called_clone.set(Some(mode));
+            Ok(())
+        })
+        .unwrap();
+
+        assert!(state.config.entries.iter().all(|e| e.disabled), "Vanilla-Start muss alles deaktivieren");
+        assert_eq!(called.get(), Some(LaunchMode::Steam));
+        let saved = sm2_core::pak_config::PakConfig::load(&state.paths.pak_config_path()).unwrap();
+        assert!(
+            saved.entries.iter().all(|e| e.disabled),
+            "die deaktivierte Konfiguration muss tatsächlich auf der Platte gelandet sein"
+        );
+    }
+
+    /// Prüft per Schreibversuch, ob eine `0o555`-Berechtigung auf `dir`
+    /// tatsächlich vor Schreibzugriff schützt, und stellt die ursprüngliche
+    /// Berechtigung danach wieder her. Läuft der Testprozess als root, hebt
+    /// der Kernel jeden Dateimodus auf – ein Test, der das nicht erkennt,
+    /// würde dort grundlos fehlschlagen (dasselbe Muster wie in
+    /// `app_state.rs`s `check_write_permission_fails_for_a_read_only_dir`).
+    #[cfg(unix)]
+    fn write_protection_is_effective(dir: &std::path::Path) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(dir).unwrap().permissions();
+        perms.set_mode(0o555);
+        std::fs::set_permissions(dir, perms).unwrap();
+
+        let probe = dir.join(".probe");
+        let bypassed = std::fs::write(&probe, b"").is_ok();
+        let _ = std::fs::remove_file(&probe);
+
+        let mut perms = std::fs::metadata(dir).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(dir, perms).unwrap();
+
+        !bypassed
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_play_vanilla_aborts_without_launching_if_persist_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+        state.config.entries = vec![PakEntry { pak: "a.pak".into(), disabled: false }];
+
+        if !write_protection_is_effective(&state.paths.mods_dir()) {
+            eprintln!("übersprungen: Prozess kann den Schreibschutz offenbar übergehen (root?)");
+            return;
+        }
+
+        use std::os::unix::fs::PermissionsExt;
+        let mods_dir = state.paths.mods_dir();
+        let mut perms = std::fs::metadata(&mods_dir).unwrap().permissions();
+        perms.set_mode(0o555);
+        std::fs::set_permissions(&mods_dir, perms.clone()).unwrap();
+
+        let called = std::rc::Rc::new(std::cell::Cell::new(false));
+        let called_clone = called.clone();
+        let result = run_play_with(&mut state, true, false, move |_paths, _mode| {
+            called_clone.set(true);
+            Ok(())
+        });
+
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&mods_dir, perms).unwrap();
+
+        assert!(result.is_err(), "ein persist()-Fehlschlag muss bei --vanilla fatal sein");
+        assert!(!called.get(), "das Spiel darf nach fehlgeschlagenem persist() bei --vanilla nicht starten");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_play_non_vanilla_persist_failure_only_warns_and_still_launches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+
+        if !write_protection_is_effective(&state.paths.mods_dir()) {
+            eprintln!("übersprungen: Prozess kann den Schreibschutz offenbar übergehen (root?)");
+            return;
+        }
+
+        use std::os::unix::fs::PermissionsExt;
+        let mods_dir = state.paths.mods_dir();
+        let mut perms = std::fs::metadata(&mods_dir).unwrap().permissions();
+        perms.set_mode(0o555);
+        std::fs::set_permissions(&mods_dir, perms.clone()).unwrap();
+
+        let called = std::rc::Rc::new(std::cell::Cell::new(false));
+        let called_clone = called.clone();
+        let result = run_play_with(&mut state, false, false, move |_paths, _mode| {
+            called_clone.set(true);
+            Ok(())
+        });
+
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&mods_dir, perms).unwrap();
+
+        assert!(result.is_ok(), "ein persist()-Fehlschlag darf ohne --vanilla nur warnen: {result:?}");
+        assert!(called.get(), "das Spiel muss trotz gescheitertem persist() gestartet werden");
     }
 }

@@ -20,6 +20,9 @@ pub enum Error {
     #[error("mehrere Steam-Nutzerprofile gefunden ({0:?}) – bitte eines in den Einstellungen festlegen")]
     AmbiguousSaveUser(Vec<String>),
 
+    #[error("Steam-Nutzerprofil '{requested}' aus den Einstellungen wurde nicht gefunden (vorhanden: {available:?})")]
+    UnknownSaveUser { requested: String, available: Vec<String> },
+
     #[error("pak_config.yaml ist fehlerhaft: {0}")]
     PakConfig(String),
 

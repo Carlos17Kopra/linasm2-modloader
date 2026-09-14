@@ -90,7 +90,18 @@ impl GamePaths {
     ///
     /// Unterhalb von `AppData/Local` ist der Pfad mit Windows identisch –
     /// nur die Wurzel liefert die Plattform.
-    pub fn save_dir(&self) -> Result<PathBuf> {
+    ///
+    /// `steam_user`, sofern angegeben (`settings.toml`s `steam_user`),
+    /// überschreibt die automatische Auswahl: liegt genau ein
+    /// Nutzerverzeichnis vor, würde die automatische Auswahl es ohnehin
+    /// treffen; liegen mehrere vor, entscheidet sonst `Error::AmbiguousSaveUser`
+    /// – mit einer Vorgabe wird stattdessen genau dieses Verzeichnis
+    /// verwendet, sofern es unter den gefundenen ist. Ein `steam_user`, der zu
+    /// keinem gefundenen Verzeichnis passt, ergibt einen eigenen Fehler, der
+    /// die tatsächlich vorhandenen Profile nennt – so lässt sich ein Tippfehler
+    /// in `settings.toml` sofort erkennen, statt in einer stillen
+    /// `Error::NoSaveUser`/`AmbiguousSaveUser` unterzugehen.
+    pub fn save_dir(&self, steam_user: Option<&str>) -> Result<PathBuf> {
         let prefix_root = Current::user_profile_root(APP_ID, &self.library_dir);
         if !prefix_root.is_dir() {
             return Err(Error::PrefixMissing(APP_ID));
@@ -111,6 +122,14 @@ impl GamePaths {
             .filter_map(|e| e.file_name().into_string().ok())
             .collect();
         user_ids.sort();
+
+        if let Some(requested) = steam_user {
+            return if user_ids.iter().any(|id| id == requested) {
+                Ok(user_root.join(requested).join("Main"))
+            } else {
+                Err(Error::UnknownSaveUser { requested: requested.to_string(), available: user_ids })
+            };
+        }
 
         match user_ids.len() {
             0 => Err(Error::NoSaveUser(user_root)),
@@ -230,7 +249,7 @@ mod tests {
     #[test]
     fn resolves_save_dir_in_proton_prefix() {
         let (_tmp, paths) = fixture();
-        let saves = paths.save_dir().unwrap();
+        let saves = paths.save_dir(None).unwrap();
         assert!(saves.ends_with("storage/steam/user/76561198412726373/Main"));
         assert!(saves.is_dir());
     }
@@ -243,7 +262,7 @@ mod tests {
         std::fs::create_dir_all(game.join("client_pc/root/mods")).unwrap();
 
         let paths = GamePaths::from_game_dir(&game, &library).unwrap();
-        assert!(matches!(paths.save_dir().unwrap_err(), Error::PrefixMissing(2183900)));
+        assert!(matches!(paths.save_dir(None).unwrap_err(), Error::PrefixMissing(2183900)));
     }
 
     /// Prefix existiert (Proton hat ihn beim ersten Start angelegt), aber der
@@ -263,7 +282,7 @@ mod tests {
         .unwrap();
 
         let paths = GamePaths::from_game_dir(&game, &library).unwrap();
-        assert!(matches!(paths.save_dir().unwrap_err(), Error::NoSaveUser(_)));
+        assert!(matches!(paths.save_dir(None).unwrap_err(), Error::NoSaveUser(_)));
     }
 
     #[test]
@@ -275,7 +294,41 @@ mod tests {
             .join("AppData/Local/Saber/Space Marine 2/storage/steam/user");
         std::fs::create_dir_all(user.join("76561198000000000/Main")).unwrap();
 
-        assert!(matches!(paths.save_dir().unwrap_err(), Error::AmbiguousSaveUser(_)));
+        assert!(matches!(paths.save_dir(None).unwrap_err(), Error::AmbiguousSaveUser(_)));
+    }
+
+    /// `settings.toml`s `steam_user` (2b): liegen mehrere Nutzerverzeichnisse
+    /// vor, löst eine passende Vorgabe die sonst tödliche Mehrdeutigkeit auf.
+    #[test]
+    fn steam_user_override_resolves_ambiguity_when_it_matches_one_of_the_found_ids() {
+        let (tmp, paths) = fixture();
+        let user_root = tmp
+            .path()
+            .join("SteamLibrary/steamapps/compatdata/2183900/pfx/drive_c/users/steamuser")
+            .join("AppData/Local/Saber/Space Marine 2/storage/steam/user");
+        std::fs::create_dir_all(user_root.join("76561198000000000/Main")).unwrap();
+        // Die Fixture legt bereits 76561198412726373/Main an.
+
+        let saves = paths.save_dir(Some("76561198000000000")).unwrap();
+
+        assert!(saves.ends_with("76561198000000000/Main"));
+    }
+
+    /// Eine Vorgabe, die zu keinem gefundenen Nutzerverzeichnis passt (z. B.
+    /// ein Tippfehler in `settings.toml`), muss einen eigenen, klaren Fehler
+    /// ergeben, der die tatsächlich vorhandenen Profile nennt – statt
+    /// stillschweigend zu ignorieren oder in `AmbiguousSaveUser` unterzugehen.
+    #[test]
+    fn steam_user_override_that_matches_nothing_names_the_available_ids() {
+        let (_tmp, paths) = fixture();
+
+        let err = paths.save_dir(Some("00000000000000000")).unwrap_err();
+
+        let Error::UnknownSaveUser { requested, available } = err else {
+            panic!("erwartete Error::UnknownSaveUser, bekam {err:?}");
+        };
+        assert_eq!(requested, "00000000000000000");
+        assert_eq!(available, vec!["76561198412726373".to_string()]);
     }
 
     #[test]
