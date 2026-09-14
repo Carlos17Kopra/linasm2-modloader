@@ -26,6 +26,19 @@ pub trait Platform {
 
     /// Öffnet ein Verzeichnis im Dateimanager.
     fn open_folder(path: &Path) -> Result<()>;
+
+    /// Sucht ein Kommandozeilenwerkzeug (z. B. `unar`, `7z`) im PATH.
+    fn find_tool(name: &str) -> Option<PathBuf>;
+
+    /// Ist ein Direktstart unter Umgehung von Steam (EAC-Bypass) auf diesem
+    /// System grundsätzlich möglich – unabhängig davon, ob er im konkreten
+    /// Aufruf tatsächlich gewünscht ist?
+    fn direct_launch_available() -> bool;
+
+    /// Läuft der Steam-Client gerade? Relevant für Spec §6.5/§9 R2:
+    /// Cloud-Synchronisation kann eine Save-Wiederherstellung im
+    /// Hintergrund überschreiben.
+    fn steam_is_running() -> bool;
 }
 
 #[cfg(unix)]

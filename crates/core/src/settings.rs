@@ -27,7 +27,8 @@ impl Settings {
     pub fn load(path: &Path) -> Result<Self> {
         match std::fs::read_to_string(path) {
             Ok(text) => toml::from_str(&text).map_err(|e| {
-                Error::io(path, std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                let message = crate::error::describe_toml_error(&text, &e);
+                Error::io(path, std::io::Error::new(std::io::ErrorKind::InvalidData, message))
             }),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(Error::io(path, e)),
@@ -117,6 +118,10 @@ mod tests {
         assert!(
             message.contains(path.to_str().unwrap()),
             "Fehlermeldung muss den Pfad enthalten: {message}"
+        );
+        assert!(
+            !message.contains("expected") && !message.contains("invalid"),
+            "Fehlermeldung soll auf Deutsch sein, nicht die rohe toml-Meldung enthalten: {message}"
         );
     }
 }

@@ -37,10 +37,17 @@ impl Platform for Unix {
 
     fn launch_via_steam(app_id: u32) -> Result<()> {
         let url = format!("steam://rungameid/{app_id}");
+        // Der Spawn-Fehler betrifft immer `xdg-open`, nicht die
+        // `steam://`-URL: das Betriebssystem versucht an dieser Stelle nur,
+        // den Opener selbst zu starten, die URL wird ihm lediglich als
+        // Argument übergeben. `Error::io` erwartet einen Pfad, der die
+        // eigentlich betroffene Ressource benennt – das ist hier `xdg-open`,
+        // nicht die URL (die als "Pfad" gerendert eine unsinnige Meldung wie
+        // "E/A-Fehler bei steam://…" ergäbe).
         std::process::Command::new("xdg-open")
             .arg(&url)
             .spawn()
-            .map_err(|e| Error::io(&url, e))?;
+            .map_err(|e| Error::io("xdg-open", e))?;
         Ok(())
     }
 
@@ -75,6 +82,38 @@ impl Platform for Unix {
             .spawn()
             .map_err(|e| Error::io(path, e))?;
         Ok(())
+    }
+
+    fn find_tool(name: &str) -> Option<PathBuf> {
+        which_in_path(name)
+    }
+
+    fn direct_launch_available() -> bool {
+        Self::umu_launcher().is_some()
+    }
+
+    /// Erkannt wird ausschließlich ein Prozess, dessen `/proc/<pid>/comm`
+    /// exakt `steam` lautet. Hilfsprozesse wie `steamwebhelper` zählen
+    /// bewusst nicht: sie sind Browser-Unterprozesse ohne eigene
+    /// Cloud-Synchronisation, und ein Treffer allein auf "enthält steam"
+    /// würde bei jedem `steamwebhelper` oder `steamerrorreporter`
+    /// anschlagen und die Warnung wertlos machen. Fehlt `/proc` (z. B. auf
+    /// einem System ohne procfs), wird `false` zurückgegeben statt eines
+    /// Fehlers – die Prüfung ist eine Vorsichtsmaßnahme, kein hartes
+    /// Erfordernis.
+    fn steam_is_running() -> bool {
+        let Ok(entries) = std::fs::read_dir("/proc") else {
+            return false;
+        };
+        for entry in entries.filter_map(std::result::Result::ok) {
+            let comm = entry.path().join("comm");
+            if let Ok(name) = std::fs::read_to_string(&comm) {
+                if name.trim() == "steam" {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 
@@ -133,6 +172,24 @@ mod tests {
             as_text.iter().any(|p| p.contains("com.valvesoftware.Steam")),
             "Flatpak-Steam muss berücksichtigt werden"
         );
+    }
+
+    /// `Platform::find_tool` ist eine reine Weiterleitung an
+    /// `which_in_path`/`which_in` – deren PATH-Lookup-Logik selbst ist unten
+    /// (`which_in_finds_executable_candidate` etc.) hermetisch gegen einen
+    /// expliziten PATH-Wert getestet. Ein Test von `find_tool` gegen den
+    /// echten `$PATH` würde diesen Prozessweiten Zustand global verändern
+    /// müssen und wäre damit parallel zu anderen Tests unsicher – deshalb
+    /// hier bewusst kein eigener Test, nur die Weiterleitung selbst (eine
+    /// Zeile, siehe `impl Platform for Unix`).
+    ///
+    /// Reiner Rauchtest: unabhängig davon, ob `/proc` existiert oder ein
+    /// Steam-Prozess läuft, darf der Aufruf nicht abstürzen. Das
+    /// tatsächliche Erkennungsverhalten hängt vom laufenden System ab und
+    /// lässt sich ohne Prozess-Mocking nicht deterministisch prüfen.
+    #[test]
+    fn steam_is_running_does_not_panic() {
+        let _ = Unix::steam_is_running();
     }
 
     #[test]

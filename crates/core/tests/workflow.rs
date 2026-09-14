@@ -130,7 +130,7 @@ fn reconcile_catches_manual_interventions() {
     // Jemand kopiert ein Pak von Hand hinein – die Engine würde es ungesteuert laden.
     std::fs::write(paths.mods_dir().join("vonhand.pak"), b"X").unwrap();
 
-    let result = cfg.reconcile(&paths.list_paks().unwrap());
+    let result = cfg.reconcile(&paths.list_paks().unwrap(), &std::collections::HashMap::new());
 
     assert_eq!(result.added, vec!["vonhand.pak"]);
     assert_eq!(cfg.entries.len(), 1);

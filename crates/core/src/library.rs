@@ -26,6 +26,32 @@ pub struct ModInfo {
     /// Pfad des Archivs oder der Datei, aus der importiert wurde.
     #[serde(default)]
     pub source: Option<String>,
+
+    /// Aktivierungszustand, wie ihn `pak_config.yaml` beim letzten
+    /// erfolgreichen `persist()` für dieses Pak trug. Dient
+    /// `PakConfig::reconcile` dazu, ein zwischenzeitlich verschwundenes und
+    /// wieder aufgetauchtes Pak (Spec §9 R3, z. B. nach einem Steam-Update)
+    /// mit seinem vorherigen Zustand zurückzustellen, statt es wie ein nie
+    /// zuvor gesehenes Pak aktiv ans Ende zu hängen. `#[serde(default)]`,
+    /// damit ältere `library.json`-Dateien ohne dieses Feld weiter laden.
+    #[serde(default)]
+    pub last_known_disabled: bool,
+    /// Position in `pak_config.yaml`, wie sie beim letzten erfolgreichen
+    /// `persist()` für dieses Pak galt – siehe `last_known_disabled`.
+    #[serde(default)]
+    pub last_known_position: usize,
+
+    /// Größe und Änderungszeit der Pak-Datei zum Zeitpunkt, als `hash`
+    /// zuletzt bestätigt wurde. Dient `detect_altered` als billigem
+    /// Vorfilter (ein `stat`-Aufruf statt eines vollständigen Hashs über
+    /// eine ggf. mehrere Gigabyte große Datei): weichen Größe oder
+    /// Änderungszeit der Datei auf der Platte von diesen Werten ab, lohnt
+    /// sich ein tatsächlicher Hash-Vergleich; stimmen beide überein, ist ein
+    /// Hash-Vergleich unnötig. `#[serde(default)]`, damit ältere
+    /// `library.json`-Dateien ohne dieses Feld weiter laden (der erste Lauf
+    /// danach hasht dann einmalig, statt der Abweichung blind zu vertrauen).
+    #[serde(default)]
+    pub mtime: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -75,6 +101,67 @@ impl Library {
     pub fn find_by_hash(&self, hash: &str) -> Option<&ModInfo> {
         self.mods.values().find(|m| m.hash == hash)
     }
+
+    /// Erkennt Paks, deren Inhalt außerhalb des Loaders verändert wurde
+    /// (Spec §6.3, dritter Abgleichsfall: Hash weicht von `library.json`
+    /// ab). Nur Paks, die der Bibliothek bereits bekannt sind, werden
+    /// geprüft – für ein unbekanntes Pak gibt es nichts, wogegen verglichen
+    /// werden könnte (das behandelt bereits `PakConfig::reconcile`s
+    /// `added`-Fall).
+    ///
+    /// Ein vollständiger Hash über jede (ggf. mehrere Gigabyte große) Datei
+    /// bei jedem einzelnen Aufruf ist nicht vertretbar. Deshalb zuerst ein
+    /// billiger Vorfilter: Größe und Änderungszeit gegen die zuletzt
+    /// bestätigten Werte (`ModInfo::size`/`ModInfo::mtime`) vergleichen –
+    /// ein `stat`-Aufruf statt eines vollständigen Lesens. Nur wenn einer
+    /// der beiden Werte abweicht, wird tatsächlich gehasht. Bestätigt der
+    /// Hash trotzdem den unveränderten Inhalt (z. B. nach einem `touch` ohne
+    /// Inhaltsänderung), wird die Vorfilter-Information aufgefrischt, damit
+    /// künftige Läufe nicht erneut hashen müssen – der eigentliche `hash`
+    /// bleibt dabei unangetastet, er bleibt der Fingerabdruck der zuletzt
+    /// importierten/bestätigten Version für die Dublettenerkennung beim
+    /// Import.
+    ///
+    /// Eine Datei, die laut `present` existieren sollte, aber nicht (mehr)
+    /// gelesen werden kann, wird stillschweigend übersprungen – das ist der
+    /// Fall, den `PakConfig::reconcile`s `removed` bereits meldet.
+    pub fn detect_altered(&mut self, mods_dir: &Path, present: &[String]) -> Result<Vec<String>> {
+        let mut altered = Vec::new();
+
+        for pak in present {
+            let Some(info) = self.mods.get(pak) else { continue };
+
+            let path = mods_dir.join(pak);
+            let metadata = match std::fs::metadata(&path) {
+                Ok(m) => m,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(Error::io(&path, e)),
+            };
+
+            let size = metadata.len();
+            let mtime = metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs());
+
+            if size == info.size && mtime == info.mtime {
+                continue;
+            }
+
+            let hash = hash_file(&path)?;
+            if hash == info.hash {
+                if let Some(entry) = self.mods.get_mut(pak) {
+                    entry.size = size;
+                    entry.mtime = mtime;
+                }
+            } else {
+                altered.push(pak.clone());
+            }
+        }
+
+        Ok(altered)
+    }
 }
 
 /// blake3-Hash einer Datei, streamend gelesen – Paks können Gigabytes groß sein.
@@ -101,6 +188,9 @@ mod tests {
             size: 42,
             imported_at: "2026-09-12T18:00:00Z".to_string(),
             source: None,
+            last_known_disabled: false,
+            last_known_position: 0,
+            mtime: None,
         }
     }
 
@@ -179,5 +269,122 @@ mod tests {
             !message.contains("expected") && !message.contains("invalid"),
             "Fehlermeldung soll auf Deutsch sein, nicht die rohe serde_json-Meldung enthalten: {message}"
         );
+    }
+
+    // --- detect_altered ---------------------------------------------------
+
+    fn write_pak(mods_dir: &Path, name: &str, content: &[u8]) -> std::fs::Metadata {
+        std::fs::create_dir_all(mods_dir).unwrap();
+        let path = mods_dir.join(name);
+        std::fs::write(&path, content).unwrap();
+        std::fs::metadata(&path).unwrap()
+    }
+
+    fn info_matching(pak: &str, metadata: &std::fs::Metadata, hash: &str) -> ModInfo {
+        let mut m = info(pak, hash);
+        m.size = metadata.len();
+        m.mtime = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+        m
+    }
+
+    #[test]
+    fn detect_altered_ignores_an_unchanged_pak_without_hashing() {
+        let dir = tempfile::tempdir().unwrap();
+        let metadata = write_pak(dir.path(), "a.pak", b"INHALT");
+        let hash = hash_file(&dir.path().join("a.pak")).unwrap();
+
+        let mut lib = Library::default();
+        lib.mods.insert("a.pak".into(), info_matching("a.pak", &metadata, &hash));
+
+        let altered = lib.detect_altered(dir.path(), &["a.pak".into()]).unwrap();
+
+        assert!(altered.is_empty());
+    }
+
+    /// Der eigentliche Zweck von `detect_altered`: ein Pak, dessen Inhalt
+    /// außerhalb des Loaders ersetzt wurde (anderer Hash bei abweichender
+    /// Größe/Änderungszeit), muss als verändert gemeldet werden (Spec §6.3,
+    /// dritter Abgleichsfall).
+    #[test]
+    fn detect_altered_reports_a_pak_whose_content_was_replaced_outside_the_loader() {
+        let dir = tempfile::tempdir().unwrap();
+        let metadata = write_pak(dir.path(), "a.pak", b"URSPRUENGLICH");
+        let hash = hash_file(&dir.path().join("a.pak")).unwrap();
+
+        let mut lib = Library::default();
+        lib.mods.insert("a.pak".into(), info_matching("a.pak", &metadata, &hash));
+
+        // Von Hand ersetzt, ohne den Loader – Größe und Inhalt ändern sich.
+        std::fs::write(dir.path().join("a.pak"), b"ERSETZT MIT ANDEREM INHALT").unwrap();
+
+        let altered = lib.detect_altered(dir.path(), &["a.pak".into()]).unwrap();
+
+        assert_eq!(altered, vec!["a.pak"]);
+        assert_eq!(
+            lib.mods["a.pak"].hash, hash,
+            "der gespeicherte Hash bleibt der der zuletzt importierten Version, \
+             sonst würde ein späterer Re-Import derselben Originaldatei nicht mehr \
+             als Dublette erkannt"
+        );
+    }
+
+    /// Ein Pak, das der Bibliothek unbekannt ist (nie importiert, z. B. von
+    /// Hand hineinkopiert), hat nichts, wogegen verglichen werden könnte –
+    /// das ist der `added`-Fall von `PakConfig::reconcile`, nicht dieser.
+    #[test]
+    fn detect_altered_skips_a_pak_unknown_to_the_library() {
+        let dir = tempfile::tempdir().unwrap();
+        write_pak(dir.path(), "fremd.pak", b"X");
+
+        let mut lib = Library::default();
+        let altered = lib.detect_altered(dir.path(), &["fremd.pak".into()]).unwrap();
+
+        assert!(altered.is_empty());
+    }
+
+    /// Eine veränderte Änderungszeit ohne veränderten Inhalt (z. B. durch
+    /// `touch`, oder weil eine Kopie das Original bei gleichem Inhalt mit
+    /// neuem Zeitstempel ersetzt hat) ist kein "außerhalb verändert" – der
+    /// Hash bestätigt den unveränderten Inhalt. Der Vorfilter-Cache wird
+    /// trotzdem aufgefrischt, damit künftige Läufe nicht erneut hashen.
+    #[test]
+    fn detect_altered_refreshes_the_cache_on_a_false_positive_from_the_cheap_prefilter() {
+        let dir = tempfile::tempdir().unwrap();
+        let metadata = write_pak(dir.path(), "a.pak", b"UNVERAENDERT");
+        let hash = hash_file(&dir.path().join("a.pak")).unwrap();
+
+        let mut lib = Library::default();
+        let mut stale = info_matching("a.pak", &metadata, &hash);
+        // Absichtlich veraltete Änderungszeit, wie sie ein `touch` oder eine
+        // erneute Kopie mit unverändertem Inhalt hinterlassen könnte.
+        stale.mtime = stale.mtime.map(|t| t.saturating_sub(3600));
+        lib.mods.insert("a.pak".into(), stale);
+
+        let altered = lib.detect_altered(dir.path(), &["a.pak".into()]).unwrap();
+
+        assert!(altered.is_empty(), "unveränderter Inhalt darf nicht als verändert gelten");
+        assert_eq!(
+            lib.mods["a.pak"].mtime, metadata.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()),
+            "der Vorfilter-Cache muss nach der Bestätigung aufgefrischt werden"
+        );
+    }
+
+    /// Eine Datei, die laut Aufrufer vorhanden sein sollte, aber (z. B. in
+    /// einer seltenen Race-Bedingung zwischen `list_paks` und diesem Aufruf)
+    /// nicht mehr gelesen werden kann, darf `detect_altered` nicht scheitern
+    /// lassen – dieser Fall gehört `PakConfig::reconcile`s `removed`.
+    #[test]
+    fn detect_altered_skips_a_pak_that_disappeared_since_being_listed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut lib = Library::default();
+        lib.mods.insert("weg.pak".into(), info("weg.pak", "irrelevant"));
+
+        let altered = lib.detect_altered(dir.path(), &["weg.pak".into()]).unwrap();
+
+        assert!(altered.is_empty());
     }
 }

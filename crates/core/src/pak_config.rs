@@ -1,5 +1,6 @@
 use crate::atomic::write_atomic;
 use crate::error::{Error, Result};
+use std::collections::HashMap;
 use std::path::Path;
 use yaml_rust2::{Yaml, YamlLoader};
 
@@ -128,7 +129,24 @@ impl PakConfig {
     /// Bringt die Konfiguration mit dem tatsächlichen Verzeichnisinhalt in
     /// Einklang. Reihenfolge und Aktivierungszustand bestehender Einträge
     /// bleiben unangetastet.
-    pub fn reconcile(&mut self, present: &[String]) -> Reconciliation {
+    ///
+    /// `last_known` liefert, für Paks, die aktuell nicht in der Konfiguration
+    /// stehen, aber schon einmal einen bekannten Zustand hatten (siehe
+    /// `KnownState`), Aktivierung und Position aus dem letzten Mal, als sie
+    /// Teil der Konfiguration waren. Das ist die einzige Quelle, aus der ein
+    /// wieder aufgetauchtes Pak (z. B. nach einem Steam-Update, siehe
+    /// Spec §9 R3) seinen vorherigen Platz und Aktivierungszustand
+    /// zurückbekommt, statt – wie ein nie zuvor gesehenes Pak – aktiv ans
+    /// Ende gehängt zu werden. `pak_config.rs` kennt dabei bewusst nicht die
+    /// Bibliothek selbst (das würde die Modulschichtung umkehren, siehe
+    /// `library.rs`s Abhängigkeit in die andere Richtung); der Aufrufer
+    /// (z. B. `AppState::open`) baut diese Map aus `Library` und übergibt sie
+    /// explizit.
+    pub fn reconcile(
+        &mut self,
+        present: &[String],
+        last_known: &HashMap<String, KnownState>,
+    ) -> Reconciliation {
         let present_set: std::collections::HashSet<&str> =
             present.iter().map(String::as_str).collect();
 
@@ -145,32 +163,70 @@ impl PakConfig {
         // `present` ist eine `&[String]`, kein Set: ein Verzeichnis kann
         // denselben Namen zwar nicht doppelt enthalten, ein Aufrufer könnte
         // ihn aber doppelt melden. `known` wird deshalb beim Aufbau von
-        // `added` laufend erweitert (nicht nur einmal vorab berechnet), damit
-        // ein wiederholter Name nur einmal aufgenommen wird.
+        // `added`/`restored` laufend erweitert (nicht nur einmal vorab
+        // berechnet), damit ein wiederholter Name nur einmal aufgenommen wird.
         let mut known: std::collections::HashSet<&str> =
             self.entries.iter().map(|e| e.pak.as_str()).collect();
 
         let mut added: Vec<String> = Vec::new();
+        let mut restored: Vec<String> = Vec::new();
+        let mut fresh: Vec<String> = Vec::new();
+        let mut with_history: Vec<(String, &KnownState)> = Vec::new();
+
         for pak in present {
             if known.insert(pak.as_str()) {
                 added.push(pak.clone());
+                match last_known.get(pak.as_str()) {
+                    Some(state) => with_history.push((pak.clone(), state)),
+                    None => fresh.push(pak.clone()),
+                }
             }
         }
         added.sort();
 
-        for pak in &added {
+        // Bekannte Paks zuerst, an ihrer alten Position (aufsteigend
+        // sortiert, damit mehrere gleichzeitig wieder auftauchende Paks ihre
+        // relative Reihenfolge zueinander behalten). Erst danach werden nie
+        // zuvor gesehene Paks alphabetisch ans Ende gehängt – deren Position
+        // stand nirgends geschrieben, "ans Ende" ist die einzig sinnvolle Wahl.
+        with_history.sort_by_key(|(_, state)| state.position);
+        for (pak, state) in with_history {
+            let index = state.position.min(self.entries.len());
+            self.entries.insert(index, PakEntry { pak: pak.clone(), disabled: state.disabled });
+            restored.push(pak);
+        }
+        restored.sort();
+
+        fresh.sort();
+        for pak in &fresh {
             self.entries.push(PakEntry { pak: pak.clone(), disabled: false });
         }
 
-        Reconciliation { added, removed }
+        Reconciliation { added, restored, removed }
     }
+}
+
+/// Letzter bekannter Zustand eines Paks, das aktuell nicht (mehr) in der
+/// Konfiguration steht – Aktivierung und Position, wie sie beim letzten
+/// `persist()` geschrieben wurden. Ermöglicht `reconcile`, ein wieder
+/// aufgetauchtes Pak an seinen alten Platz zurückzustellen, statt es wie ein
+/// unbekanntes Pak aktiv ans Ende zu hängen (siehe Spec §9 R3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KnownState {
+    pub disabled: bool,
+    pub position: usize,
 }
 
 /// Was ein Abgleich zwischen Verzeichnis und Konfiguration verändert hat.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Reconciliation {
-    /// Paks, die im Verzeichnis lagen, aber nicht in der Konfiguration standen.
+    /// Alle Paks, die im Verzeichnis lagen, aber nicht in der Konfiguration
+    /// standen – Vereinigung aus `restored` (bekannt) und den darüber hinaus
+    /// neu hinzugekommenen, nie zuvor gesehenen Paks.
     pub added: Vec<String>,
+    /// Teilmenge von `added`: Paks mit bekanntem vorherigem Zustand, die an
+    /// ihre alte Position mit ihrer alten Aktivierung zurückgestellt wurden.
+    pub restored: Vec<String>,
     /// Einträge, deren Datei fehlt.
     pub removed: Vec<String>,
 }
@@ -257,12 +313,16 @@ mod tests {
         cfg.entries.iter().map(|e| e.pak.as_str()).collect()
     }
 
+    fn no_history() -> HashMap<String, KnownState> {
+        HashMap::new()
+    }
+
     #[test]
     fn adds_unknown_paks_as_enabled_at_end() {
         // Nicht aufgeführte Paks lädt die Engine ohnehin – also aktiv aufnehmen,
         // damit sie steuerbar werden.
         let mut cfg = PakConfig { entries: vec![entry("a.pak", false)] };
-        let result = cfg.reconcile(&["a.pak".into(), "neu.pak".into()]);
+        let result = cfg.reconcile(&["a.pak".into(), "neu.pak".into()], &no_history());
 
         assert_eq!(names(&cfg), vec!["a.pak", "neu.pak"]);
         assert!(!cfg.entries[1].disabled);
@@ -275,7 +335,7 @@ mod tests {
         let mut cfg = PakConfig {
             entries: vec![entry("a.pak", false), entry("weg.pak", true)],
         };
-        let result = cfg.reconcile(&["a.pak".into()]);
+        let result = cfg.reconcile(&["a.pak".into()], &no_history());
 
         assert_eq!(names(&cfg), vec!["a.pak"]);
         assert_eq!(result.removed, vec!["weg.pak"]);
@@ -286,7 +346,7 @@ mod tests {
         let mut cfg = PakConfig {
             entries: vec![entry("z.pak", true), entry("a.pak", false)],
         };
-        cfg.reconcile(&["a.pak".into(), "z.pak".into()]);
+        cfg.reconcile(&["a.pak".into(), "z.pak".into()], &no_history());
 
         assert_eq!(names(&cfg), vec!["z.pak", "a.pak"], "Reihenfolge darf sich nicht ändern");
         assert!(cfg.entries[0].disabled, "Deaktivierung darf nicht verloren gehen");
@@ -295,7 +355,7 @@ mod tests {
     #[test]
     fn adds_multiple_new_paks_alphabetically() {
         let mut cfg = PakConfig::default();
-        let result = cfg.reconcile(&["b.pak".into(), "a.pak".into()]);
+        let result = cfg.reconcile(&["b.pak".into(), "a.pak".into()], &no_history());
 
         assert_eq!(names(&cfg), vec!["a.pak", "b.pak"]);
         assert_eq!(result.added, vec!["a.pak", "b.pak"]);
@@ -304,7 +364,7 @@ mod tests {
     #[test]
     fn reconcile_without_change_reports_nothing() {
         let mut cfg = PakConfig { entries: vec![entry("a.pak", false)] };
-        let result = cfg.reconcile(&["a.pak".into()]);
+        let result = cfg.reconcile(&["a.pak".into()], &no_history());
 
         assert!(result.is_empty());
     }
@@ -318,7 +378,7 @@ mod tests {
     #[test]
     fn deduplicates_repeatedly_reported_filenames() {
         let mut cfg = PakConfig::default();
-        let result = cfg.reconcile(&["a.pak".into(), "a.pak".into()]);
+        let result = cfg.reconcile(&["a.pak".into(), "a.pak".into()], &no_history());
 
         assert_eq!(names(&cfg), vec!["a.pak"], "darf keinen doppelten Eintrag erzeugen");
         assert_eq!(result.added, vec!["a.pak"]);
@@ -334,7 +394,7 @@ mod tests {
         let mut cfg = PakConfig {
             entries: vec![entry("a.pak", false), entry("a.pak", true)],
         };
-        let result = cfg.reconcile(&["a.pak".into()]);
+        let result = cfg.reconcile(&["a.pak".into()], &no_history());
 
         assert_eq!(
             cfg.entries,
@@ -342,6 +402,80 @@ mod tests {
             "bestehende Duplikate werden weder entfernt noch verändert"
         );
         assert!(result.is_empty(), "ein bereits bekannter Name ist kein neuer Fund");
+    }
+
+    // --- Wiederherstellung über bekannten Zustand (KnownState) ----------
+
+    /// Der zentrale Fall aus Spec §9 R3: ein Pak verschwindet (z. B. durch
+    /// ein Steam-Update), wird abgeglichen (und damit aus der Konfiguration
+    /// entfernt), taucht später wieder auf – und muss dann an seine alte
+    /// Position mit seinem alten Aktivierungszustand zurückkehren, statt wie
+    /// ein nie zuvor gesehenes Pak aktiv ans Ende gehängt zu werden.
+    #[test]
+    fn a_pak_that_reappears_is_restored_to_its_previous_state_and_position() {
+        let mut cfg = PakConfig {
+            entries: vec![entry("a.pak", false), entry("c.pak", false)],
+        };
+        let mut history = HashMap::new();
+        history.insert("b.pak".to_string(), KnownState { disabled: true, position: 1 });
+
+        let result = cfg.reconcile(&["a.pak".into(), "b.pak".into(), "c.pak".into()], &history);
+
+        assert_eq!(
+            names(&cfg),
+            vec!["a.pak", "b.pak", "c.pak"],
+            "b.pak muss an seine alte Position (1) zurückkehren"
+        );
+        assert!(cfg.entries[1].disabled, "b.pak war deaktiviert und muss es wieder sein");
+        assert_eq!(result.added, vec!["b.pak"]);
+        assert_eq!(result.restored, vec!["b.pak"]);
+        assert!(result.removed.is_empty());
+    }
+
+    /// Ein Pak ohne bekannten Zustand (nie zuvor in der Bibliothek gesehen)
+    /// behält das heutige Verhalten: aktiv ans Ende, nicht `restored`.
+    #[test]
+    fn a_pak_without_history_is_still_added_enabled_at_the_end() {
+        let mut cfg = PakConfig { entries: vec![entry("a.pak", false)] };
+
+        let result = cfg.reconcile(&["a.pak".into(), "neu.pak".into()], &no_history());
+
+        assert_eq!(names(&cfg), vec!["a.pak", "neu.pak"]);
+        assert!(!cfg.entries[1].disabled);
+        assert_eq!(result.added, vec!["neu.pak"]);
+        assert!(result.restored.is_empty(), "ohne bekannten Zustand gibt es nichts wiederherzustellen");
+    }
+
+    /// Mehrere gleichzeitig wieder auftauchende, bekannte Paks müssen an
+    /// ihren jeweiligen alten Positionen landen, in aufsteigender
+    /// Positions-Reihenfolge zueinander eingefügt.
+    #[test]
+    fn multiple_reappearing_known_paks_are_inserted_at_their_own_positions() {
+        let mut cfg = PakConfig { entries: vec![entry("b.pak", false)] };
+        let mut history = HashMap::new();
+        history.insert("a.pak".to_string(), KnownState { disabled: false, position: 0 });
+        history.insert("c.pak".to_string(), KnownState { disabled: true, position: 2 });
+
+        cfg.reconcile(&["a.pak".into(), "b.pak".into(), "c.pak".into()], &history);
+
+        assert_eq!(names(&cfg), vec!["a.pak", "b.pak", "c.pak"]);
+        assert!(cfg.entries[2].disabled);
+    }
+
+    /// Eine über den bisherigen Verzeichnisumfang hinausgehende gespeicherte
+    /// Position (z. B. weil zwischenzeitlich andere Einträge entfernt
+    /// wurden) darf nicht außerhalb des Vektors einfügen – sie wird auf das
+    /// Ende geklemmt.
+    #[test]
+    fn a_stale_out_of_range_position_is_clamped_to_the_end() {
+        let mut cfg = PakConfig::default();
+        let mut history = HashMap::new();
+        history.insert("a.pak".to_string(), KnownState { disabled: true, position: 99 });
+
+        cfg.reconcile(&["a.pak".into()], &history);
+
+        assert_eq!(names(&cfg), vec!["a.pak"]);
+        assert!(cfg.entries[0].disabled);
     }
 
     #[test]

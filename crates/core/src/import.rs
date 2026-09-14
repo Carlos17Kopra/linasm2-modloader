@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use crate::library::{hash_file, Library, ModInfo};
 use crate::pak_config::{PakConfig, PakEntry};
 use crate::paths::GamePaths;
-use crate::platform::unix::which_in_path;
+use crate::platform::{Current, Platform};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -152,7 +152,7 @@ fn extract_rar(archive: &Path, into: &Path) -> Result<Vec<PathBuf>> {
     let mut tool_ran = false;
 
     for (name, args) in &tools {
-        let Some(tool_path) = which_in_path(name) else { continue };
+        let Some(tool_path) = Current::find_tool(name) else { continue };
         tool_ran = true;
         let mut cmd = std::process::Command::new(&tool_path);
         if *name == "unar" {
@@ -306,6 +306,25 @@ pub fn import_pak(
 
     let display_name = strip_pak_suffix(&final_name).replace(['_', '-'], " ");
 
+    // Nach dem Ablegen frisch stat'en statt die vor dem Verschieben/Kopieren
+    // gelesenen Metadaten wiederzuverwenden: `fs::copy` gibt keine Garantie,
+    // dass die Änderungszeit erhalten bleibt, und `detect_altered`s billiger
+    // Vorfilter muss den tatsächlichen Zustand der jetzt im Mods-Verzeichnis
+    // liegenden Datei kennen. Schlägt der Stat-Aufruf ausnahmsweise fehl,
+    // bleibt `mtime` `None` – der nächste Abgleich hasht dann einmalig statt
+    // der fehlenden Information blind zu vertrauen.
+    let mtime = std::fs::metadata(&target)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+
+    // Position, die der Eintrag gleich unten in `cfg.entries` erhält – schon
+    // hier vermerkt, damit `last_known_position` von Anfang an stimmt und
+    // nicht erst auf den nächsten `persist()` warten muss (siehe
+    // `ModInfo::last_known_position`).
+    let position = cfg.entries.len();
+
     lib.mods.insert(
         final_name.clone(),
         ModInfo {
@@ -319,6 +338,12 @@ pub fn import_pak(
             size,
             imported_at: now_rfc3339(),
             source: source.map(str::to_string),
+            // Ein Import trägt immer deaktiviert ans Ende ein (siehe
+            // Doc-Kommentar oben) – das ist zugleich der erste bekannte
+            // Zustand für `PakConfig::reconcile`s Wiederherstellung.
+            last_known_disabled: true,
+            last_known_position: position,
+            mtime,
         },
     );
 
@@ -328,7 +353,7 @@ pub fn import_pak(
 }
 
 /// RFC-3339-Zeitstempel für "jetzt" in UTC, ohne Datums-Crate.
-pub(crate) fn now_rfc3339() -> String {
+pub fn now_rfc3339() -> String {
     let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -339,7 +364,7 @@ pub(crate) fn now_rfc3339() -> String {
 /// Formatiert eine Unix-Zeit (Sekunden seit der Epoche, UTC) als RFC-3339.
 ///
 /// Kalenderrechnung nach Howard Hinnants "civil_from_days"-Algorithmus.
-pub(crate) fn format_utc(unix: i64) -> String {
+pub fn format_utc(unix: i64) -> String {
     let days = unix.div_euclid(86_400);
     let remainder = unix.rem_euclid(86_400);
     let z = days + 719_468;
@@ -579,7 +604,7 @@ mod tests {
         std::fs::create_dir_all(&target).unwrap();
 
         let any_tool_available =
-            ["unar", "7z", "7zz"].iter().any(|name| which_in_path(name).is_some());
+            ["unar", "7z", "7zz"].iter().any(|name| Current::find_tool(name).is_some());
         let error = extract_paks(&archive, &target).unwrap_err();
 
         if any_tool_available {

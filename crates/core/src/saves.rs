@@ -12,6 +12,7 @@
 use crate::atomic::write_atomic;
 use crate::error::{Error, Result};
 use crate::import::now_rfc3339;
+use crate::platform::{Current, Platform};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -534,27 +535,13 @@ pub fn restore(entry: &BackupEntry, save_dir: &Path, backup_root: &Path) -> Resu
 /// eine Wiederherstellung im Hintergrund überschreiben – das ist der
 /// wahrscheinlichste Weg zu Datenverlust bei dieser Funktion.
 ///
-/// Erkannt wird ausschließlich ein Prozess, dessen `/proc/<pid>/comm` exakt
-/// `steam` lautet. Hilfsprozesse wie `steamwebhelper` zählen bewusst
-/// nicht: sie sind Browser-Unterprozesse ohne eigene
-/// Cloud-Synchronisation, und ein Treffer allein auf "enthält steam" würde
-/// bei jedem `steamwebhelper` oder `steamerrorreporter` anschlagen und die
-/// Warnung wertlos machen. Fehlt `/proc` (z. B. auf einem System ohne
-/// procfs), wird `false` zurückgegeben statt eines Fehlers – die Prüfung
-/// ist eine Vorsichtsmaßnahme, kein hartes Erfordernis.
+/// Öffentlicher Einstiegspunkt, der an `Platform::steam_is_running`
+/// weiterreicht: die Prozesserkennung selbst (z. B. `/proc` unter Linux) ist
+/// plattformabhängig und gehört deshalb hinter den `Platform`-Trait (siehe
+/// `platform::unix::Unix::steam_is_running` für die Details der Erkennung),
+/// nicht fest verdrahtet hier.
 pub fn steam_is_running() -> bool {
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return false;
-    };
-    for entry in entries.filter_map(std::result::Result::ok) {
-        let comm = entry.path().join("comm");
-        if let Ok(name) = std::fs::read_to_string(&comm) {
-            if name.trim() == "steam" {
-                return true;
-            }
-        }
-    }
-    false
+    Current::steam_is_running()
 }
 
 #[cfg(test)]

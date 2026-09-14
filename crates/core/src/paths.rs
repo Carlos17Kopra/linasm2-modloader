@@ -25,19 +25,51 @@ impl GamePaths {
     }
 
     /// Findet das Spiel über die Steam-Bibliotheken.
+    ///
+    /// `steamlocate` deckt den Regelfall ab (Standard- wie benutzerdefinierte
+    /// Bibliotheken über `libraryfolders.vdf`, Flatpak-Steam eingeschlossen).
+    /// Findet es überhaupt keine Steam-Installation, greift als Rückfall
+    /// `Platform::steam_roots` (siehe `find_in_roots`) – bislang deklariert,
+    /// aber ungenutzt, obwohl `steamlocate` selbst intern denselben
+    /// Wurzel-Suchraum abdeckt. Der Rückfall prüft nur die Standard-Bibliothek
+    /// direkt unter jeder Wurzel, nicht deren eigene
+    /// `libraryfolders.vdf` – das deckt `steamlocate` im Erfolgsfall bereits
+    /// ab, und wenn schon dieses robustere Vorgehen scheitert, ist eine
+    /// ungewöhnliche Custom-Bibliothek ohnehin nur noch manuell über
+    /// `settings.toml`s `game_dir` erreichbar.
     pub fn discover() -> Result<Self> {
-        let steam = steamlocate::SteamDir::locate().map_err(|_| Error::SteamNotFound)?;
-        let (app, library) = steam
-            .find_app(APP_ID)
-            .map_err(|_| Error::GameNotFound(APP_ID))?
-            .ok_or(Error::GameNotFound(APP_ID))?;
+        match steamlocate::SteamDir::locate() {
+            Ok(steam) => {
+                let (app, library) = steam
+                    .find_app(APP_ID)
+                    .map_err(|_| Error::GameNotFound(APP_ID))?
+                    .ok_or(Error::GameNotFound(APP_ID))?;
 
-        let game_dir = library
-            .path()
-            .join("steamapps/common")
-            .join(&app.install_dir);
+                let game_dir = library
+                    .path()
+                    .join("steamapps/common")
+                    .join(&app.install_dir);
 
-        Self::from_game_dir(&game_dir, library.path())
+                Self::from_game_dir(&game_dir, library.path())
+            }
+            Err(_) => Self::find_in_roots(&Current::steam_roots()),
+        }
+    }
+
+    /// Prüft jede der übergebenen Steam-Wurzeln direkt auf eine
+    /// Space-Marine-2-Installation unter `steamapps/common/Space Marine 2`.
+    /// Eigene Funktion (statt inline in `discover`), damit sie ohne Umweg
+    /// über `$HOME` (von dem `Platform::steam_roots` abhängt) mit
+    /// synthetischen Wurzeln aus einem `tempfile`-Fixture getestet werden
+    /// kann.
+    fn find_in_roots(roots: &[PathBuf]) -> Result<Self> {
+        for root in roots {
+            let game_dir = root.join("steamapps/common/Space Marine 2");
+            if let Ok(paths) = Self::from_game_dir(&game_dir, root) {
+                return Ok(paths);
+            }
+        }
+        Err(Error::SteamNotFound)
     }
 
     pub fn mods_dir(&self) -> PathBuf {
@@ -163,6 +195,29 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let err = GamePaths::from_game_dir(tmp.path(), tmp.path()).unwrap_err();
         assert!(matches!(err, Error::NotAGameDir(_)));
+    }
+
+    // --- find_in_roots (Rückfall für discover(), wenn steamlocate scheitert) --
+
+    #[test]
+    fn find_in_roots_locates_the_game_in_a_later_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let empty_root = tmp.path().join("KeinSteamHier");
+        let real_root = tmp.path().join("SteamRoot");
+        let game = real_root.join("steamapps/common/Space Marine 2");
+        std::fs::create_dir_all(game.join("client_pc/root/mods")).unwrap();
+
+        let paths = GamePaths::find_in_roots(&[empty_root, real_root.clone()]).unwrap();
+
+        assert_eq!(paths.game_dir, game);
+        assert_eq!(paths.library_dir, real_root, "Bibliothek ist die Wurzel selbst");
+    }
+
+    #[test]
+    fn find_in_roots_fails_when_no_root_has_the_game() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = GamePaths::find_in_roots(&[tmp.path().join("a"), tmp.path().join("b")]).unwrap_err();
+        assert!(matches!(err, Error::SteamNotFound));
     }
 
     #[test]

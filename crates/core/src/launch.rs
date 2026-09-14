@@ -51,7 +51,7 @@ pub fn launch(paths: &GamePaths, mode: LaunchMode) -> Result<()> {
 /// EAC-lose Start ist verfügbar". Die GUI blendet die Option danach ein
 /// oder aus.
 pub fn no_eac_available() -> bool {
-    crate::platform::unix::Unix::umu_launcher().is_some()
+    Current::direct_launch_available()
 }
 
 /// Baut die Umgebungsvariablen für den EAC-losen Direktstart.
@@ -97,12 +97,24 @@ mod tests {
         let (_tmp, paths) = game_dir_fixture();
 
         // Die .exe existiert nicht – der Fehler muss das benennen, nicht umu.
+        // Eine bloße Substring-Prüfung auf "Retail.exe" wäre hier
+        // unfalsifizierbar: `Error::io` rendert den übergebenen Pfad immer
+        // in die Meldung, unabhängig vom eigentlichen Text – ein Test, der
+        // nur den gerenderten String prüft, würde also selbst dann grün
+        // bleiben, wenn hier versehentlich ein völlig anderer Fehler mit
+        // demselben Pfad entstünde. Stattdessen wird auf die Variante und
+        // den tatsächlichen Pfad im Fehler selbst geprüft.
         let fehler = launch(&paths, LaunchMode::NoEac).unwrap_err();
-        let text = fehler.to_string();
-        assert!(
-            text.contains("Retail.exe") || text.contains("nicht gefunden"),
-            "unklare Meldung: {text}"
-        );
+        match fehler {
+            Error::Io { path, .. } => {
+                assert!(
+                    path.to_string_lossy().contains("Retail.exe"),
+                    "Fehler muss den Pfad der Executable nennen, war: {}",
+                    path.display()
+                );
+            }
+            other => panic!("erwartete Error::Io, bekam {other:?}"),
+        }
     }
 
     #[test]

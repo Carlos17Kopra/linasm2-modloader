@@ -64,3 +64,58 @@ impl Error {
         Error::Io { path: path.into(), source }
     }
 }
+
+/// Übersetzt einen `toml`-Deserialisierungsfehler in eine deutsche Meldung
+/// mit Zeile und Spalte, statt die rohe (englische) Bibliotheksmeldung an
+/// den Nutzer weiterzureichen. Analog zu `Library::load`s Behandlung von
+/// `serde_json`-Fehlern (Zeile/Spalte dort direkt von `serde_json`
+/// geliefert; `toml::de::Error` liefert nur einen Byte-Bereich über
+/// `span()`, aus dem Zeile/Spalte hier selbst berechnet werden). Geteilt
+/// zwischen `settings.rs` und `profile.rs`, den beiden TOML-Ladestellen.
+pub(crate) fn describe_toml_error(text: &str, error: &toml::de::Error) -> String {
+    match error.span() {
+        Some(span) => {
+            let (line, column) = line_and_column(text, span.start);
+            format!("ungültiges TOML (Zeile {line}, Spalte {column})")
+        }
+        None => "ungültiges TOML".to_string(),
+    }
+}
+
+/// 1-basierte Zeile und Spalte (in Zeichen, nicht Bytes) des gegebenen
+/// Byte-Offsets in `text`.
+fn line_and_column(text: &str, byte_offset: usize) -> (usize, usize) {
+    let mut line = 1usize;
+    let mut column = 1usize;
+    for (i, ch) in text.char_indices() {
+        if i >= byte_offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+    (line, column)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn describe_toml_error_names_line_and_column() {
+        let text = "gueltig = 1\nkaputt : : :\n";
+        let error = toml::from_str::<toml::Value>(text).unwrap_err();
+
+        let message = describe_toml_error(text, &error);
+
+        assert!(message.contains("Zeile 2"), "{message}");
+        assert!(
+            !message.contains("expected") && !message.contains("invalid"),
+            "Meldung soll auf Deutsch sein, nicht die rohe toml-Meldung enthalten: {message}"
+        );
+    }
+}

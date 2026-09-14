@@ -114,7 +114,8 @@ impl Profile {
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path).map_err(|e| Error::io(path, e))?;
         toml::from_str(&text).map_err(|e| {
-            Error::io(path, std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+            let message = crate::error::describe_toml_error(&text, &e);
+            Error::io(path, std::io::Error::new(std::io::ErrorKind::InvalidData, message))
         })
     }
 
@@ -325,6 +326,27 @@ mod tests {
     fn list_on_missing_directory_yields_empty_list() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(list_profiles(&dir.path().join("gibt_es_nicht")).unwrap(), Vec::new());
+    }
+
+    /// Analog zu `settings.rs`s gleichnamigem Test: `Profile::load` muss
+    /// einen kaputten TOML-Inhalt mit Pfad und auf Deutsch melden, nicht mit
+    /// der rohen (englischen, mehrzeiligen) `toml::de::Error`-Meldung.
+    #[test]
+    fn corrupt_file_is_reported_with_path_in_german() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kaputt.toml");
+        std::fs::write(&path, b"das ist kein toml : : :").unwrap();
+
+        let err = Profile::load(&path).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains(path.to_str().unwrap()),
+            "Fehlermeldung muss den Pfad enthalten: {message}"
+        );
+        assert!(
+            !message.contains("expected") && !message.contains("invalid"),
+            "Fehlermeldung soll auf Deutsch sein, nicht die rohe toml-Meldung enthalten: {message}"
+        );
     }
 
     #[test]

@@ -4,10 +4,11 @@
 
 use anyhow::{Context, Result};
 use sm2_core::library::Library;
-use sm2_core::pak_config::PakConfig;
+use sm2_core::pak_config::{KnownState, PakConfig};
 use sm2_core::paths::{app_dirs, AppDirs, GamePaths};
 use sm2_core::settings::Settings;
 use sm2_core::Error;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct AppState {
@@ -53,20 +54,9 @@ impl AppState {
             )?,
         };
 
-        let library = Library::load(&dirs.data.join("library.json"))?;
+        let mut library = Library::load(&dirs.data.join("library.json"))?;
         let mut config = PakConfig::load(&paths.pak_config_path())?;
-
-        let reconciliation = config.reconcile(&paths.list_paks()?);
-        for pak in &reconciliation.added {
-            eprintln!(
-                "Hinweis: {pak} war nicht in pak_config.yaml eingetragen und wurde aktiv übernommen."
-            );
-        }
-        for pak in &reconciliation.removed {
-            eprintln!(
-                "Hinweis: {pak} steht in pak_config.yaml, die Datei fehlt aber – Eintrag entfernt."
-            );
-        }
+        reconcile_and_report(&mut library, &mut config, &paths)?;
 
         Ok(Self { paths, settings, dirs, library, config })
     }
@@ -85,8 +75,23 @@ impl AppState {
     /// Prüft vorher, ob das Mods-Verzeichnis überhaupt beschreibbar ist –
     /// hier und nicht beim bloßen `open()`, damit rein lesende Kommandos an
     /// einem schreibgeschützten Verzeichnis nicht scheitern.
-    pub fn persist(&self) -> Result<()> {
+    ///
+    /// Aktualisiert außerdem für jedes Pak, das gerade Teil der
+    /// Konfiguration ist, `ModInfo::last_known_disabled`/
+    /// `last_known_position` in der Bibliothek (siehe deren Doc-Kommentare):
+    /// das ist der einzige Ort, an dem diese Werte geschrieben werden, und
+    /// die einzige Quelle, aus der `PakConfig::reconcile` ein später
+    /// wieder auftauchendes Pak an seinen alten Platz zurückstellen kann.
+    /// Ein Pak, das aktuell fehlt, wird hier bewusst nicht angefasst – sein
+    /// zuletzt bekannter Zustand bleibt genau deshalb erhalten.
+    pub fn persist(&mut self) -> Result<()> {
         check_write_permission(&self.paths.mods_dir())?;
+        for (position, entry) in self.config.entries.iter().enumerate() {
+            if let Some(mod_info) = self.library.mods.get_mut(&entry.pak) {
+                mod_info.last_known_disabled = entry.disabled;
+                mod_info.last_known_position = position;
+            }
+        }
         self.library.save(&self.dirs.data.join("library.json"))?;
         self.config.save(&self.paths.pak_config_path())?;
         Ok(())
@@ -99,6 +104,62 @@ impl AppState {
     pub fn backups_dir(&self) -> PathBuf {
         self.dirs.data.join("backups/saves")
     }
+}
+
+/// Gleicht `config` mit dem tatsächlichen Verzeichnisinhalt ab (Spec §6.3)
+/// und meldet jede Abweichung auf stderr. Eigene Funktion statt inline in
+/// `open()`, damit die Logik in Tests unabhängig von einer echten
+/// Spielinstallation (die `open()` über `discover()`/`settings.toml`
+/// verlangt) durchlaufen werden kann.
+///
+/// Baut den bekannten Zustand aus `library` für `PakConfig::reconcile` auf
+/// (siehe `KnownState`s Doc-Kommentar): `pak_config.rs` kennt die Bibliothek
+/// bewusst nicht selbst, um die Modulschichtung nicht umzukehren – die
+/// App-Schicht baut diese Map explizit und übergibt sie als Parameter.
+/// Prüft anschließend den dritten Abgleichsfall aus Spec §6.3 ("außerhalb
+/// verändert") über `Library::detect_altered`.
+fn reconcile_and_report(library: &mut Library, config: &mut PakConfig, paths: &GamePaths) -> Result<()> {
+    let present = paths.list_paks()?;
+
+    let known_state: HashMap<String, KnownState> = library
+        .mods
+        .values()
+        .map(|m| {
+            (m.pak.clone(), KnownState { disabled: m.last_known_disabled, position: m.last_known_position })
+        })
+        .collect();
+
+    let reconciliation = config.reconcile(&present, &known_state);
+    let restored: std::collections::HashSet<&str> =
+        reconciliation.restored.iter().map(String::as_str).collect();
+    for pak in &reconciliation.added {
+        if restored.contains(pak.as_str()) {
+            eprintln!(
+                "Hinweis: {pak} war zwischenzeitlich nicht vorhanden und wurde mit \
+                 vorherigem Aktivierungszustand und vorheriger Position wiederhergestellt."
+            );
+        } else {
+            eprintln!(
+                "Hinweis: {pak} war nicht in pak_config.yaml eingetragen und wurde aktiv übernommen."
+            );
+        }
+    }
+    for pak in &reconciliation.removed {
+        eprintln!("Hinweis: {pak} steht in pak_config.yaml, die Datei fehlt aber – Eintrag entfernt.");
+    }
+
+    // Nur Größe/Änderungszeit werden hier standardmäßig geprüft (siehe
+    // `Library::detect_altered`s Doc-Kommentar) – ein vollständiger Hash
+    // läuft nur, wenn dieser billige Vorfilter eine Abweichung anzeigt.
+    let altered = library.detect_altered(&paths.mods_dir(), &present)?;
+    for pak in &altered {
+        eprintln!(
+            "Hinweis: {pak} weicht vom zuletzt bekannten Stand ab – vermutlich außerhalb \
+             des Loaders verändert oder ersetzt."
+        );
+    }
+
+    Ok(())
 }
 
 /// Stellt fest, ob wir in `dir` schreiben können – bevor ein verändernder
@@ -140,6 +201,74 @@ pub(crate) fn test_fixture(base: &Path) -> AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sm2_core::library::ModInfo;
+    use sm2_core::pak_config::PakEntry;
+
+    fn minimal_mod_info(pak: &str) -> ModInfo {
+        ModInfo {
+            pak: pak.to_string(),
+            name: pak.to_string(),
+            author: None,
+            version: None,
+            nexus_id: None,
+            notes: None,
+            hash: "irrelevant".to_string(),
+            size: 1,
+            imported_at: "2026-09-12T18:00:00Z".to_string(),
+            source: None,
+            last_known_disabled: false,
+            last_known_position: 0,
+            mtime: None,
+        }
+    }
+
+    /// Der Kernfall aus dem Review (1a): ein Pak verschwindet (z. B. durch
+    /// ein Steam-Update, Spec §9 R3), `persist()` schreibt die dadurch
+    /// verkürzte Konfiguration, das Pak taucht wieder auf – und muss dann
+    /// mit seinem vorherigen Aktivierungszustand UND seiner vorherigen
+    /// Position zurückkehren, nicht enabled-alphabetisch ans Ende. Prüft die
+    /// tatsächliche Verdrahtung (persist() -> library.json -> reconcile),
+    /// nicht nur `PakConfig::reconcile` isoliert (das deckt schon
+    /// `pak_config.rs`s eigener Test ab).
+    #[test]
+    fn a_pak_that_disappears_and_reappears_keeps_its_previous_state_across_persist() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+        let mods_dir = state.paths.mods_dir();
+
+        for name in ["a.pak", "b.pak", "c.pak"] {
+            std::fs::write(mods_dir.join(name), b"INHALT").unwrap();
+            state.library.mods.insert(name.to_string(), minimal_mod_info(name));
+        }
+        state.config.entries = vec![
+            PakEntry { pak: "a.pak".into(), disabled: false },
+            PakEntry { pak: "b.pak".into(), disabled: true },
+            PakEntry { pak: "c.pak".into(), disabled: false },
+        ];
+
+        // Schreibt last_known_disabled/last_known_position für alle drei.
+        state.persist().unwrap();
+
+        // b.pak verschwindet (z. B. Steam-Update) und wird abgeglichen.
+        std::fs::remove_file(mods_dir.join("b.pak")).unwrap();
+        reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+        assert_eq!(
+            state.config.entries.iter().map(|e| e.pak.as_str()).collect::<Vec<_>>(),
+            vec!["a.pak", "c.pak"],
+            "b.pak muss durch den Abgleich entfernt werden"
+        );
+        // persist() schreibt die verkürzte Konfiguration; b.pak bleibt in der
+        // Bibliothek unangetastet (es ist nicht Teil von config.entries).
+        state.persist().unwrap();
+
+        // b.pak taucht wieder auf.
+        std::fs::write(mods_dir.join("b.pak"), b"INHALT").unwrap();
+        reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+
+        let names: Vec<&str> = state.config.entries.iter().map(|e| e.pak.as_str()).collect();
+        assert_eq!(names, vec!["a.pak", "b.pak", "c.pak"], "b.pak muss an seine alte Position zurückkehren");
+        assert!(state.config.entries[1].disabled, "b.pak war deaktiviert und muss es wieder sein");
+    }
 
     #[test]
     fn profiles_dir_and_backups_dir_are_under_the_data_dir() {
