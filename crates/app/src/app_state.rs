@@ -59,17 +59,7 @@ impl AppState {
         let mut config = PakConfig::load(&paths.pak_config_path())?;
         let cache_refreshed = reconcile_and_report(&mut library, &mut config, &paths)?;
         if cache_refreshed {
-            // `library.json` ist die eigene Datei des Loaders im
-            // Anwendungsdatenverzeichnis, nicht im (ggf. schreibgeschützten)
-            // Mods-Verzeichnis – dieses Schreiben verletzt die
-            // Nur-bei-verändernden-Befehlen-Politik von `persist()` also
-            // nicht, die sich auf `pak_config.yaml` bezieht (siehe dessen
-            // Doc-Kommentar). Ohne dieses sofortige Schreiben würde ein
-            // veraltetes `mtime` (Review-Punkt 2, z. B. jedes `library.json`
-            // von vor diesem Feld) bei jedem weiteren – auch rein lesenden –
-            // Aufruf erneut zu einem vollständigen Hash über womöglich
-            // mehrere Gigabyte große Paks führen.
-            library.save(&library_path)?;
+            save_library_cache_best_effort(&library, &library_path);
         }
 
         Ok(Self { paths, settings, dirs, library, config })
@@ -109,9 +99,15 @@ impl AppState {
     /// (einen bewusst schreibenden Aufruf), nicht `AppState::open()` – ein
     /// rein lesender Befehl wie `list` hasht ein neu entdecktes, von Hand
     /// kopiertes Pak also nicht (siehe Review-Punkt 2, derselbe Grundsatz).
-    /// Schlägt das Hashen fehl (Datei inzwischen wieder weg, keine
-    /// Leserechte), wird der Eintrag einfach übersprungen – beim nächsten
-    /// `reconcile` erscheint er ohnehin wieder unter `removed`.
+    ///
+    /// Schlägt das Hashen fehl, wird der Eintrag übersprungen (nicht
+    /// `persist()` insgesamt) und – konsistent mit `detect_altered`s eigenem
+    /// Umgang mit Lesefehlern – als deutsche Warnung gemeldet: verschwindet
+    /// die Datei einfach wieder, meldet sie das nächste `reconcile` ohnehin
+    /// unter `removed`, aber ein dauerhafter Leserechte-Fehler bei
+    /// unverändert vorhandener Datei würde sonst still und für immer
+    /// unbemerkt bleiben, statt dass der Nutzer erfährt, warum dieses Pak nie
+    /// eine Historie bekommt.
     pub fn persist(&mut self) -> Result<()> {
         check_write_permission(&self.paths.mods_dir())?;
         let mods_dir = self.paths.mods_dir();
@@ -121,11 +117,16 @@ impl AppState {
                     mod_info.last_known_disabled = entry.disabled;
                     mod_info.last_known_position = Some(position);
                 }
-                None => {
-                    if let Ok(info) = register_unknown_pak(&mods_dir, &entry.pak, entry.disabled, position) {
+                None => match register_unknown_pak(&mods_dir, &entry.pak, entry.disabled, position) {
+                    Ok(info) => {
                         self.library.mods.insert(entry.pak.clone(), info);
                     }
-                }
+                    Err(e) => eprintln!(
+                        "Warnung: {} konnte nicht für die Positions-/Aktivierungshistorie \
+                         registriert werden – {e}",
+                        entry.pak
+                    ),
+                },
             }
         }
         self.library.save(&self.dirs.data.join("library.json"))?;
@@ -220,6 +221,24 @@ fn reconcile_and_report(library: &mut Library, config: &mut PakConfig, paths: &G
     Ok(report.cache_refreshed)
 }
 
+/// Schreibt `library.json` nach einer reinen Cache-Auffrischung (siehe
+/// `Library::detect_altered`s `cache_refreshed`) – und zwar nur bestmöglich:
+/// schlägt das Schreiben fehl (z. B. weil das Anwendungsdatenverzeichnis
+/// zwar existiert, aber nicht beschreibbar ist), wird nur gewarnt, `open()`
+/// selbst schlägt NICHT fehl. Bis zu diesem Punkt sind Laden der Bibliothek
+/// und der Konfiguration bereits gelungen; ein hartes `?` hier würde also
+/// genau die Fehlerklasse wieder einführen ("jeder Befehl, auch
+/// `paths`/`list`, scheitert"), die durch das Einführen von
+/// `cache_refreshed` gerade erst beseitigt wurde – dieses Schreiben ist
+/// reine Cache-Pflege, kein Ergebnis, das der Nutzer mit seinem Aufruf
+/// beabsichtigt hat. Eigene Funktion, damit dieses Verhalten (warnen statt
+/// scheitern) unabhängig von einer echten Spielinstallation testbar ist.
+fn save_library_cache_best_effort(library: &Library, library_path: &Path) {
+    if let Err(e) = library.save(library_path) {
+        eprintln!("Warnung: Cache-Auffrischung in library.json konnte nicht gespeichert werden – {e}");
+    }
+}
+
 /// Baut für ein Pak, das in `config.entries` steht, aber (weil von Hand in
 /// `mods/` abgelegt statt über `import_pak` importiert) noch keinen
 /// `ModInfo`-Eintrag hat, einen minimalen Eintrag – siehe `persist()`s
@@ -230,7 +249,7 @@ fn register_unknown_pak(
     disabled: bool,
     position: usize,
 ) -> sm2_core::Result<sm2_core::library::ModInfo> {
-    use sm2_core::import::now_rfc3339;
+    use sm2_core::import::{now_rfc3339, strip_pak_suffix};
     use sm2_core::library::{hash_file, ModInfo};
 
     let path = mods_dir.join(pak);
@@ -242,9 +261,18 @@ fn register_unknown_pak(
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs());
 
+    // Dieselbe Ableitung wie `import_pak`s `display_name` (Groß-/
+    // Kleinschreibung unabhängige, nicht wiederholte `.pak`-Endung über
+    // `strip_pak_suffix`, dann Trennzeichen durch Leerzeichen) – nicht ein
+    // eigenes `trim_end_matches(".pak")`, das bei `MOD.PAK` gar nicht griffe
+    // und bei `a.pak.pak` mehrfach abschneiden würde, sonst könnten zwei
+    // baugleich abgelegte Paks unterschiedliche Anzeigenamen bekommen, je
+    // nachdem, ob sie importiert oder von Hand kopiert wurden.
+    let name = strip_pak_suffix(pak).replace(['_', '-'], " ");
+
     Ok(ModInfo {
         pak: pak.to_string(),
-        name: pak.trim_end_matches(".pak").to_string(),
+        name,
         author: None,
         version: None,
         nexus_id: None,
@@ -256,6 +284,7 @@ fn register_unknown_pak(
         last_known_disabled: disabled,
         last_known_position: Some(position),
         mtime,
+        known_altered: false,
     })
 }
 
@@ -316,6 +345,7 @@ mod tests {
             last_known_disabled: false,
             last_known_position: Some(0),
             mtime: None,
+            known_altered: false,
         }
     }
 
@@ -417,6 +447,101 @@ mod tests {
             state.config.entries[0].disabled,
             "die vorherige Deaktivierung muss zurückkehren, nicht enabled-alphabetisch"
         );
+    }
+
+    /// Review-Punkt 4 (dritte Runde): der Anzeigename eines von Hand
+    /// kopierten Pakets muss exakt derselben Ableitung folgen wie
+    /// `import_pak`s `display_name` (`strip_pak_suffix` + Trennzeichen durch
+    /// Leerzeichen) – nicht `trim_end_matches(".pak")`, das bei `MOD.PAK`
+    /// gar nicht griffe und bei `a.pak.pak` mehrfach abschneiden würde.
+    #[test]
+    fn register_unknown_pak_derives_the_display_name_like_import_pak_does() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+        let mods_dir = state.paths.mods_dir();
+
+        for name in ["mein_mod.pak", "MOD.PAK", "a.pak.pak"] {
+            std::fs::write(mods_dir.join(name), b"x").unwrap();
+        }
+        reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+        state.persist().unwrap();
+
+        assert_eq!(state.library.mods["mein_mod.pak"].name, "mein mod");
+        assert_eq!(
+            state.library.mods["MOD.PAK"].name, "MOD",
+            "die .pak-Endung muss unabhängig von Groß-/Kleinschreibung erkannt werden"
+        );
+        assert_eq!(
+            state.library.mods["a.pak.pak"].name, "a.pak",
+            "nur die letzte .pak-Endung darf abgeschnitten werden, nicht wiederholt"
+        );
+    }
+
+    /// Review-Punkt 3: schlägt `register_unknown_pak` fehl (hier: die Datei
+    /// verschwindet zwischen `reconcile` und `persist` wieder, aber ebenso
+    /// bei fehlenden Leserechten trotz weiterhin vorhandener Datei), darf das
+    /// nicht stillschweigend passieren – der Nutzer muss erfahren, warum
+    /// dieses Pak nie eine Historie bekommt.
+    #[test]
+    fn persist_warns_when_an_unknown_pak_cannot_be_registered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+        // In der Konfiguration, aber ohne ModInfo UND ohne Datei im
+        // Mods-Verzeichnis – reproduziert register_unknown_paks Fehlerpfad
+        // (Stat schlägt fehl), ohne auf Dateiberechtigungen angewiesen zu
+        // sein.
+        state.config.entries = vec![PakEntry { pak: "weg.pak".into(), disabled: false }];
+
+        // Kein Panic, `persist()` selbst gelingt weiterhin (das Fehlen
+        // dieses einen Eintrags ist kein hartes Erfordernis).
+        state.persist().unwrap();
+
+        assert!(
+            !state.library.mods.contains_key("weg.pak"),
+            "ohne lesbare Datei kann kein ModInfo entstehen"
+        );
+    }
+
+    /// Review-Punkt 1: schlägt das Schreiben von `library.json` nach einer
+    /// reinen Cache-Auffrischung fehl (z. B. Anwendungsdatenverzeichnis
+    /// existiert, ist aber nicht beschreibbar), darf das nicht wie zuvor
+    /// (`?`) den gesamten Aufruf scheitern lassen – bis dahin waren sowohl
+    /// das Laden der Bibliothek als auch der Konfiguration bereits
+    /// erfolgreich.
+    #[cfg(unix)]
+    #[test]
+    fn save_library_cache_best_effort_warns_instead_of_failing_on_a_read_only_data_dir() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let library_path = data_dir.join("library.json");
+
+        let mut perms = std::fs::metadata(&data_dir).unwrap().permissions();
+        perms.set_mode(0o555);
+        std::fs::set_permissions(&data_dir, perms.clone()).unwrap();
+
+        let probe = data_dir.join(".probe");
+        let bypassed = std::fs::write(&probe, b"").is_ok();
+        let _ = std::fs::remove_file(&probe);
+
+        if bypassed {
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&data_dir, perms).unwrap();
+            eprintln!("übersprungen: Prozess kann den Schreibschutz offenbar übergehen (root?)");
+            return;
+        }
+
+        // Darf nicht abstürzen – die Funktion hat keinen Rückgabewert, der
+        // einen Fehlschlag überhaupt transportieren könnte (siehe deren
+        // Doc-Kommentar); das ist hier bewusst Teil des Vertrags.
+        save_library_cache_best_effort(&Library::default(), &library_path);
+
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&data_dir, perms).unwrap();
+
+        assert!(!library_path.exists(), "das Schreiben muss tatsächlich (leise) gescheitert sein");
     }
 
     /// Review-Punkt 4: ein `library.json` von vor `last_known_position`

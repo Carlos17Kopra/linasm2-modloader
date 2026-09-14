@@ -65,7 +65,15 @@ fn is_pak_file(name: &str) -> bool {
 /// nicht auf `.pak` endet, könnte die berechnete Schnittstelle sonst mitten
 /// in einem mehrbyteigen UTF-8-Zeichen liegen (z. B. bei `"a€€"`) – `get`
 /// liefert dann `None` statt einen Panic auszulösen.
-fn strip_pak_suffix(name: &str) -> &str {
+///
+/// Öffentlich, damit ein Aufrufer außerhalb dieses Moduls (z. B.
+/// `AppState::register_unknown_pak` in der App-Schicht, für ein von Hand
+/// kopiertes Pak ohne `import_pak`-Aufruf) denselben Anzeigenamen ableiten
+/// kann wie `import_pak` selbst (siehe dessen `display_name`), statt die
+/// Ableitung ein zweites Mal – und potenziell abweichend, siehe
+/// `str::trim_end_matches`s wiederholtes Abschneiden bei `a.pak.pak` – zu
+/// implementieren.
+pub fn strip_pak_suffix(name: &str) -> &str {
     let cut = name.len().saturating_sub(4);
     match name.get(cut..) {
         Some(suffix) if suffix.eq_ignore_ascii_case(".pak") => &name[..cut],
@@ -344,6 +352,7 @@ pub fn import_pak(
             last_known_disabled: true,
             last_known_position: Some(position),
             mtime,
+            known_altered: false,
         },
     );
 

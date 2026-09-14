@@ -50,17 +50,36 @@ pub struct ModInfo {
     #[serde(default)]
     pub last_known_position: Option<usize>,
 
-    /// Größe und Änderungszeit der Pak-Datei zum Zeitpunkt, als `hash`
-    /// zuletzt bestätigt wurde. Dient `detect_altered` als billigem
-    /// Vorfilter (ein `stat`-Aufruf statt eines vollständigen Hashs über
-    /// eine ggf. mehrere Gigabyte große Datei): weichen Größe oder
-    /// Änderungszeit der Datei auf der Platte von diesen Werten ab, lohnt
-    /// sich ein tatsächlicher Hash-Vergleich; stimmen beide überein, ist ein
-    /// Hash-Vergleich unnötig. `#[serde(default)]`, damit ältere
-    /// `library.json`-Dateien ohne dieses Feld weiter laden (der erste Lauf
-    /// danach hasht dann einmalig, statt der Abweichung blind zu vertrauen).
+    /// Größe und Änderungszeit der Pak-Datei zum Zeitpunkt der letzten
+    /// Prüfung durch `detect_altered`. Dient als billiger Vorfilter (ein
+    /// `stat`-Aufruf statt eines vollständigen Hashs über eine ggf. mehrere
+    /// Gigabyte große Datei): weichen Größe oder Änderungszeit der Datei auf
+    /// der Platte von diesen Werten ab, lohnt sich ein tatsächlicher
+    /// Hash-Vergleich; stimmen beide überein, ist ein Hash-Vergleich
+    /// unnötig. Ist der zuletzt geprüfte Inhalt als verändert bekannt (siehe
+    /// `known_altered`), spiegeln diese Werte bewusst den *veränderten*
+    /// Stand wider, nicht den ursprünglich importierten – nur so bleibt der
+    /// Vorfilter auch für einen dauerhaft veränderten Pak wirksam.
+    /// `#[serde(default)]`, damit ältere `library.json`-Dateien ohne dieses
+    /// Feld weiter laden (der erste Lauf danach hasht dann einmalig, statt
+    /// der Abweichung blind zu vertrauen).
     #[serde(default)]
     pub mtime: Option<u64>,
+
+    /// `true`, wenn `detect_altered` den Inhalt zuletzt als vom
+    /// ursprünglichen `hash` abweichend bestätigt hat ("außerhalb
+    /// verändert", Spec §6.3). `hash` selbst bleibt dabei unangetastet – er
+    /// bleibt der Fingerabdruck der ursprünglich importierten Version für
+    /// `find_by_hash`s Dublettenerkennung, sonst würde ein späterer
+    /// Re-Import genau dieser Originaldatei nicht mehr als Dublette erkannt.
+    /// Zusammen mit dem auf den *veränderten* Stand aufgefrischten
+    /// `size`/`mtime` erlaubt dieses Flag, die Warnung bei unverändert
+    /// gebliebenem (aber weiterhin abweichendem) Inhalt aus dem Cache zu
+    /// wiederholen, ohne die Datei bei jedem Lauf erneut zu hashen.
+    /// `#[serde(default)]`, damit ältere `library.json`-Dateien ohne dieses
+    /// Feld weiter laden.
+    #[serde(default)]
+    pub known_altered: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -124,18 +143,36 @@ impl Library {
     /// billiger Vorfilter: Größe und Änderungszeit gegen die zuletzt
     /// bestätigten Werte (`ModInfo::size`/`ModInfo::mtime`) vergleichen –
     /// ein `stat`-Aufruf statt eines vollständigen Lesens. Nur wenn einer
-    /// der beiden Werte abweicht, wird tatsächlich gehasht. Bestätigt der
-    /// Hash trotzdem den unveränderten Inhalt (z. B. nach einem `touch` ohne
-    /// Inhaltsänderung, oder weil ein `library.json` von vor `ModInfo::mtime`
-    /// stammt und das Feld deshalb `None` statt des echten Wertes trägt),
-    /// wird die Vorfilter-Information aufgefrischt, damit künftige Läufe
-    /// nicht erneut hashen müssen – der eigentliche `hash` bleibt dabei
-    /// unangetastet, er bleibt der Fingerabdruck der zuletzt
-    /// importierten/bestätigten Version für die Dublettenerkennung beim
-    /// Import. `cache_refreshed` im Ergebnis meldet, ob so etwas passiert
-    /// ist: der Aufrufer (`AppState::open`) schreibt `library.json` dann
-    /// sofort neu, statt die aufgefrischten Werte nur im Speicher zu halten
-    /// und bei jedem weiteren – auch rein lesenden – Aufruf erneut zu hashen.
+    /// der beiden Werte abweicht, wird tatsächlich gehasht.
+    ///
+    /// Drei Ausgänge nach einem tatsächlichen Hash:
+    /// - Hash bestätigt den ursprünglich importierten Inhalt (z. B. nach
+    ///   einem `touch` ohne Inhaltsänderung, oder weil ein `library.json`
+    ///   von vor `ModInfo::mtime` stammt und das Feld deshalb `None` trägt):
+    ///   `size`/`mtime` werden aufgefrischt, `known_altered` wird (falls
+    ///   gesetzt) zurückgenommen.
+    /// - Hash weicht ab und das Pak galt bisher nicht als verändert: als
+    ///   "außerhalb verändert" gemeldet, UND `size`/`mtime` werden auf den
+    ///   *veränderten* Stand aufgefrischt und `known_altered` gesetzt.
+    /// - Ein bereits als verändert bekanntes Pak (`known_altered`), dessen
+    ///   Größe/Änderungszeit sich seit der letzten Prüfung nicht geändert
+    ///   haben (der Vorfilter also gar nicht erst auslöst): wird ohne
+    ///   erneuten Hash weiterhin gemeldet – siehe die eigene Prüfung dafür
+    ///   direkt nach dem Vorfilter.
+    ///
+    /// In allen drei Fällen bleibt `hash` selbst unangetastet – er bleibt der
+    /// Fingerabdruck der ursprünglich importierten Version für die
+    /// Dublettenerkennung beim Import (`find_by_hash`). Ohne das Auffrischen
+    /// von `size`/`mtime` auch im veränderten Fall (der eigentliche Grund für
+    /// `known_altered`) würde ein dauerhaft dem Original abweichender Pak bei
+    /// *jedem* Aufruf erneut vollständig gehasht, auf ewig – genau das
+    /// bewusste Nicht-Erkennen dieses Falls war der ursprüngliche Fehler.
+    ///
+    /// `cache_refreshed` im Ergebnis meldet, ob sich am gespeicherten Zustand
+    /// (Vorfilter-Werte oder `known_altered`) etwas geändert hat: der
+    /// Aufrufer (`AppState::open`) schreibt `library.json` dann sofort neu,
+    /// statt die Änderung nur im Speicher zu halten und bei jedem weiteren –
+    /// auch rein lesenden – Aufruf erneut zu hashen.
     ///
     /// Eine Datei, die laut `present` existieren sollte, aber nicht (mehr)
     /// gelesen werden kann, wird stillschweigend übersprungen – das ist der
@@ -174,6 +211,15 @@ impl Library {
                 .map(|d| d.as_secs());
 
             if size == info.size && mtime == info.mtime {
+                // Vorfilter meldet keine Änderung seit der letzten Prüfung.
+                // War der Inhalt damals bereits als verändert bekannt, bleibt
+                // er es – ohne erneuten Hash. Das ist der eigentliche Zweck
+                // von `known_altered`: die Warnung erscheint bei jedem Lauf
+                // weiter (sie ist das Signal an den Nutzer), aber der teure
+                // Hash läuft nur einmal pro tatsächlicher Änderung.
+                if info.known_altered {
+                    altered.push(pak.clone());
+                }
                 continue;
             }
 
@@ -188,10 +234,24 @@ impl Library {
                 if let Some(entry) = self.mods.get_mut(pak) {
                     entry.size = size;
                     entry.mtime = mtime;
+                    if entry.known_altered {
+                        entry.known_altered = false;
+                    }
                     cache_refreshed = true;
                 }
             } else {
                 altered.push(pak.clone());
+                if let Some(entry) = self.mods.get_mut(pak) {
+                    // `hash` bleibt der Fingerabdruck der ursprünglich
+                    // importierten Version (Dublettenerkennung) – nur
+                    // Größe/Änderungszeit werden auf den *veränderten*
+                    // Stand aufgefrischt, damit der Vorfilter beim nächsten
+                    // Lauf wieder greift (siehe Doc-Kommentar oben).
+                    entry.size = size;
+                    entry.mtime = mtime;
+                    entry.known_altered = true;
+                    cache_refreshed = true;
+                }
             }
         }
 
@@ -243,6 +303,7 @@ mod tests {
             last_known_disabled: false,
             last_known_position: Some(0),
             mtime: None,
+            known_altered: false,
         }
     }
 
@@ -413,6 +474,7 @@ mod tests {
         let report = lib.detect_altered(dir.path(), &["a.pak".into()]).unwrap();
 
         assert_eq!(report.altered, vec!["a.pak"]);
+        assert!(report.cache_refreshed, "die Erkennung selbst ist eine Zustandsänderung, die gespeichert werden muss");
         assert!(report.warnings.is_empty());
         assert_eq!(
             lib.mods["a.pak"].hash, hash,
@@ -420,6 +482,98 @@ mod tests {
              sonst würde ein späterer Re-Import derselben Originaldatei nicht mehr \
              als Dublette erkannt"
         );
+        assert!(lib.mods["a.pak"].known_altered, "der veränderte Zustand muss vermerkt werden");
+        assert_eq!(
+            lib.mods["a.pak"].size,
+            std::fs::metadata(dir.path().join("a.pak")).unwrap().len(),
+            "Größe/mtime werden auf den VERÄNDERTEN Stand aufgefrischt, sonst würde jeder \
+             künftige Lauf erneut hashen (siehe detect_altered_repeats_the_advisory_...)"
+        );
+    }
+
+    /// Der eigentliche Fix für Review-Punkt 2 (dritte Instanz): ein bereits
+    /// als verändert erkanntes Pak muss die Warnung bei jedem weiteren Lauf
+    /// wiederholen – sie ist das Signal an den Nutzer –, darf dafür aber
+    /// nicht erneut gehasht werden, solange sich an Größe/Änderungszeit
+    /// nichts ändert. Prüft beide Hälften: dass die Meldung bestehen bleibt,
+    /// UND dass der zweite Lauf tatsächlich nicht mehr liest (nachgewiesen
+    /// über entzogene Leserechte – ein tatsächlicher zweiter Hash-Versuch
+    /// würde daran scheitern und als Warnung sichtbar werden, siehe
+    /// `detect_altered_warns_instead_of_failing_on_an_unreadable_pak`).
+    #[test]
+    fn detect_altered_repeats_the_advisory_without_hashing_again_once_confirmed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.pak");
+        let metadata = write_pak(dir.path(), "a.pak", b"URSPRUENGLICH");
+        let original_hash = hash_file(&path).unwrap();
+
+        let mut lib = Library::default();
+        lib.mods.insert("a.pak".into(), info_matching("a.pak", &metadata, &original_hash));
+
+        std::fs::write(&path, b"ERSETZT MIT ANDEREM INHALT").unwrap();
+
+        // Erster Lauf: hasht tatsächlich und erkennt die Abweichung.
+        let first = lib.detect_altered(dir.path(), &["a.pak".into()]).unwrap();
+        assert_eq!(first.altered, vec!["a.pak"]);
+        assert!(first.cache_refreshed);
+        assert!(lib.mods["a.pak"].known_altered);
+        assert_eq!(lib.mods["a.pak"].hash, original_hash, "Baseline-Hash bleibt für die Dublettenerkennung erhalten");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+            if std::fs::read(&path).is_ok() {
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+                eprintln!("übersprungen: Prozess kann Leserechte offenbar übergehen (root?)");
+                return;
+            }
+        }
+
+        let second = lib.detect_altered(dir.path(), &["a.pak".into()]).unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+
+        assert_eq!(second.altered, vec!["a.pak"], "die Warnung muss bei jedem Lauf weiter erscheinen");
+        assert!(!second.cache_refreshed, "ohne neue Erkenntnis gibt es nichts erneut aufzufrischen");
+        assert!(
+            second.warnings.is_empty(),
+            "ein tatsächlicher zweiter Hash-Versuch hätte an den entzogenen Leserechten \
+             scheitern müssen: {:?}",
+            second.warnings
+        );
+    }
+
+    /// Kehrt der Inhalt zum ursprünglich importierten Stand zurück (Hash
+    /// stimmt wieder), muss `known_altered` zurückgenommen werden – sonst
+    /// würde die Warnung fälschlich weiterlaufen, obwohl gar keine
+    /// Abweichung mehr besteht.
+    #[test]
+    fn detect_altered_clears_known_altered_once_content_matches_the_original_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.pak");
+        let metadata = write_pak(dir.path(), "a.pak", b"URSPRUENGLICH");
+        let original_hash = hash_file(&path).unwrap();
+
+        let mut lib = Library::default();
+        lib.mods.insert("a.pak".into(), info_matching("a.pak", &metadata, &original_hash));
+
+        std::fs::write(&path, b"ZWISCHENZEITLICH ANDERS").unwrap();
+        let first = lib.detect_altered(dir.path(), &["a.pak".into()]).unwrap();
+        assert_eq!(first.altered, vec!["a.pak"]);
+        assert!(lib.mods["a.pak"].known_altered);
+
+        // Originalinhalt (und – wichtig für den Vorfilter – auch die
+        // ursprüngliche Größe) wird wiederhergestellt.
+        std::fs::write(&path, b"URSPRUENGLICH").unwrap();
+        let second = lib.detect_altered(dir.path(), &["a.pak".into()]).unwrap();
+
+        assert!(second.altered.is_empty(), "der Originalinhalt ist wieder da – keine Abweichung mehr");
+        assert!(!lib.mods["a.pak"].known_altered, "die Markierung muss zurückgenommen werden");
     }
 
     /// Ein Pak, das der Bibliothek unbekannt ist (nie importiert, z. B. von
