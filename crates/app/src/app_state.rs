@@ -483,7 +483,7 @@ mod tests {
     /// nicht stillschweigend passieren – der Nutzer muss erfahren, warum
     /// dieses Pak nie eine Historie bekommt.
     #[test]
-    fn persist_warns_when_an_unknown_pak_cannot_be_registered() {
+    fn persist_survives_a_pak_that_cannot_be_registered_without_inventing_history() {
         let tmp = tempfile::tempdir().unwrap();
         let mut state = test_fixture(tmp.path());
         // In der Konfiguration, aber ohne ModInfo UND ohne Datei im
