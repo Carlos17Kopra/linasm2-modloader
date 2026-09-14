@@ -53,12 +53,15 @@ impl Library {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        let json = serde_json::to_string_pretty(self).map_err(|e| {
+        // Unerreichbar für die aktuellen Feldtypen (String, Option<_>, u64,
+        // u32, BTreeMap<String, _> können nicht fehlschlagen); der rohe
+        // Fehler wird bewusst verworfen, damit die Meldung rein deutsch bleibt.
+        let json = serde_json::to_string_pretty(self).map_err(|_| {
             Error::io(
                 path,
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Bibliothek konnte nicht serialisiert werden: {e}"),
+                    "Bibliothek konnte nicht als JSON serialisiert werden",
                 ),
             )
         })?;
@@ -102,7 +105,7 @@ mod tests {
     }
 
     #[test]
-    fn hash_ist_stabil_und_unterscheidet_inhalte() {
+    fn hash_is_stable_and_distinguishes_content() {
         let dir = tempfile::tempdir().unwrap();
         let a = dir.path().join("a.bin");
         let b = dir.path().join("b.bin");
@@ -116,14 +119,14 @@ mod tests {
     }
 
     #[test]
-    fn load_bei_fehlender_datei_ergibt_leere_bibliothek() {
+    fn load_with_missing_file_yields_empty_library() {
         let dir = tempfile::tempdir().unwrap();
         let lib = Library::load(&dir.path().join("gibt_es_nicht.json")).unwrap();
         assert!(lib.mods.is_empty());
     }
 
     #[test]
-    fn save_und_load_sind_zueinander_invers() {
+    fn save_and_load_are_inverses() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("library.json");
         let mut lib = Library::default();
@@ -135,7 +138,7 @@ mod tests {
     }
 
     #[test]
-    fn findet_dublette_ueber_den_hash() {
+    fn finds_duplicate_by_hash() {
         let mut lib = Library::default();
         lib.mods.insert("a.pak".into(), info("a.pak", "hash-a"));
 
@@ -148,7 +151,7 @@ mod tests {
     /// ist das Ergebnis dadurch deterministisch der alphabetisch erste
     /// Pak-Dateiname statt einer zufälligen Auswahl.
     #[test]
-    fn findet_bei_geteiltem_hash_deterministisch_den_ersten_pak_nach_schluesselreihenfolge() {
+    fn finds_first_pak_by_key_order_on_shared_hash() {
         let mut lib = Library::default();
         lib.mods.insert("z.pak".into(), info("z.pak", "gemeinsamer-hash"));
         lib.mods.insert("a.pak".into(), info("a.pak", "gemeinsamer-hash"));
@@ -161,7 +164,7 @@ mod tests {
     }
 
     #[test]
-    fn beschaedigte_json_datei_wird_als_fehler_gemeldet() {
+    fn corrupt_json_is_reported_as_an_error() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("library.json");
         std::fs::write(&path, "{kein json").unwrap();
