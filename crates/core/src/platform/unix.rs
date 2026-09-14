@@ -90,7 +90,7 @@ fn is_executable(path: &Path) -> bool {
 }
 
 /// Minimaler PATH-Lookup – vermeidet eine Abhängigkeit für zwanzig Zeilen.
-fn which_in_path(name: &str) -> Option<PathBuf> {
+pub(crate) fn which_in_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     which_in(name, &path)
 }
