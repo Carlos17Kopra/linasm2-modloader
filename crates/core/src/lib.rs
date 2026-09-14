@@ -4,6 +4,7 @@ pub mod import;
 pub mod library;
 pub mod pak_config;
 pub mod paths;
+pub mod saves;
 pub mod platform;
 
 pub use error::{Error, Result};
