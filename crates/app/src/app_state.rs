@@ -54,9 +54,23 @@ impl AppState {
             )?,
         };
 
-        let mut library = Library::load(&dirs.data.join("library.json"))?;
+        let library_path = dirs.data.join("library.json");
+        let mut library = Library::load(&library_path)?;
         let mut config = PakConfig::load(&paths.pak_config_path())?;
-        reconcile_and_report(&mut library, &mut config, &paths)?;
+        let cache_refreshed = reconcile_and_report(&mut library, &mut config, &paths)?;
+        if cache_refreshed {
+            // `library.json` ist die eigene Datei des Loaders im
+            // Anwendungsdatenverzeichnis, nicht im (ggf. schreibgeschützten)
+            // Mods-Verzeichnis – dieses Schreiben verletzt die
+            // Nur-bei-verändernden-Befehlen-Politik von `persist()` also
+            // nicht, die sich auf `pak_config.yaml` bezieht (siehe dessen
+            // Doc-Kommentar). Ohne dieses sofortige Schreiben würde ein
+            // veraltetes `mtime` (Review-Punkt 2, z. B. jedes `library.json`
+            // von vor diesem Feld) bei jedem weiteren – auch rein lesenden –
+            // Aufruf erneut zu einem vollständigen Hash über womöglich
+            // mehrere Gigabyte große Paks führen.
+            library.save(&library_path)?;
+        }
 
         Ok(Self { paths, settings, dirs, library, config })
     }
@@ -84,12 +98,34 @@ impl AppState {
     /// wieder auftauchendes Pak an seinen alten Platz zurückstellen kann.
     /// Ein Pak, das aktuell fehlt, wird hier bewusst nicht angefasst – sein
     /// zuletzt bekannter Zustand bleibt genau deshalb erhalten.
+    ///
+    /// Ein Pak in `config.entries` ohne `ModInfo` (von Hand in `mods/`
+    /// kopiert statt über `import_pak` importiert – siehe Review-Punkt 1)
+    /// bekommt hier einen minimalen `ModInfo`-Eintrag verpasst, statt für
+    /// immer historienlos zu bleiben: sonst käme ein solches Pak nach einem
+    /// Verschwinden (z. B. Steam-Update) nie an seine vorherige Position
+    /// zurück, obwohl `reconcile`s Anhänge-Regel eigentlich genau für diese
+    /// Population gedacht ist. Der Hash-Aufwand dafür trifft nur `persist()`
+    /// (einen bewusst schreibenden Aufruf), nicht `AppState::open()` – ein
+    /// rein lesender Befehl wie `list` hasht ein neu entdecktes, von Hand
+    /// kopiertes Pak also nicht (siehe Review-Punkt 2, derselbe Grundsatz).
+    /// Schlägt das Hashen fehl (Datei inzwischen wieder weg, keine
+    /// Leserechte), wird der Eintrag einfach übersprungen – beim nächsten
+    /// `reconcile` erscheint er ohnehin wieder unter `removed`.
     pub fn persist(&mut self) -> Result<()> {
         check_write_permission(&self.paths.mods_dir())?;
+        let mods_dir = self.paths.mods_dir();
         for (position, entry) in self.config.entries.iter().enumerate() {
-            if let Some(mod_info) = self.library.mods.get_mut(&entry.pak) {
-                mod_info.last_known_disabled = entry.disabled;
-                mod_info.last_known_position = position;
+            match self.library.mods.get_mut(&entry.pak) {
+                Some(mod_info) => {
+                    mod_info.last_known_disabled = entry.disabled;
+                    mod_info.last_known_position = Some(position);
+                }
+                None => {
+                    if let Ok(info) = register_unknown_pak(&mods_dir, &entry.pak, entry.disabled, position) {
+                        self.library.mods.insert(entry.pak.clone(), info);
+                    }
+                }
             }
         }
         self.library.save(&self.dirs.data.join("library.json"))?;
@@ -124,17 +160,27 @@ impl AppState {
 /// Baut den bekannten Zustand aus `library` für `PakConfig::reconcile` auf
 /// (siehe `KnownState`s Doc-Kommentar): `pak_config.rs` kennt die Bibliothek
 /// bewusst nicht selbst, um die Modulschichtung nicht umzukehren – die
-/// App-Schicht baut diese Map explizit und übergibt sie als Parameter.
+/// App-Schicht baut diese Map explizit und übergibt sie als Parameter. Ein
+/// `ModInfo` ohne `last_known_position` (nie Teil der Konfiguration gewesen,
+/// oder ein `library.json` von vor diesem Feld) wird dabei ausgeschlossen
+/// statt mit einer geratenen Position aufgenommen – siehe Review-Punkt 4 und
+/// `ModInfo::last_known_position`s Doc-Kommentar.
+///
 /// Prüft anschließend den dritten Abgleichsfall aus Spec §6.3 ("außerhalb
-/// verändert") über `Library::detect_altered`.
-fn reconcile_and_report(library: &mut Library, config: &mut PakConfig, paths: &GamePaths) -> Result<()> {
+/// verändert") über `Library::detect_altered` und gibt zurück, ob dessen
+/// billiger Vorfilter-Cache aufgefrischt wurde – der Aufrufer (`open()`)
+/// schreibt `library.json` dann sofort neu (siehe Review-Punkt 2), damit ein
+/// veraltetes oder fehlendes `mtime` nicht bei jedem weiteren – auch rein
+/// lesenden – Aufruf erneut zu einem vollständigen Hash führt.
+fn reconcile_and_report(library: &mut Library, config: &mut PakConfig, paths: &GamePaths) -> Result<bool> {
     let present = paths.list_paks()?;
 
     let known_state: HashMap<String, KnownState> = library
         .mods
         .values()
-        .map(|m| {
-            (m.pak.clone(), KnownState { disabled: m.last_known_disabled, position: m.last_known_position })
+        .filter_map(|m| {
+            m.last_known_position
+                .map(|position| (m.pak.clone(), KnownState { disabled: m.last_known_disabled, position }))
         })
         .collect();
 
@@ -160,15 +206,57 @@ fn reconcile_and_report(library: &mut Library, config: &mut PakConfig, paths: &G
     // Nur Größe/Änderungszeit werden hier standardmäßig geprüft (siehe
     // `Library::detect_altered`s Doc-Kommentar) – ein vollständiger Hash
     // läuft nur, wenn dieser billige Vorfilter eine Abweichung anzeigt.
-    let altered = library.detect_altered(&paths.mods_dir(), &present)?;
-    for pak in &altered {
+    let report = library.detect_altered(&paths.mods_dir(), &present)?;
+    for pak in &report.altered {
         eprintln!(
             "Hinweis: {pak} weicht vom zuletzt bekannten Stand ab – vermutlich außerhalb \
              des Loaders verändert oder ersetzt."
         );
     }
+    for warning in &report.warnings {
+        eprintln!("Warnung: {warning}");
+    }
 
-    Ok(())
+    Ok(report.cache_refreshed)
+}
+
+/// Baut für ein Pak, das in `config.entries` steht, aber (weil von Hand in
+/// `mods/` abgelegt statt über `import_pak` importiert) noch keinen
+/// `ModInfo`-Eintrag hat, einen minimalen Eintrag – siehe `persist()`s
+/// Doc-Kommentar (Review-Punkt 1).
+fn register_unknown_pak(
+    mods_dir: &Path,
+    pak: &str,
+    disabled: bool,
+    position: usize,
+) -> sm2_core::Result<sm2_core::library::ModInfo> {
+    use sm2_core::import::now_rfc3339;
+    use sm2_core::library::{hash_file, ModInfo};
+
+    let path = mods_dir.join(pak);
+    let metadata = std::fs::metadata(&path).map_err(|e| sm2_core::Error::io(&path, e))?;
+    let hash = hash_file(&path)?;
+    let mtime = metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+
+    Ok(ModInfo {
+        pak: pak.to_string(),
+        name: pak.trim_end_matches(".pak").to_string(),
+        author: None,
+        version: None,
+        nexus_id: None,
+        notes: None,
+        hash,
+        size: metadata.len(),
+        imported_at: now_rfc3339(),
+        source: None,
+        last_known_disabled: disabled,
+        last_known_position: Some(position),
+        mtime,
+    })
 }
 
 /// Stellt fest, ob wir in `dir` schreiben können – bevor ein verändernder
@@ -226,7 +314,7 @@ mod tests {
             imported_at: "2026-09-12T18:00:00Z".to_string(),
             source: None,
             last_known_disabled: false,
-            last_known_position: 0,
+            last_known_position: Some(0),
             mtime: None,
         }
     }
@@ -277,6 +365,117 @@ mod tests {
         let names: Vec<&str> = state.config.entries.iter().map(|e| e.pak.as_str()).collect();
         assert_eq!(names, vec!["a.pak", "b.pak", "c.pak"], "b.pak muss an seine alte Position zurückkehren");
         assert!(state.config.entries[1].disabled, "b.pak war deaktiviert und muss es wieder sein");
+    }
+
+    /// Review-Punkt 1: dieselbe Garantie wie oben, aber für ein Pak, das nie
+    /// über `import_pak` importiert wurde – von Hand in `mods/` kopiert,
+    /// ohne jeden `ModInfo`-Eintrag. Genau diese Population war zuvor von
+    /// jeder Historie ausgeschlossen (`KnownState` kam ausschließlich aus
+    /// `library.mods`, in das nur `import_pak` je etwas einträgt) und kam
+    /// nach einem Verschwinden/Wiederauftauchen immer enabled-alphabetisch
+    /// zurück statt an ihre vorherige Position.
+    #[test]
+    fn a_hand_copied_pak_without_any_prior_modinfo_also_gets_its_history_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+        let mods_dir = state.paths.mods_dir();
+
+        // Von Hand hineinkopiert: Datei liegt im Mods-Verzeichnis, aber es
+        // gibt (anders als beim Import) keinen library.mods-Eintrag dafür.
+        std::fs::write(mods_dir.join("hand.pak"), b"VON HAND KOPIERT").unwrap();
+        assert!(state.library.mods.is_empty(), "Ausgangslage: der Bibliothek unbekannt");
+
+        reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+        assert_eq!(
+            state.config.entries.iter().map(|e| e.pak.as_str()).collect::<Vec<_>>(),
+            vec!["hand.pak"],
+            "unbekanntes Pak wird zunächst wie gewohnt aktiv angehängt"
+        );
+
+        // Nutzer deaktiviert es explizit (z. B. `sm2 disable hand.pak`) und
+        // ein verändernder Befehl schreibt die Konfiguration.
+        state.config.entries[0].disabled = true;
+        state.persist().unwrap();
+        assert!(
+            state.library.mods.contains_key("hand.pak"),
+            "persist() muss dem bislang unbekannten Pak jetzt einen ModInfo-Eintrag geben"
+        );
+
+        // Steam-Update räumt den Mods-Ordner leer.
+        std::fs::remove_file(mods_dir.join("hand.pak")).unwrap();
+        reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+        assert!(state.config.entries.is_empty());
+        state.persist().unwrap();
+
+        // Nutzer installiert die exakt gleiche Datei erneut von Hand.
+        std::fs::write(mods_dir.join("hand.pak"), b"VON HAND KOPIERT").unwrap();
+        reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+
+        assert_eq!(state.config.entries.len(), 1);
+        assert_eq!(state.config.entries[0].pak, "hand.pak");
+        assert!(
+            state.config.entries[0].disabled,
+            "die vorherige Deaktivierung muss zurückkehren, nicht enabled-alphabetisch"
+        );
+    }
+
+    /// Review-Punkt 4: ein `library.json` von vor `last_known_position`
+    /// deserialisiert das Feld als `None` (siehe `ModInfo`s
+    /// `#[serde(default)]`). Mehrere solche Alt-Einträge dürfen beim
+    /// Wiederauftauchen nicht alle an Position 0 kollidieren (und dabei in
+    /// umgekehrter Reihenfolge relativ zueinander landen) – sie müssen wie
+    /// nie zuvor gesehene Paks behandelt werden: alphabetisch ans Ende.
+    #[test]
+    fn legacy_entries_without_a_known_position_do_not_collide_at_the_front() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+        let mods_dir = state.paths.mods_dir();
+
+        for name in ["b.pak", "a.pak"] {
+            std::fs::write(mods_dir.join(name), b"x").unwrap();
+            let mut info = minimal_mod_info(name);
+            info.last_known_position = None; // wie ein Alt-Eintrag ohne dieses Feld
+            state.library.mods.insert(name.to_string(), info);
+        }
+
+        reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+
+        let names: Vec<&str> = state.config.entries.iter().map(|e| e.pak.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["a.pak", "b.pak"],
+            "ohne bekannte Position muss alphabetisch angehängt werden, nicht an Position 0 kollidiert"
+        );
+    }
+
+    /// Review-Punkt 2: ein `library.json` von vor `ModInfo::mtime` liefert
+    /// `None`, während die echte Datei ein tatsächliches `mtime` hat – der
+    /// billige Vorfilter schlägt also beim ersten Lauf fehl und hasht
+    /// einmal. Ohne das sofortige Neuschreiben von `library.json` in
+    /// `reconcile_and_report`s Aufrufer würde das bei jedem weiteren, auch
+    /// rein lesenden Aufruf erneut passieren.
+    #[test]
+    fn reconcile_and_report_reports_cache_refresh_so_open_can_persist_it_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+        let mods_dir = state.paths.mods_dir();
+        std::fs::write(mods_dir.join("a.pak"), b"INHALT").unwrap();
+        let hash = sm2_core::library::hash_file(&mods_dir.join("a.pak")).unwrap();
+
+        let mut legacy = minimal_mod_info("a.pak");
+        legacy.hash = hash;
+        legacy.size = std::fs::metadata(mods_dir.join("a.pak")).unwrap().len();
+        legacy.mtime = None; // wie ein Alt-Eintrag ohne dieses Feld
+        state.library.mods.insert("a.pak".to_string(), legacy);
+        state.config.entries = vec![PakEntry { pak: "a.pak".into(), disabled: false }];
+
+        let first_run =
+            reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+        assert!(first_run, "fehlendes mtime muss beim ersten Lauf als Auffrischung gemeldet werden");
+
+        let second_run =
+            reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+        assert!(!second_run, "der aufgefrischte Cache muss beim zweiten Lauf bereits greifen");
     }
 
     /// Baut unter `base` (derselben Wurzel, die `test_fixture` als

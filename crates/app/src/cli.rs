@@ -391,6 +391,17 @@ fn find_profile_by_name(dir: &std::path::Path, name: &str) -> Result<Profile> {
 }
 
 fn run_save_command(state: &AppState, cmd: SaveCommand) -> Result<()> {
+    run_save_command_with(state, cmd, saves::steam_is_running)
+}
+
+/// Kern von `run_save_command`, mit der Steam-Erkennung als Parameter statt
+/// fest verdrahtet – genau dieselbe Seam-Idee wie `run_play`/`run_play_with`
+/// weiter unten. `--force` ist der einzige Zweig hier, der tatsächlich
+/// Save-Daten überschreiben kann (Steam läuft, Cloud-Sync könnte den
+/// zurückgespielten Stand überschreiben); ohne diese Injektion ließe sich
+/// weder die Ablehnung noch die Umgehung deterministisch testen, weil
+/// `saves::steam_is_running()` den echten `/proc` dieses Systems liest.
+fn run_save_command_with(state: &AppState, cmd: SaveCommand, steam_running: impl Fn() -> bool) -> Result<()> {
     let backups = state.backups_dir();
 
     match cmd {
@@ -426,7 +437,7 @@ fn run_save_command(state: &AppState, cmd: SaveCommand) -> Result<()> {
             let label = entry.label.clone().unwrap_or_default();
             println!("Ausgewähltes Backup: {}  {label}", entry.created_at);
 
-            if saves::steam_is_running() {
+            if steam_running() {
                 if !force {
                     bail!(
                         "Steam läuft. Die Cloud-Synchronisation kann den wiederhergestellten \
@@ -884,6 +895,77 @@ mod tests {
         assert_eq!(entry.created_at, "2026-01-01T00:00:00Z");
     }
 
+    // --- run_save_command_with / --force (Review-Punkt 6) -----------------
+
+    /// Baut eine Fixture mit genau einem Save-Nutzerverzeichnis (analog zu
+    /// `run_play`s Vanilla-Backup-Test) und legt darin ein Backup des
+    /// Originalinhalts an, bevor der Inhalt überschrieben wird – so lässt
+    /// sich anschließend prüfen, ob `run_save_command_with` tatsächlich
+    /// wiederhergestellt hat oder nicht.
+    fn fixture_with_one_backup(tmp: &std::path::Path) -> (AppState, PathBuf) {
+        let state = test_fixture(tmp);
+        let save_dir = tmp
+            .join("steamapps/compatdata/2183900/pfx/drive_c/users/steamuser")
+            .join("AppData/Local/Saber/Space Marine 2/storage/steam/user/76561198000000009/Main");
+        std::fs::create_dir_all(&save_dir).unwrap();
+        std::fs::write(save_dir.join("profile.sav"), b"ORIGINAL").unwrap();
+
+        saves::backup(&save_dir, &state.backups_dir(), None).unwrap();
+        std::fs::write(save_dir.join("profile.sav"), b"GEAENDERT").unwrap();
+
+        (state, save_dir)
+    }
+
+    fn restore_default() -> SaveCommand {
+        SaveCommand::Restore { index: None, at: None, force: false }
+    }
+
+    #[test]
+    fn save_restore_refuses_when_steam_is_running_without_force() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (state, save_dir) = fixture_with_one_backup(tmp.path());
+
+        let err = run_save_command_with(&state, restore_default(), || true).unwrap_err();
+
+        assert!(err.to_string().contains("Steam"), "{err}");
+        assert_eq!(
+            std::fs::read(save_dir.join("profile.sav")).unwrap(),
+            b"GEAENDERT",
+            "ohne --force darf nichts wiederhergestellt werden"
+        );
+    }
+
+    /// Beweist zugleich, dass `--force` nicht invertiert ist: `force: true`
+    /// zusammen mit einem laufenden Steam muss tatsächlich wiederherstellen,
+    /// nicht ablehnen.
+    #[test]
+    fn save_restore_force_overrides_the_steam_running_refusal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (state, save_dir) = fixture_with_one_backup(tmp.path());
+
+        run_save_command_with(
+            &state,
+            SaveCommand::Restore { index: None, at: None, force: true },
+            || true,
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read(save_dir.join("profile.sav")).unwrap(), b"ORIGINAL");
+    }
+
+    /// Kontrolltest: ohne laufendes Steam wird ganz normal wiederhergestellt,
+    /// unabhängig von `force` – die Ablehnung hängt ausschließlich an
+    /// `steam_running()`, nicht an einer vertauschten Bedingung.
+    #[test]
+    fn save_restore_without_force_still_restores_when_steam_is_not_running() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (state, save_dir) = fixture_with_one_backup(tmp.path());
+
+        run_save_command_with(&state, restore_default(), || false).unwrap();
+
+        assert_eq!(std::fs::read(save_dir.join("profile.sav")).unwrap(), b"ORIGINAL");
+    }
+
     // --- find_profile_by_name (2e: mehrdeutiger groß-/kleinschreibungs- --
     // --- unabhängiger Treffer wird gemeldet statt still gewählt) ---------
 
@@ -998,13 +1080,25 @@ mod tests {
 
     /// 2c: Spec §6.4 beschreibt den Vanilla-Start als identisch zum Modded-
     /// Start, Backup eingeschlossen – zuvor lief das Auto-Backup nur ohne
-    /// `--vanilla`.
+    /// `--vanilla`. Die Fixture bekommt hier absichtlich einen echten
+    /// Save-Nutzerordner: mit dem ursprünglichen `test_fixture` (kein
+    /// Proton-Prefix) hätte der Auto-Backup-Versuch ohnehin nur gewarnt statt
+    /// tatsächlich zu sichern – ein wieder eingeführtes `if !vanilla` bliebe
+    /// dann unentdeckt grün (Review-Punkt 5).
     #[test]
     fn run_play_vanilla_disables_everything_persists_and_still_launches() {
         let tmp = tempfile::tempdir().unwrap();
         let mut state = test_fixture(tmp.path());
         std::fs::write(state.paths.mods_dir().join("a.pak"), b"x").unwrap();
         state.config.entries = vec![PakEntry { pak: "a.pak".into(), disabled: false }];
+        state.settings.auto_backup = true;
+
+        let save_dir = tmp
+            .path()
+            .join("steamapps/compatdata/2183900/pfx/drive_c/users/steamuser")
+            .join("AppData/Local/Saber/Space Marine 2/storage/steam/user/76561198000000009/Main");
+        std::fs::create_dir_all(&save_dir).unwrap();
+        std::fs::write(save_dir.join("profile.sav"), b"FORTSCHRITT").unwrap();
 
         let called = std::rc::Rc::new(std::cell::Cell::new(None));
         let called_clone = called.clone();
@@ -1021,6 +1115,10 @@ mod tests {
             saved.entries.iter().all(|e| e.disabled),
             "die deaktivierte Konfiguration muss tatsächlich auf der Platte gelandet sein"
         );
+
+        let backups = saves::list_backups(&state.backups_dir()).unwrap();
+        assert_eq!(backups.len(), 1, "ein Vanilla-Start muss ebenfalls ein Auto-Backup anlegen (Spec §6.4)");
+        assert_eq!(backups[0].label.as_deref(), Some("vor Vanilla-Start"));
     }
 
     /// Prüft per Schreibversuch, ob eine `0o555`-Berechtigung auf `dir`

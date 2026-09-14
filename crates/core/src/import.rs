@@ -342,7 +342,7 @@ pub fn import_pak(
             // Doc-Kommentar oben) – das ist zugleich der erste bekannte
             // Zustand für `PakConfig::reconcile`s Wiederherstellung.
             last_known_disabled: true,
-            last_known_position: position,
+            last_known_position: Some(position),
             mtime,
         },
     );
