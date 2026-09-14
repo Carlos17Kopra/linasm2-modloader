@@ -10,7 +10,7 @@ use crate::library::{hash_file, Library, ModInfo};
 use crate::pak_config::{PakConfig, PakEntry};
 use crate::paths::GamePaths;
 use crate::platform::unix::which_in_path;
-use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// Ergebnis eines Imports.
@@ -29,9 +29,10 @@ pub struct ImportOutcome {
 /// verpacken Paks gern in Ordner, für die Engine zählt nur die Datei.
 ///
 /// Enthalten zwei Einträge denselben Dateinamen in unterschiedlichen Ordnern
-/// (z. B. `a/mod.pak` und `b/mod.pak`), landen beide auf demselben Ziel in
-/// `into`: der zuletzt gelesene Eintrag gewinnt, das Ziel erscheint im
-/// Ergebnis genau einmal.
+/// (z. B. `a/mod.pak` und `b/mod.pak` – typisch für Archive mit mehreren
+/// Installationsvarianten), werden beide behalten: der zweite bekommt eine
+/// laufende Nummer vor der Endung (`mod.pak`, `mod_2.pak`, `mod_3.pak`, ...),
+/// statt den ersten stillschweigend zu verdrängen.
 pub fn extract_paks(archive: &Path, into: &Path) -> Result<Vec<PathBuf>> {
     let extension = archive
         .extension()
@@ -59,20 +60,42 @@ fn is_pak_file(name: &str) -> bool {
 }
 
 /// Schneidet eine `.pak`-Endung unabhängig von Groß-/Kleinschreibung ab.
+///
+/// Nutzt `str::get` statt direkter Byte-Indizierung: bei einem Namen, der
+/// nicht auf `.pak` endet, könnte die berechnete Schnittstelle sonst mitten
+/// in einem mehrbyteigen UTF-8-Zeichen liegen (z. B. bei `"a€€"`) – `get`
+/// liefert dann `None` statt einen Panic auszulösen.
 fn strip_pak_suffix(name: &str) -> &str {
-    if name.len() >= 4 && name[name.len() - 4..].eq_ignore_ascii_case(".pak") {
-        &name[..name.len() - 4]
-    } else {
-        name
+    let cut = name.len().saturating_sub(4);
+    match name.get(cut..) {
+        Some(suffix) if suffix.eq_ignore_ascii_case(".pak") => &name[..cut],
+        _ => name,
     }
 }
 
-/// Nimmt nur den Dateinamen eines Archiveintrags – wehrt zugleich Zip-Slip
-/// ab, da kein Verzeichnisanteil aus dem Archiv übernommen wird. Einträge
-/// ohne Dateinamen (z. B. ein reiner Verzeichniseintrag) liefern `None`.
-fn target_for(into: &Path, entry_name: &str) -> Option<PathBuf> {
-    let file_name = Path::new(entry_name).file_name()?;
-    Some(into.join(file_name))
+/// Findet in `into` einen noch freien Namen für eine Datei, die dort neu
+/// abgelegt werden soll. Ist `desired` frei, wird er unverändert übernommen;
+/// sonst wird – wie bei `unique_pak_name` – vor die Endung eine laufende
+/// Nummer gehängt (`mod.pak` -> `mod_2.pak`, `mod_3.pak`, ...). Anders als
+/// `unique_pak_name` prüft diese Variante nur den Inhalt von `into` selbst
+/// (nicht Mods-Verzeichnis oder Konfiguration) – sie dient dem Entpacken,
+/// nicht dem eigentlichen Import.
+fn unique_target_in(into: &Path, desired: &OsStr) -> PathBuf {
+    let candidate = into.join(desired);
+    if !candidate.exists() {
+        return candidate;
+    }
+
+    let desired_str = desired.to_string_lossy();
+    let stem = strip_pak_suffix(&desired_str);
+    let mut n = 2;
+    loop {
+        let candidate = into.join(format!("{stem}_{n}.pak"));
+        if !candidate.exists() {
+            return candidate;
+        }
+        n += 1;
+    }
 }
 
 fn extract_zip(archive: &Path, into: &Path) -> Result<Vec<PathBuf>> {
@@ -81,7 +104,6 @@ fn extract_zip(archive: &Path, into: &Path) -> Result<Vec<PathBuf>> {
         .map_err(|e| Error::io(archive, std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
 
     let mut targets: Vec<PathBuf> = Vec::new();
-    let mut seen: HashSet<PathBuf> = HashSet::new();
 
     for i in 0..zip.len() {
         let mut entry = zip
@@ -90,16 +112,15 @@ fn extract_zip(archive: &Path, into: &Path) -> Result<Vec<PathBuf>> {
         if !entry.is_file() || !is_pak_file(entry.name()) {
             continue;
         }
-        let Some(target) = target_for(into, entry.name()) else { continue };
+        // Nur der Dateiname aus dem Archiveintrag wird übernommen – wehrt
+        // zugleich Zip-Slip ab, da kein Verzeichnisanteil aus dem Archiv in
+        // den Zielpfad einfließt. Ein Eintrag ohne Dateianteil (z. B. ein
+        // reiner Verzeichniseintrag) wird übersprungen.
+        let Some(file_name) = Path::new(entry.name()).file_name() else { continue };
+        let target = unique_target_in(into, file_name);
         let mut out = std::fs::File::create(&target).map_err(|e| Error::io(&target, e))?;
         std::io::copy(&mut entry, &mut out).map_err(|e| Error::io(&target, e))?;
-
-        // Gleicher Zielname aus unterschiedlichen Ordnern: die zuletzt
-        // geschriebene Datei gewinnt (siehe oben), das Ziel wird nur beim
-        // ersten Auftreten in die Ergebnisliste aufgenommen.
-        if seen.insert(target.clone()) {
-            targets.push(target);
-        }
+        targets.push(target);
     }
     Ok(targets)
 }
@@ -124,8 +145,15 @@ fn extract_rar(archive: &Path, into: &Path) -> Result<Vec<PathBuf>> {
         ("7zz", &["x", "-y"]),
     ];
 
+    // Wurde tatsächlich ein Werkzeug gefunden und ausgeführt, aber ist
+    // gescheitert, ist das Problem das Archiv – nicht das fehlende
+    // Werkzeug. `NoRarTool`s "bitte unar/7zip installieren" wäre dann eine
+    // irreführende Empfehlung.
+    let mut tool_ran = false;
+
     for (name, args) in &tools {
         let Some(tool_path) = which_in_path(name) else { continue };
+        tool_ran = true;
         let mut cmd = std::process::Command::new(&tool_path);
         if *name == "unar" {
             cmd.args(*args).arg(&raw).arg(archive);
@@ -141,37 +169,64 @@ fn extract_rar(archive: &Path, into: &Path) -> Result<Vec<PathBuf>> {
         }
     }
 
-    Err(Error::NoRarTool)
+    if tool_ran {
+        Err(Error::io(
+            archive,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Archiv konnte nicht entpackt werden – ist es beschädigt?",
+            ),
+        ))
+    } else {
+        Err(Error::NoRarTool)
+    }
 }
 
 /// Sucht `.pak`-Dateien in einem entpackten Baum und legt sie flach in
 /// `into`. Landen zwei Dateien aus unterschiedlichen Unterordnern auf
-/// demselben Ziel (gleicher Dateiname), gewinnt die zuletzt verschobene
-/// Datei; das Ziel erscheint im Ergebnis nur einmal.
+/// demselben Zieldateinamen (z. B. `Option A/mod.pak` und `Option
+/// B/mod.pak`), werden beide behalten: die zweite bekommt eine laufende
+/// Nummer (`mod_2.pak`, `mod_3.pak`, ...) statt die erste zu verdrängen.
+///
+/// Jedes Verzeichnis wird vor der Verarbeitung nach Pfad sortiert, damit das
+/// Ergebnis unabhängig von der (nicht zugesicherten) Reihenfolge von
+/// `read_dir` deterministisch ist. Symlinks werden übersprungen: `unar`/`7z`
+/// können Links aus einem Archiv wiederherstellen, und ein Link auf `/` oder
+/// das Spielverzeichnis würde sonst dazu führen, dass fremde Dateien
+/// außerhalb des Extraktionsordners eingesammelt werden.
 fn collect_paks_recursively(from: &Path, into: &Path) -> Result<Vec<PathBuf>> {
     let mut targets: Vec<PathBuf> = Vec::new();
-    let mut seen: HashSet<PathBuf> = HashSet::new();
-    let mut pending = vec![from.to_path_buf()];
-
-    while let Some(dir) = pending.pop() {
-        for entry in std::fs::read_dir(&dir).map_err(|e| Error::io(&dir, e))? {
-            let entry = entry.map_err(|e| Error::io(&dir, e))?;
-            let path = entry.path();
-            if path.is_dir() {
-                pending.push(path);
-            } else if path.file_name().and_then(|n| n.to_str()).is_some_and(is_pak_file) {
-                let target = into.join(path.file_name().unwrap());
-                if path != target {
-                    std::fs::rename(&path, &target).map_err(|e| Error::io(&target, e))?;
-                }
-                if seen.insert(target.clone()) {
-                    targets.push(target);
-                }
-            }
-        }
-    }
+    collect_paks_into(from, into, &mut targets)?;
     targets.sort();
     Ok(targets)
+}
+
+fn collect_paks_into(dir: &Path, into: &Path, targets: &mut Vec<PathBuf>) -> Result<()> {
+    let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(dir)
+        .map_err(|e| Error::io(dir, e))?
+        .collect::<std::result::Result<Vec<_>, std::io::Error>>()
+        .map_err(|e| Error::io(dir, e))?;
+    entries.sort_by_key(std::fs::DirEntry::path);
+
+    for entry in entries {
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(|e| Error::io(&path, e))?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            collect_paks_into(&path, into, targets)?;
+        } else if let Some(file_name) =
+            path.file_name().filter(|n| n.to_str().is_some_and(is_pak_file))
+        {
+            let target = unique_target_in(into, file_name);
+            if path != target {
+                std::fs::rename(&path, &target).map_err(|e| Error::io(&target, e))?;
+            }
+            targets.push(target);
+        }
+    }
+    Ok(())
 }
 
 /// Findet einen im Mods-Verzeichnis und in der Konfiguration noch freien
@@ -239,7 +294,13 @@ pub fn import_pak(
 
     // rename schlägt über Gerätegrenzen fehl – dann kopieren.
     if std::fs::rename(pak, &target).is_err() {
-        std::fs::copy(pak, &target).map_err(|e| Error::io(&target, e))?;
+        if let Err(e) = std::fs::copy(pak, &target) {
+            // Ein fehlgeschlagenes Kopieren kann eine unvollständige Datei
+            // hinterlassen haben – die darf nicht liegen bleiben, sonst
+            // hält `unique_pak_name` diesen Namen dauerhaft für belegt.
+            let _ = std::fs::remove_file(&target);
+            return Err(Error::io(&target, e));
+        }
         let _ = std::fs::remove_file(pak);
     }
 
@@ -277,7 +338,7 @@ pub(crate) fn now_rfc3339() -> String {
 
 /// Formatiert eine Unix-Zeit (Sekunden seit der Epoche, UTC) als RFC-3339.
 ///
-/// Kalenderrechnung nach Howard Hinnants "days_from_civil"-Algorithmus.
+/// Kalenderrechnung nach Howard Hinnants "civil_from_days"-Algorithmus.
 pub(crate) fn format_utc(unix: i64) -> String {
     let days = unix.div_euclid(86_400);
     let remainder = unix.rem_euclid(86_400);
@@ -405,10 +466,11 @@ mod tests {
     }
 
     /// Zwei Einträge mit gleichem Dateinamen aus unterschiedlichen Ordnern
-    /// dürfen im Ergebnis nur einmal auftauchen – der zuletzt gelesene
-    /// Eintrag gewinnt (siehe Doc-Kommentar von `extract_paks`).
+    /// (z. B. zwei Installationsvarianten) müssen beide erhalten bleiben –
+    /// der zweite bekommt eine laufende Nummer (siehe Doc-Kommentar von
+    /// `extract_paks`), statt den ersten stillschweigend zu verdrängen.
     #[test]
-    fn same_basename_from_different_folders_is_listed_once() {
+    fn same_basename_from_different_folders_gets_a_numbered_variant() {
         let tmp = tempfile::tempdir().unwrap();
         let archive = tmp.path().join("mod.zip");
         zip_with(&[("a/mod.pak", b"ERSTER"), ("b/mod.pak", b"ZWEITER")], &archive);
@@ -417,13 +479,74 @@ mod tests {
         std::fs::create_dir_all(&target).unwrap();
         let paks = extract_paks(&archive, &target).unwrap();
 
-        assert_eq!(paks.len(), 1, "gleicher Zielname darf nur einmal im Ergebnis stehen");
+        assert_eq!(paks.len(), 2, "beide Varianten müssen erhalten bleiben");
         assert!(paks[0].ends_with("mod.pak"));
+        assert!(paks[1].ends_with("mod_2.pak"), "der zweite Treffer bekommt eine laufende Nummer");
+        assert_eq!(std::fs::read(&paks[0]).unwrap(), b"ERSTER");
+        assert_eq!(std::fs::read(&paks[1]).unwrap(), b"ZWEITER");
+    }
+
+    /// `collect_paks_recursively` (genutzt von `.7z`/`.rar`) muss dieselbe
+    /// Nummerierung anwenden wie der Zip-Pfad, und dabei unabhängig von der
+    /// (nicht zugesicherten) `read_dir`-Reihenfolge ein deterministisches
+    /// Ergebnis liefern.
+    #[test]
+    fn collect_paks_recursively_is_deterministic_and_keeps_same_basename_variants() {
+        let tmp = tempfile::tempdir().unwrap();
+        let raw = tmp.path().join("raw");
+        std::fs::create_dir_all(raw.join("a")).unwrap();
+        std::fs::create_dir_all(raw.join("b")).unwrap();
+        std::fs::create_dir_all(raw.join("deep/x")).unwrap();
+        std::fs::write(raw.join("a/mod.pak"), b"ERSTER").unwrap();
+        std::fs::write(raw.join("b/mod.pak"), b"ZWEITER").unwrap();
+        std::fs::write(raw.join("deep/x/y.pak"), b"TIEF").unwrap();
+
+        let into = tmp.path().join("out");
+        std::fs::create_dir_all(&into).unwrap();
+
+        let result = collect_paks_recursively(&raw, &into).unwrap();
+
         assert_eq!(
-            std::fs::read(&paks[0]).unwrap(),
-            b"ZWEITER",
-            "der zuletzt gelesene Eintrag gewinnt"
+            result,
+            vec![into.join("mod.pak"), into.join("mod_2.pak"), into.join("y.pak")],
+            "Reihenfolge und Benennung müssen deterministisch sein"
         );
+        assert_eq!(std::fs::read(into.join("mod.pak")).unwrap(), b"ERSTER");
+        assert_eq!(std::fs::read(into.join("mod_2.pak")).unwrap(), b"ZWEITER");
+        assert_eq!(std::fs::read(into.join("y.pak")).unwrap(), b"TIEF");
+    }
+
+    /// `unar`/`7z` können Symlinks aus einem Archiv wiederherstellen. Ein
+    /// Link auf ein fremdes Verzeichnis darf beim Einsammeln der Paks nicht
+    /// verfolgt werden, sonst könnte ein bösartiges Archiv über einen Link
+    /// auf `/` oder das Spielverzeichnis fremde Dateien einsammeln.
+    #[test]
+    fn collect_paks_recursively_does_not_follow_symlinked_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let raw = tmp.path().join("raw");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&raw).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("fremd.pak"), b"FREMD").unwrap();
+        std::os::unix::fs::symlink(&outside, raw.join("link")).unwrap();
+
+        let into = tmp.path().join("out");
+        std::fs::create_dir_all(&into).unwrap();
+
+        let result = collect_paks_recursively(&raw, &into).unwrap();
+
+        assert!(result.is_empty(), "ein Symlink auf ein fremdes Verzeichnis darf nicht verfolgt werden");
+        assert!(!into.join("fremd.pak").exists());
+    }
+
+    /// Ein Name, der nicht auf `.pak` endet und dessen letzte Bytes mitten in
+    /// einem mehrbyteigen UTF-8-Zeichen liegen würden, darf `strip_pak_suffix`
+    /// nicht zum Absturz bringen.
+    #[test]
+    fn strip_pak_suffix_does_not_panic_on_non_ascii_names_without_pak_suffix() {
+        assert_eq!(strip_pak_suffix("a€€"), "a€€");
+        assert_eq!(strip_pak_suffix("mod.pak"), "mod");
+        assert_eq!(strip_pak_suffix("MOD.PAK"), "MOD");
     }
 
     #[test]
@@ -440,12 +563,14 @@ mod tests {
     }
 
     /// Eine `.rar`-Datei mit ungültigem Inhalt kann kein reales Werkzeug
-    /// erfolgreich entpacken – unabhängig davon, ob `unar`/`7z`/`7zz`
-    /// installiert sind, muss das Ergebnis `NoRarTool` sein (entweder weil
-    /// kein Werkzeug gefunden wird, oder weil jedes gefundene Werkzeug am
-    /// ungültigen Archiv scheitert).
+    /// erfolgreich entpacken. Das erwartete Ergebnis hängt davon ab, ob die
+    /// Testumgebung überhaupt ein Werkzeug bereitstellt: ohne `unar`/`7z`/
+    /// `7zz` im PATH ist die richtige Meldung `NoRarTool` ("bitte
+    /// installieren"); ist eines vorhanden, aber scheitert es am ungültigen
+    /// Archiv, wäre dieselbe Meldung irreführend – dort muss ein
+    /// `Error::Io` kommen, das auf das kaputte Archiv hinweist.
     #[test]
-    fn invalid_rar_archive_is_reported_as_no_rar_tool() {
+    fn invalid_rar_archive_is_reported_clearly() {
         let tmp = tempfile::tempdir().unwrap();
         let archive = tmp.path().join("kaputt.rar");
         std::fs::write(&archive, b"das ist kein rar-Archiv").unwrap();
@@ -453,7 +578,18 @@ mod tests {
         let target = tmp.path().join("out");
         std::fs::create_dir_all(&target).unwrap();
 
-        assert!(matches!(extract_paks(&archive, &target).unwrap_err(), Error::NoRarTool));
+        let any_tool_available =
+            ["unar", "7z", "7zz"].iter().any(|name| which_in_path(name).is_some());
+        let error = extract_paks(&archive, &target).unwrap_err();
+
+        if any_tool_available {
+            assert!(
+                matches!(error, Error::Io { .. }),
+                "ein gefundenes, aber gescheitertes Werkzeug muss als E/A-Fehler gemeldet werden, nicht als NoRarTool: {error:?}"
+            );
+        } else {
+            assert!(matches!(error, Error::NoRarTool));
+        }
     }
 
     #[test]
