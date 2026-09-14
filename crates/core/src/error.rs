@@ -26,6 +26,16 @@ pub enum Error {
     #[error("Backup beschädigt: {0}")]
     CorruptBackup(String),
 
+    #[error("Save-Verzeichnis enthält an einer sicherheitsrelevanten Stelle einen Symlink, Wiederherstellung abgebrochen: {0}")]
+    UnsafeSaveDir(PathBuf),
+
+    #[error("Wiederherstellung fehlgeschlagen, nachdem bereits eine Sicherung des vorherigen Standes angelegt wurde (liegt unter {safety_backup}): {source}")]
+    RestoreFailedAfterBackup {
+        safety_backup: PathBuf,
+        #[source]
+        source: Box<Error>,
+    },
+
     #[error("kein Werkzeug zum Entpacken von .rar gefunden – bitte 'unar' oder '7zip' installieren (Debian/Ubuntu: apt install unar, Arch: pacman -S unarchiver, Fedora: dnf install unar)")]
     NoRarTool,
 
