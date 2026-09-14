@@ -1,5 +1,6 @@
 pub mod atomic;
 pub mod error;
+pub mod library;
 pub mod pak_config;
 pub mod paths;
 pub mod platform;
