@@ -114,35 +114,37 @@ fn check_write_permission(dir: &Path) -> Result<()> {
     }
 }
 
+/// Baut einen `AppState` direkt aus den öffentlichen Feldern, ohne `open()`
+/// (das eine echte Spielinstallation über `discover()` oder
+/// `settings.toml` verlangt). Für Tests reicht ein minimales, gültiges
+/// Spielverzeichnis. `pub(crate)`, damit auch die Tests in `cli.rs` diese
+/// Fixture nutzen können, statt sie zu duplizieren.
+#[cfg(test)]
+pub(crate) fn test_fixture(base: &Path) -> AppState {
+    let game = base.join("game");
+    std::fs::create_dir_all(game.join("client_pc/root/mods")).unwrap();
+    let paths = GamePaths::from_game_dir(&game, base).unwrap();
+    AppState {
+        paths,
+        settings: Settings::default(),
+        dirs: AppDirs {
+            config: base.join("config"),
+            data: base.join("data"),
+            state: base.join("state"),
+        },
+        library: Library::default(),
+        config: PakConfig::default(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Baut einen `AppState` direkt aus den öffentlichen Feldern, ohne
-    /// `open()` (das eine echte Spielinstallation über `discover()` oder
-    /// `settings.toml` verlangt). Für Tests reicht ein minimales, gültiges
-    /// Spielverzeichnis.
-    fn state_fixture(base: &Path) -> AppState {
-        let game = base.join("game");
-        std::fs::create_dir_all(game.join("client_pc/root/mods")).unwrap();
-        let paths = GamePaths::from_game_dir(&game, base).unwrap();
-        AppState {
-            paths,
-            settings: Settings::default(),
-            dirs: AppDirs {
-                config: base.join("config"),
-                data: base.join("data"),
-                state: base.join("state"),
-            },
-            library: Library::default(),
-            config: PakConfig::default(),
-        }
-    }
-
     #[test]
     fn profiles_dir_and_backups_dir_are_under_the_data_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let state = state_fixture(tmp.path());
+        let state = test_fixture(tmp.path());
 
         assert_eq!(state.profiles_dir(), state.dirs.data.join("profiles"));
         assert_eq!(state.backups_dir(), state.dirs.data.join("backups/saves"));
