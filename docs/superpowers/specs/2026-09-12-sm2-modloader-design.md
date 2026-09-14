@@ -298,7 +298,8 @@ Leitlinie: **Kein Vorgang, der Nutzerdaten berührt, darf teilweise ausgeführt 
 ## 9. Risiken
 
 **R1 — Die Engine könnte `disabled: true` ignorieren.** Das Verhalten ist dokumentiert, aber nicht verifiziert. Trifft es nicht zu, bricht das gesamte Aktivierungsmodell.
-*Gegenmaßnahme:* **T0, vor jeder Implementierung.** Ein Spielstart mit auf `disabled: true` gesetztem Astartes-Mod. Schlägt der Test fehl, greift ein Umschalten per Umbenennung innerhalb desselben Dateisystems (`mods/` ↔ `mods_disabled/` auf demselben Gerät) — `rename` statt Kopie, ebenfalls sofort. Nur `pak_config.rs` und `library.rs` wären betroffen; die übrige Architektur bleibt gültig.
+**Verifiziert am 2026-09-14: bestätigt.** Spielstart mit `wa_astartes_14_1.pak` auf `disabled: true` — der Mod war nicht aktiv. Das Aktivierungsmodell gilt; der Fallback per Umbenennung entfällt.
+*Gegenmaßnahme (historisch):* **T0, vor jeder Implementierung.** Ein Spielstart mit auf `disabled: true` gesetztem Astartes-Mod. Schlägt der Test fehl, greift ein Umschalten per Umbenennung innerhalb desselben Dateisystems (`mods/` ↔ `mods_disabled/` auf demselben Gerät) — `rename` statt Kopie, ebenfalls sofort. Nur `pak_config.rs` und `library.rs` wären betroffen; die übrige Architektur bleibt gültig.
 
 **R2 — Steam-Cloud überschreibt wiederhergestellte Saves.** Behandelt in 6.5.
 

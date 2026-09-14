@@ -2,3 +2,4 @@
 **/target/
 Cargo.lock.bak
 /.superpowers/
+/.claude-session
