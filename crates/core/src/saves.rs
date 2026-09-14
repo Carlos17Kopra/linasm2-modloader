@@ -57,6 +57,13 @@ pub struct BackupEntry {
 /// `restore`, das `backup` immer zuerst aufruft) endlos rekursieren lassen;
 /// ein Link auf ein fremdes Verzeichnis würde außerdem dessen Inhalt mit
 /// ins Backup einsammeln.
+///
+/// Jeder relative Pfad wird zusätzlich mit `validate_entry_name` geprüft
+/// (leere/`.`/`..`-Komponenten, Rückwärtsschrägstriche): ohne diese Prüfung
+/// könnte `backup` ein Archiv erzeugen, das `verify` – und damit jede
+/// spätere `restore`, die ihre eigene Sicherung verifiziert – als
+/// beschädigt zurückweist, etwa wegen einer echten Datei namens
+/// `slot1\campaign.sav` (auf Unix ein gewöhnlicher, gültiger Dateiname).
 fn list_files_recursive(root: &Path) -> Result<Vec<(String, PathBuf)>> {
     let mut collected = Vec::new();
     let mut pending = vec![root.to_path_buf()];
@@ -79,6 +86,7 @@ fn list_files_recursive(root: &Path) -> Result<Vec<(String, PathBuf)>> {
                     .map(|c| c.as_os_str().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
                     .join("/");
+                validate_entry_name(&relative)?;
                 collected.push((relative, path));
             }
         }
@@ -355,16 +363,25 @@ pub fn list_backups(backup_root: &Path) -> Result<Vec<BackupEntry>> {
         }
     }
 
-    // Neueste zuerst. Bei gleicher Sekunde entscheidet der Kollisionszähler
-    // aus dem Dateinamen (siehe `collision_counter`) – ein reiner
-    // Byte-Vergleich der Pfade wäre hier falsch (siehe dessen Doc-Kommentar).
+    // Neueste zuerst. Bei gleicher Sekunde entscheidet zuerst der
+    // Kollisionszähler aus dem Dateinamen (siehe `collision_counter`) – ein
+    // reiner Byte-Vergleich der Pfade wäre hier falsch (siehe dessen
+    // Doc-Kommentar). Zwei Backups mit gleichem `created_at`, aber
+    // unterschiedlicher Basis (z. B. verschiedenes Etikett, also Zähler
+    // 0 auf beiden Seiten) fielen ohne einen letzten, expliziten Tie-Break
+    // sonst auf die (nicht zugesicherte) `read_dir`-Reihenfolge zurück –
+    // der abschließende Pfadvergleich macht das Ergebnis in jedem Fall
+    // deterministisch.
     entries.sort_by(|a, b| {
-        b.created_at.cmp(&a.created_at).then_with(|| {
-            let stem_of = |entry: &BackupEntry| {
-                entry.archive.file_stem().and_then(|s| s.to_str()).map(collision_counter).unwrap_or(0)
-            };
-            stem_of(b).cmp(&stem_of(a))
-        })
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| {
+                let stem_of = |entry: &BackupEntry| {
+                    entry.archive.file_stem().and_then(|s| s.to_str()).map(collision_counter).unwrap_or(0)
+                };
+                stem_of(b).cmp(&stem_of(a))
+            })
+            .then_with(|| a.archive.cmp(&b.archive))
     });
     Ok(entries)
 }
@@ -789,6 +806,50 @@ mod tests {
         assert_eq!(list[2].archive, first.archive);
     }
 
+    /// Legt von Hand ein leeres, aber gültiges Backup (Archiv + Manifest)
+    /// mit fest vorgegebenem `created_at` und Dateinamensbasis an – dient
+    /// Tests, die eine Tie-Break-Situation ohne jede Abhängigkeit von der
+    /// Uhr reproduzieren wollen.
+    fn write_backup_pair(backup_root: &Path, base: &str, created_at: &str) {
+        std::fs::create_dir_all(backup_root).unwrap();
+        let archive_path = backup_root.join(format!("{base}.zip"));
+        let manifest_path = backup_root.join(format!("{base}.json"));
+
+        let file = std::fs::File::create(&archive_path).unwrap();
+        zip::ZipWriter::new(file).finish().unwrap();
+
+        let manifest = BackupManifest {
+            created_at: created_at.to_string(),
+            source: "irrelevant".to_string(),
+            label: None,
+            files: BTreeMap::new(),
+        };
+        std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
+    }
+
+    /// Zwei Backups mit identischem `created_at`, aber unterschiedlicher
+    /// Basis (z. B. verschiedenes Etikett) kollidieren nicht – der
+    /// Kollisionszähler ist für beide 0 und entscheidet nichts. Ohne einen
+    /// abschließenden, expliziten Tie-Break auf den Archivpfad würde die
+    /// Reihenfolge dann von der (nicht zugesicherten) `read_dir`-Reihenfolge
+    /// abhängen, statt deterministisch zu sein.
+    #[test]
+    fn list_backups_breaks_ties_deterministically_when_bases_differ() {
+        let (_tmp, _saves, backups) = save_fixture();
+        let same_timestamp = "2026-01-01T00:00:00Z";
+        write_backup_pair(&backups, "zzz_alpha", same_timestamp);
+        write_backup_pair(&backups, "aaa_beta", same_timestamp);
+
+        let list = list_backups(&backups).unwrap();
+        assert_eq!(list.len(), 2);
+        let stems: Vec<&str> = list.iter().map(|e| e.archive.file_stem().unwrap().to_str().unwrap()).collect();
+        assert_eq!(
+            stems,
+            vec!["aaa_beta", "zzz_alpha"],
+            "gleicher Zeitstempel, unterschiedliche Basis: Reihenfolge muss deterministisch (aufsteigend nach Pfad) sein"
+        );
+    }
+
     /// Ein `.zip` ohne begleitendes `.json` (z. B. weil das Manifest von
     /// Hand gelöscht wurde) ist kein gültiges Backup und darf die Liste
     /// nicht mit einem kaputten Eintrag füllen.
@@ -1043,6 +1104,23 @@ mod tests {
         let manifest: BackupManifest =
             serde_json::from_str(&std::fs::read_to_string(&entry.manifest).unwrap()).unwrap();
         assert_eq!(manifest.files.len(), 2, "der Symlink selbst darf nicht als Datei eingesammelt werden");
+    }
+
+    /// Ein Rückwärtsschrägstrich ist auf Unix ein gewöhnliches, gültiges
+    /// Zeichen in einem Dateinamen – `backup` darf ein solches Save trotzdem
+    /// nicht klaglos einpacken: `verify` (und damit jede `restore`, die
+    /// ihre eigene Sicherung verifiziert) würde das erzeugte Archiv sofort
+    /// wieder als beschädigt zurückweisen. `backup` muss also selbst schon
+    /// ablehnen, statt ein Archiv zu erzeugen, das nie eine eigene Prüfung
+    /// besteht.
+    #[test]
+    fn backup_rejects_a_save_file_whose_name_contains_a_backslash() {
+        let (_tmp, saves, backups) = save_fixture();
+        std::fs::write(saves.join("slot1\\campaign.sav"), b"X").unwrap();
+
+        let err = backup(&saves, &backups, None).unwrap_err();
+        assert!(matches!(err, Error::CorruptBackup(_)), "{err:?}");
+        assert!(list_backups(&backups).unwrap().is_empty(), "es darf kein halbes Archiv zurückbleiben");
     }
 
     /// Reiner Rauchtest: unabhängig davon, ob `/proc` existiert oder ein
