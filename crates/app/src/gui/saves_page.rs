@@ -5,6 +5,7 @@ use super::theme::{color, medium, metric, mono, sans};
 use super::widgets::{self, ButtonStyle, Column, Icon};
 use super::{Action, App};
 use egui::{Align2, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2};
+use sm2_core::t;
 
 const BACKUP_COLUMNS: [Column; 4] = [
     Column::Fixed(158.0),
@@ -16,9 +17,8 @@ const BACKUP_COLUMNS: [Column; 4] = [
 pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     super::page_heading(
         ui,
-        "Savegame-Backups",
-        "Wiederherstellen überschreibt die echten Spielstände. Der Loader sichert den aktuellen \
-         Stand davor immer automatisch – das ist nicht abschaltbar.",
+        &t!("gui.saves.heading"),
+        &t!("gui.saves.heading_body"),
         680.0,
     );
 
@@ -40,7 +40,8 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
                 let usable = app.saves_blocked.is_none() && app.task.is_none();
 
                 let mut label = app.backup_label.clone();
-                if widgets::text_field(ui, &mut label, "Etikett (optional)", 230.0, None).changed()
+                let label_placeholder = t!("gui.saves.label_placeholder");
+                if widgets::text_field(ui, &mut label, &label_placeholder, 230.0, None).changed()
                 {
                     actions.push(Action::SetBackupLabel(label));
                 }
@@ -48,7 +49,7 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
                     ui,
                     &ButtonStyle::ghost().font(medium(12.5)),
                     None,
-                    "Backup anlegen",
+                    &t!("gui.saves.create_button"),
                     usable,
                 )
                 .clicked()
@@ -63,7 +64,7 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
                     ui,
                     &ButtonStyle::ghost().font(medium(12.5)),
                     None,
-                    "Backup importieren",
+                    &t!("gui.saves.import_button"),
                     app.task.is_none(),
                 )
                 .clicked()
@@ -73,12 +74,9 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
-                        egui::RichText::new(format!(
-                            "{} Backups · neueste zuerst",
-                            app.backups.len()
-                        ))
-                        .font(mono(11.5))
-                        .color(color::TEXT_DIM2),
+                        egui::RichText::new(t!("gui.saves.count", count = app.backups.len()))
+                            .font(mono(11.5))
+                            .color(color::TEXT_DIM2),
                     );
                 });
             });
@@ -88,7 +86,15 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         Pos2::new(outer.left(), toolbar.bottom() + 1.0),
         Vec2::new(outer.width(), metric::TABLE_HEAD_HEIGHT),
     );
-    super::draw_column_head(ui, head, &BACKUP_COLUMNS, &["ERSTELLT", "ETIKETT", "GRÖSSE", ""]);
+    let col_created = t!("gui.saves.col_created");
+    let col_label = t!("gui.saves.col_label");
+    let col_size = t!("gui.saves.col_size");
+    super::draw_column_head(
+        ui,
+        head,
+        &BACKUP_COLUMNS,
+        &[col_created.as_str(), col_label.as_str(), col_size.as_str(), ""],
+    );
     ui.painter().hline(outer.x_range(), toolbar.bottom() + 0.5, Stroke::new(1.0, color::BORDER_SOFT));
 
     let body = Rect::from_min_max(
@@ -97,7 +103,7 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     );
     ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
         if app.backups.is_empty() {
-            super::empty_hint(ui, "Noch keine Backups vorhanden.");
+            super::empty_hint(ui, &t!("gui.saves.empty"));
             return;
         }
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -156,7 +162,7 @@ fn blocked_banner(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
                 ui,
                 &ButtonStyle::ghost().height(28.0).padding_x(12.0).font(sans(12.0)),
                 None,
-                "Nutzerprofil wählen",
+                &t!("gui.saves.choose_user_button"),
                 enabled,
             )
             .clicked()
@@ -164,7 +170,9 @@ fn blocked_banner(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
                 actions.push(Action::OpenSteamUserDialog);
             }
             ui.label(
-                egui::RichText::new("…/storage/steam/user/").font(mono(11.0)).color(color::TEXT_FAINT),
+                egui::RichText::new(t!("gui.saves.user_path_hint"))
+                    .font(mono(11.0))
+                    .color(color::TEXT_FAINT),
             );
         },
     );
@@ -204,7 +212,7 @@ fn row(app: &App, ui: &mut Ui, index: usize, actions: &mut Vec<Action>) {
         dim(color::TEXT_STRONG),
     );
 
-    let label = entry.label.clone().unwrap_or_else(|| String::from("—"));
+    let label = entry.label.clone().unwrap_or_else(|| t!("gui.saves.no_value"));
     let label_galley =
         widgets::truncated(ui, &label, sans(12.5), dim(color::TEXT), cells[1].width() - 80.0);
     let label_width = label_galley.size().x;
@@ -227,7 +235,7 @@ fn row(app: &App, ui: &mut Ui, index: usize, actions: &mut Vec<Action>) {
             widgets::badge(
                 &mut badge_ui,
                 Some(Icon::Check),
-                "geprüft",
+                &t!("gui.saves.verified_badge"),
                 dim(color::OK),
                 color::OK_BG,
             );
@@ -252,15 +260,21 @@ fn row(app: &App, ui: &mut Ui, index: usize, actions: &mut Vec<Action>) {
         &mut buttons,
         &ButtonStyle::warning(),
         Some(Icon::Warning),
-        "Wiederherstellen",
+        &t!("gui.saves.restore_button"),
         usable,
     )
     .clicked()
     {
         actions.push(Action::AskRestore(index));
     }
-    if widgets::button(&mut buttons, &ButtonStyle::ghost().small(), None, "Prüfen", usable)
-        .clicked()
+    if widgets::button(
+        &mut buttons,
+        &ButtonStyle::ghost().small(),
+        None,
+        &t!("gui.saves.verify_button"),
+        usable,
+    )
+    .clicked()
     {
         actions.push(Action::VerifyBackup(index));
     }
@@ -284,25 +298,31 @@ fn context_menu(app: &App, response: &egui::Response, index: usize, actions: &mu
         ui.set_width(widgets::MENU_WIDTH);
         ui.spacing_mut().item_spacing.y = 1.0;
 
-        if widgets::menu_item(ui, Some(Icon::Pencil), "Umbenennen …", idle, false) {
+        if widgets::menu_item(ui, Some(Icon::Pencil), &t!("gui.saves.menu_rename"), idle, false) {
             actions.push(Action::AskRenameBackup(index));
         }
-        if widgets::menu_item(ui, Some(Icon::Folder), "Im Dateimanager zeigen", idle, false) {
+        if widgets::menu_item(
+            ui,
+            Some(Icon::Folder),
+            &t!("gui.saves.menu_show_in_files"),
+            idle,
+            false,
+        ) {
             actions.push(Action::ShowBackupInFiles(index));
         }
 
         widgets::menu_separator(ui);
 
-        if widgets::menu_item(ui, Some(Icon::Check), "Prüfen", usable, false) {
+        if widgets::menu_item(ui, Some(Icon::Check), &t!("gui.saves.verify_button"), usable, false) {
             actions.push(Action::VerifyBackup(index));
         }
-        if widgets::menu_item(ui, Some(Icon::Warning), "Wiederherstellen …", usable, false) {
+        if widgets::menu_item(ui, Some(Icon::Warning), &t!("gui.saves.menu_restore"), usable, false) {
             actions.push(Action::AskRestore(index));
         }
 
         widgets::menu_separator(ui);
 
-        if widgets::menu_item(ui, Some(Icon::Trash), "Löschen …", idle, true) {
+        if widgets::menu_item(ui, Some(Icon::Trash), &t!("gui.saves.menu_delete"), idle, true) {
             actions.push(Action::AskDeleteBackup(index));
         }
     });
@@ -311,5 +331,6 @@ fn context_menu(app: &App, response: &egui::Response, index: usize, actions: &mu
 /// The size of the archive on disk. It is nowhere in the manifest — the
 /// file knows it itself.
 fn archive_size(entry: &sm2_core::saves::BackupEntry) -> String {
-    std::fs::metadata(&entry.archive).map_or_else(|_| String::from("—"), |m| human_size(m.len()))
+    std::fs::metadata(&entry.archive)
+        .map_or_else(|_| t!("gui.saves.no_value"), |m| human_size(m.len()))
 }

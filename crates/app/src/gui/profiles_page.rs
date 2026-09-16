@@ -6,6 +6,7 @@ use super::widgets::{self, ButtonStyle, Column};
 use super::{Action, App};
 use crate::vanilla::VANILLA_SNAPSHOT_PREFIX;
 use egui::{Align2, CornerRadius, Pos2, Rect, Sense, Stroke, Ui, UiBuilder, Vec2};
+use sm2_core::t;
 
 const PROFILE_COLUMNS: [Column; 4] = [
     Column::Flexible,
@@ -17,9 +18,8 @@ const PROFILE_COLUMNS: [Column; 4] = [
 pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     super::page_heading(
         ui,
-        "Profile",
-        "Ein Profil hält Aktivierung und Reihenfolge fest. Anwenden ersetzt den aktuellen \
-         Zustand; Mods, die das Profil kennt, die aber fehlen, werden übersprungen und gemeldet.",
+        &t!("gui.profiles.heading"),
+        &t!("gui.profiles.heading_body"),
         660.0,
     );
 
@@ -34,9 +34,8 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
                 let mut name = app.profile_name.clone();
-                if widgets::text_field(ui, &mut name, "Name des neuen Profils", 250.0, None)
-                    .changed()
-                {
+                let name_placeholder = t!("gui.profiles.name_placeholder");
+                if widgets::text_field(ui, &mut name, &name_placeholder, 250.0, None).changed() {
                     actions.push(Action::SetProfileName(name));
                 }
                 let can_save = app.state.is_some();
@@ -44,7 +43,7 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
                     ui,
                     &ButtonStyle::ghost().font(medium(12.5)),
                     None,
-                    "Aktuellen Zustand speichern",
+                    &t!("gui.profiles.save_button"),
                     can_save,
                 )
                 .clicked()
@@ -58,7 +57,15 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         Pos2::new(outer.left(), toolbar.bottom() + 1.0),
         Vec2::new(outer.width(), metric::TABLE_HEAD_HEIGHT),
     );
-    super::draw_column_head(ui, head, &PROFILE_COLUMNS, &["NAME", "AKTIV", "GESPEICHERT", ""]);
+    let col_name = t!("gui.profiles.col_name");
+    let col_active = t!("gui.profiles.col_active");
+    let col_saved = t!("gui.profiles.col_saved");
+    super::draw_column_head(
+        ui,
+        head,
+        &PROFILE_COLUMNS,
+        &[col_name.as_str(), col_active.as_str(), col_saved.as_str(), ""],
+    );
     ui.painter().hline(outer.x_range(), toolbar.bottom() + 0.5, Stroke::new(1.0, color::BORDER_SOFT));
 
     let body = Rect::from_min_max(
@@ -67,7 +74,7 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     );
     ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
         if app.profiles.is_empty() {
-            super::empty_hint(ui, "Noch keine Profile gespeichert.");
+            super::empty_hint(ui, &t!("gui.profiles.empty"));
             return;
         }
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -120,7 +127,13 @@ fn row(app: &App, ui: &mut Ui, profile: &sm2_core::profile::Profile, actions: &m
                     .max_rect(badge_rect)
                     .layout(egui::Layout::left_to_right(egui::Align::Center)),
             );
-            widgets::badge(&mut badge_ui, None, "AUTOMATISCH", color::INFO, color::INFO_BG);
+            widgets::badge(
+                &mut badge_ui,
+                None,
+                &t!("gui.profiles.automatic_badge"),
+                color::INFO,
+                color::INFO_BG,
+            );
         }
     }
 
@@ -128,7 +141,7 @@ fn row(app: &App, ui: &mut Ui, profile: &sm2_core::profile::Profile, actions: &m
     ui.painter().text(
         Pos2::new(cells[1].left(), cells[1].center().y),
         Align2::LEFT_CENTER,
-        format!("{active} von {}", profile.entries.len()),
+        t!("gui.profiles.active_count", active = active, total = profile.entries.len()),
         mono(11.5),
         color::TEXT_DIM2,
     );
@@ -155,11 +168,19 @@ fn row(app: &App, ui: &mut Ui, profile: &sm2_core::profile::Profile, actions: &m
     delete.foreground = color::TEXT_DIM2;
     delete.border_hovered = Some(color::DANGER_BORDER);
     delete.foreground_hovered = color::DANGER;
-    if widgets::button(&mut buttons, &delete, None, "Löschen", true).clicked() {
+    if widgets::button(&mut buttons, &delete, None, &t!("gui.profiles.delete_button"), true)
+        .clicked()
+    {
         actions.push(Action::AskDeleteProfile(profile.name.clone()));
     }
-    if widgets::button(&mut buttons, &ButtonStyle::ghost().small(), None, "Anwenden", app.can_modify())
-        .clicked()
+    if widgets::button(
+        &mut buttons,
+        &ButtonStyle::ghost().small(),
+        None,
+        &t!("gui.profiles.apply_button"),
+        app.can_modify(),
+    )
+    .clicked()
     {
         actions.push(Action::ApplyProfile(profile.name.clone()));
     }
@@ -168,12 +189,12 @@ fn row(app: &App, ui: &mut Ui, profile: &sm2_core::profile::Profile, actions: &m
 /// When the profile was last written. A profile carries no timestamp of its
 /// own — the file does, and that is exactly what is meant here.
 fn saved_at(app: &App, profile: &sm2_core::profile::Profile) -> String {
-    let Some(dir) = app.profiles_dir() else { return String::from("—") };
+    let Some(dir) = app.profiles_dir() else { return t!("gui.profiles.no_value") };
     let path = profile.path_in(&dir);
-    let Ok(metadata) = std::fs::metadata(&path) else { return String::from("—") };
-    let Ok(modified) = metadata.modified() else { return String::from("—") };
+    let Ok(metadata) = std::fs::metadata(&path) else { return t!("gui.profiles.no_value") };
+    let Ok(modified) = metadata.modified() else { return t!("gui.profiles.no_value") };
     let Ok(since_epoch) = modified.duration_since(std::time::UNIX_EPOCH) else {
-        return String::from("—");
+        return t!("gui.profiles.no_value");
     };
     human_time(&sm2_core::import::format_utc(since_epoch.as_secs() as i64))
 }

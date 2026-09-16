@@ -1,9 +1,10 @@
-//! The "Einstellungen" section: detected directories and behaviour.
+//! The "Settings" section: detected directories and behaviour.
 
 use super::theme::{color, medium, metric, mono, sans};
 use super::widgets::{self, ButtonStyle, Icon};
 use super::{Action, App};
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2};
+use sm2_core::t;
 use std::path::PathBuf;
 
 pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
@@ -16,7 +17,7 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
 
 /// One row of the directory table.
 struct PathRow {
-    label: &'static str,
+    label: String,
     value: String,
     /// Target path to open in the file manager, if there is one.
     open: Option<PathBuf>,
@@ -31,7 +32,7 @@ fn directories(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     let height = 44.0 + rows.len() as f32 * 38.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
     super::draw_card(ui, rect);
-    card_title(ui, rect, "Erkannte Verzeichnisse");
+    card_title(ui, rect, &t!("gui.settings.directories_title"));
 
     for (index, row) in rows.iter().enumerate() {
         let line = Rect::from_min_size(
@@ -50,7 +51,7 @@ fn directories(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         ui.painter().text(
             Pos2::new(inner.left(), inner.center().y),
             Align2::LEFT_CENTER,
-            row.label,
+            &row.label,
             sans(12.0),
             color::TEXT_DIM2,
         );
@@ -62,8 +63,14 @@ fn directories(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         );
         buttons.spacing_mut().item_spacing.x = 10.0;
         if row.changeable
-            && widgets::button(&mut buttons, &ButtonStyle::ghost().small(), None, "Ändern", true)
-                .clicked()
+            && widgets::button(
+                &mut buttons,
+                &ButtonStyle::ghost().small(),
+                None,
+                &t!("gui.settings.change_button"),
+                true,
+            )
+            .clicked()
         {
             actions.push(Action::PickGameDir);
         }
@@ -71,7 +78,7 @@ fn directories(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
             &mut buttons,
             &ButtonStyle::ghost().small(),
             None,
-            "Öffnen",
+            &t!("gui.settings.open_button"),
             row.open.is_some(),
         )
         .clicked()
@@ -98,21 +105,21 @@ fn path_rows(app: &App) -> Vec<PathRow> {
     match &app.state {
         Some(state) => {
             rows.push(PathRow {
-                label: "Spiel",
+                label: t!("gui.settings.row_game"),
                 value: state.paths.game_dir.display().to_string(),
                 open: Some(state.paths.game_dir.clone()),
                 changeable: true,
                 unresolved: false,
             });
             rows.push(PathRow {
-                label: "Mods",
+                label: t!("gui.settings.row_mods"),
                 value: state.paths.mods_dir().display().to_string(),
                 open: Some(state.paths.mods_dir()),
                 changeable: false,
                 unresolved: false,
             });
             rows.push(PathRow {
-                label: "pak_config.yaml",
+                label: t!("gui.settings.row_pak_config"),
                 value: state.paths.pak_config_path().display().to_string(),
                 open: Some(state.paths.mods_dir()),
                 changeable: false,
@@ -120,14 +127,14 @@ fn path_rows(app: &App) -> Vec<PathRow> {
             });
             match state.paths.save_dir(state.settings.steam_user.as_deref()) {
                 Ok(dir) => rows.push(PathRow {
-                    label: "Savegames",
+                    label: t!("gui.settings.row_saves"),
                     value: dir.display().to_string(),
                     open: Some(dir),
                     changeable: false,
                     unresolved: false,
                 }),
                 Err(e) => rows.push(PathRow {
-                    label: "Savegames",
+                    label: t!("gui.settings.row_saves"),
                     value: e.to_string(),
                     open: None,
                     changeable: false,
@@ -137,16 +144,20 @@ fn path_rows(app: &App) -> Vec<PathRow> {
         }
         None => {
             rows.push(PathRow {
-                label: "Spiel",
-                value: String::from("nicht erkannt"),
+                label: t!("gui.settings.row_game"),
+                value: t!("gui.settings.game_not_detected"),
                 open: None,
                 changeable: true,
                 unresolved: true,
             });
-            for label in ["Mods", "pak_config.yaml", "Savegames"] {
+            for label in [
+                t!("gui.settings.row_mods"),
+                t!("gui.settings.row_pak_config"),
+                t!("gui.settings.row_saves"),
+            ] {
                 rows.push(PathRow {
                     label,
-                    value: String::from("—"),
+                    value: t!("gui.settings.no_value"),
                     open: None,
                     changeable: false,
                     unresolved: true,
@@ -157,7 +168,7 @@ fn path_rows(app: &App) -> Vec<PathRow> {
 
     if let Some(dir) = app.backups_dir() {
         rows.push(PathRow {
-            label: "Backups",
+            label: t!("gui.settings.row_backups"),
             value: dir.display().to_string(),
             open: Some(dir),
             changeable: false,
@@ -166,7 +177,7 @@ fn path_rows(app: &App) -> Vec<PathRow> {
     }
     if let Some(dir) = app.profiles_dir() {
         rows.push(PathRow {
-            label: "Profile",
+            label: t!("gui.settings.row_profiles"),
             value: dir.display().to_string(),
             open: Some(dir),
             changeable: false,
@@ -180,7 +191,7 @@ fn behaviour(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     let height = 44.0 + 56.0 + 56.0 + 62.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
     super::draw_card(ui, rect);
-    card_title(ui, rect, "Verhalten");
+    card_title(ui, rect, &t!("gui.settings.behaviour_title"));
 
     // Automatic backup before launching.
     let auto = Rect::from_min_size(
@@ -201,14 +212,14 @@ fn behaviour(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     ui.painter().text(
         Pos2::new(inner.left() + 42.0, inner.top() + 20.0),
         Align2::LEFT_CENTER,
-        "Vor dem Start automatisch ein Savegame-Backup anlegen",
+        t!("gui.settings.auto_backup_title"),
         sans(12.5),
         color::TEXT_STRONG,
     );
     ui.painter().text(
         Pos2::new(inner.left() + 42.0, inner.top() + 38.0),
         Align2::LEFT_CENTER,
-        "Etikett „vor Modded-Start“. Schlägt es fehl, startet das Spiel trotzdem – mit Warnung.",
+        t!("gui.settings.auto_backup_body"),
         sans(11.0),
         color::TEXT_MUTED,
     );
@@ -226,7 +237,7 @@ fn behaviour(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     ui.painter().text(
         Pos2::new(inner.left(), inner.center().y),
         Align2::LEFT_CENTER,
-        "Steam-Nutzerprofil",
+        t!("gui.settings.steam_user_title"),
         sans(12.5),
         color::TEXT_STRONG,
     );
@@ -234,10 +245,10 @@ fn behaviour(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     let (chosen, foreground) = match app.settings().steam_user.clone() {
         Some(user) => (user, color::TEXT_STRONG),
         None if app.steam_users.len() > 1 => (
-            format!("nicht gewählt – {} Profile gefunden", app.steam_users.len()),
+            t!("gui.settings.steam_user_not_chosen", count = app.steam_users.len()),
             color::WARN,
         ),
-        None => (String::from("automatisch"), color::TEXT_STRONG),
+        None => (t!("gui.settings.steam_user_auto"), color::TEXT_STRONG),
     };
     let field = Rect::from_min_size(
         Pos2::new(inner.left() + 170.0, inner.center().y - 15.0),
@@ -269,7 +280,7 @@ fn behaviour(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     painter.text(
         Pos2::new(field.right() + 10.0, field.center().y),
         Align2::LEFT_CENTER,
-        "nötig, wenn mehrere Profile im Prefix liegen",
+        t!("gui.settings.steam_user_hint"),
         sans(11.0),
         color::TEXT_MUTED,
     );
@@ -283,21 +294,19 @@ fn behaviour(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         Vec2::new(rect.width(), 62.0),
     );
     let inner = eac.shrink2(Vec2::new(metric::CARD_PADDING, 0.0));
-    let (icon, icon_color, title, body): (Icon, Color32, &str, &str) = if app.no_eac_available {
+    let (icon, icon_color, title, body): (Icon, Color32, String, String) = if app.no_eac_available {
         (
             Icon::Check,
             color::OK,
-            "Start ohne EAC verfügbar",
-            "umu-run liegt im PATH. Die Option erscheint in der Startauswahl; Multiplayer ist \
-             damit nicht möglich.",
+            t!("gui.settings.eac_available_title"),
+            t!("gui.settings.eac_available_body"),
         )
     } else {
         (
             Icon::Ring,
             color::TEXT_FAINT,
-            "Start ohne EAC nicht verfügbar",
-            "umu-launcher wurde nicht im PATH gefunden. Die Option wird ausgeblendet, statt beim \
-             Start mit einem Fehler zu enden.",
+            t!("gui.settings.eac_unavailable_title"),
+            t!("gui.settings.eac_unavailable_body"),
         )
     };
     icon.paint(ui.painter(), Pos2::new(inner.left() + 6.0, inner.top() + 20.0), 11.0, icon_color);
@@ -309,7 +318,7 @@ fn behaviour(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         color::TEXT_STRONG,
     );
     let body_galley =
-        ui.painter().layout(body.to_owned(), sans(11.0), color::TEXT_MUTED, 660.0_f32.min(inner.width() - 24.0));
+        ui.painter().layout(body, sans(11.0), color::TEXT_MUTED, 660.0_f32.min(inner.width() - 24.0));
     ui.painter().galley(
         Pos2::new(inner.left() + 24.0, inner.top() + 30.0),
         body_galley,

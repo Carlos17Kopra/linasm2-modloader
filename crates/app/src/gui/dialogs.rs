@@ -11,6 +11,7 @@ use super::{Action, App, Dialog};
 use egui::{
     Align2, Color32, CornerRadius, Frame, Margin, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2,
 };
+use sm2_core::t;
 
 pub fn show(app: &App, ctx: &egui::Context, actions: &mut Vec<Action>) {
     let Some(dialog) = app.dialog.clone() else { return };
@@ -113,44 +114,38 @@ fn paragraph(ui: &mut Ui, text: &str) {
     ui.label(egui::RichText::new(text).font(sans(12.5)).color(color::TEXT));
 }
 
-/// "Wiederherstellen, obwohl Steam läuft?"
+/// The "restore despite Steam running?" dialog (`gui.dialog.restore_title`).
 fn restore(app: &App, ui: &mut Ui, index: usize, force: bool, actions: &mut Vec<Action>) {
-    header(ui, "Wiederherstellen, obwohl Steam läuft?", true, actions);
+    header(ui, &t!("gui.dialog.restore_title"), true, actions);
     body(ui, |ui| {
-        paragraph(
-            ui,
-            "Steam läuft. Die Cloud-Synchronisation kann den wiederhergestellten Stand \
-             überschreiben, sobald das Spiel wieder startet. Bitte Steam beenden und erneut \
-             versuchen – oder ausdrücklich bestätigen, falls der erkannte Prozess sicher nicht \
-             mehr synchronisiert (hängender Client, Container).",
-        );
+        paragraph(ui, &t!("gui.dialog.restore_body"));
 
         let entry = app.backups.get(index);
         widgets::inset().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 6.0;
             let when = entry.map_or_else(
-                || String::from("—"),
+                || t!("gui.dialog.no_value"),
                 |e| {
-                    format!(
-                        "{} · {}",
-                        human_time(&e.created_at),
-                        e.label.clone().unwrap_or_else(|| String::from("—"))
+                    t!(
+                        "gui.dialog.restore_when",
+                        time = human_time(&e.created_at),
+                        label = e.label.clone().unwrap_or_else(|| t!("gui.dialog.no_value"))
                     )
                 },
             );
-            field(ui, "Wiederherstellen", &when, mono(11.5), color::TEXT_STRONG);
+            field(ui, &t!("gui.dialog.restore_field_backup"), &when, mono(11.5), color::TEXT_STRONG);
 
             let target = app
                 .state
                 .as_ref()
                 .and_then(|s| s.paths.save_dir(s.settings.steam_user.as_deref()).ok())
-                .map_or_else(|| String::from("—"), |p| p.display().to_string());
-            field(ui, "Ziel", &target, mono(11.5), color::TEXT);
+                .map_or_else(|| t!("gui.dialog.no_value"), |p| p.display().to_string());
+            field(ui, &t!("gui.dialog.restore_field_target"), &target, mono(11.5), color::TEXT);
             field(
                 ui,
-                "Davor gesichert",
-                "automatisch, als „vor Wiederherstellung“",
+                &t!("gui.dialog.restore_field_backed_up"),
+                &t!("gui.dialog.restore_backed_up_value"),
                 sans(11.5),
                 color::OK,
             );
@@ -171,12 +166,9 @@ fn restore(app: &App, ui: &mut Ui, index: usize, force: bool, actions: &mut Vec<
             )
             .clicked();
             ui.label(
-                egui::RichText::new(
-                    "Mir ist klar, dass Steams Cloud-Synchronisation den zurückgespielten Stand \
-                     überschreiben kann.",
-                )
-                .font(sans(12.0))
-                .color(color::TEXT),
+                egui::RichText::new(t!("gui.dialog.restore_ack"))
+                    .font(sans(12.0))
+                    .color(color::TEXT),
             );
             if clicked {
                 actions.push(Action::SetRestoreForce(!force));
@@ -193,27 +185,27 @@ fn restore(app: &App, ui: &mut Ui, index: usize, force: bool, actions: &mut Vec<
                 confirm.foreground = color::TEXT_FAINT;
                 confirm.foreground_hovered = color::TEXT_FAINT;
             }
-            if widgets::button(ui, &confirm, None, "Trotzdem wiederherstellen", force).clicked() {
+            if widgets::button(ui, &confirm, None, &t!("gui.dialog.restore_confirm"), force)
+                .clicked()
+            {
                 actions.push(Action::ConfirmRestore);
             }
-            if widgets::button(ui, &ButtonStyle::neutral(), None, "Abbrechen", true).clicked() {
+            if widgets::button(ui, &ButtonStyle::neutral(), None, &t!("gui.dialog.cancel"), true)
+                .clicked()
+            {
                 actions.push(Action::CloseDialog);
             }
         });
     });
 }
 
-/// "Ohne Mods starten?"
+/// The "launch without mods?" dialog (`gui.dialog.vanilla_title`).
 fn vanilla(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
-    header(ui, "Ohne Mods starten?", false, actions);
+    header(ui, &t!("gui.dialog.vanilla_title"), false, actions);
     body(ui, |ui| {
         let anything_active = app.entries().iter().any(|e| !e.disabled);
         if anything_active {
-            paragraph(
-                ui,
-                "Das deaktiviert alle Mods. Damit die Auswahl nicht verloren geht, sichert der \
-                 Loader sie vorher als Profil:",
-            );
+            paragraph(ui, &t!("gui.dialog.vanilla_body_active"));
             widgets::inset().show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.label(
@@ -227,50 +219,41 @@ fn vanilla(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
                 );
             });
             ui.label(
-                egui::RichText::new(
-                    "Zurück geht es über Profile → Anwenden. Scheitert die Sicherung, wird nichts \
-                     verändert und nichts gestartet.",
-                )
-                .font(sans(11.5))
-                .color(color::TEXT_DIM2),
+                egui::RichText::new(t!("gui.dialog.vanilla_body_active_note"))
+                    .font(sans(11.5))
+                    .color(color::TEXT_DIM2),
             );
         } else {
-            paragraph(
-                ui,
-                "Es ist ohnehin kein Mod aktiv. Der Loader legt deshalb keine neue Sicherung an \
-                 und startet das Spiel unverändert ohne Mods.",
-            );
+            paragraph(ui, &t!("gui.dialog.vanilla_body_inactive"));
         }
 
         footer(ui, |ui| {
             let label = if anything_active {
-                "Sichern und ohne Mods starten"
+                t!("gui.dialog.vanilla_confirm_with_backup")
             } else {
-                "Ohne Mods starten"
+                t!("gui.dialog.vanilla_confirm_plain")
             };
-            if widgets::button(ui, &ButtonStyle::primary(), None, label, true).clicked() {
+            if widgets::button(ui, &ButtonStyle::primary(), None, &label, true).clicked() {
                 actions.push(Action::ConfirmVanilla);
             }
-            if widgets::button(ui, &ButtonStyle::neutral(), None, "Abbrechen", true).clicked() {
+            if widgets::button(ui, &ButtonStyle::neutral(), None, &t!("gui.dialog.cancel"), true)
+                .clicked()
+            {
                 actions.push(Action::CloseDialog);
             }
         });
     });
 }
 
-/// "Steam-Nutzerprofil wählen"
+/// The "choose Steam user profile" dialog (`gui.dialog.steam_user_title`).
 fn steam_user(app: &App, ui: &mut Ui, picked: Option<&str>, actions: &mut Vec<Action>) {
-    header(ui, "Steam-Nutzerprofil wählen", false, actions);
+    header(ui, &t!("gui.dialog.steam_user_title"), false, actions);
     body(ui, |ui| {
-        paragraph(
-            ui,
-            "Im Proton-Prefix liegen mehrere Profile. Die Auswahl bestimmt, welche Spielstände \
-             gesichert und wiederhergestellt werden.",
-        );
+        paragraph(ui, &t!("gui.dialog.steam_user_body"));
 
         if app.steam_users.is_empty() {
             ui.label(
-                egui::RichText::new("Es wurde kein Nutzerprofil gefunden.")
+                egui::RichText::new(t!("gui.dialog.steam_user_none_found"))
                     .font(sans(12.0))
                     .color(color::WARN),
             );
@@ -308,61 +291,58 @@ fn steam_user(app: &App, ui: &mut Ui, picked: Option<&str>, actions: &mut Vec<Ac
         }
 
         footer(ui, |ui| {
-            if widgets::button(
-                ui,
-                &ButtonStyle::primary(),
-                None,
-                "Übernehmen",
-                picked.is_some(),
-            )
-            .clicked()
+            if widgets::button(ui, &ButtonStyle::primary(), None, &t!("gui.dialog.apply"), picked.is_some())
+                .clicked()
             {
                 actions.push(Action::ConfirmSteamUser);
             }
-            if widgets::button(ui, &ButtonStyle::neutral(), None, "Abbrechen", true).clicked() {
+            if widgets::button(ui, &ButtonStyle::neutral(), None, &t!("gui.dialog.cancel"), true)
+                .clicked()
+            {
                 actions.push(Action::CloseDialog);
             }
         });
     });
 }
 
-/// "Profil löschen?"
+/// The "delete profile?" dialog (`gui.dialog.delete_profile_title`).
 fn delete_profile(ui: &mut Ui, name: &str, actions: &mut Vec<Action>) {
-    header(ui, "Profil löschen?", false, actions);
+    header(ui, &t!("gui.dialog.delete_profile_title"), false, actions);
     body(ui, |ui| {
-        paragraph(
-            ui,
-            &format!(
-                "„{name}“ wird gelöscht. Aktivierung und Reihenfolge der Mods bleiben, wie sie \
-                 sind."
-            ),
-        );
+        paragraph(ui, &t!("gui.dialog.delete_profile_body", name = name));
         footer(ui, |ui| {
-            if widgets::button(ui, &ButtonStyle::danger(), None, "Löschen", true).clicked() {
+            if widgets::button(ui, &ButtonStyle::danger(), None, &t!("gui.dialog.delete"), true)
+                .clicked()
+            {
                 actions.push(Action::ConfirmDeleteProfile);
             }
-            if widgets::button(ui, &ButtonStyle::neutral(), None, "Abbrechen", true).clicked() {
+            if widgets::button(ui, &ButtonStyle::neutral(), None, &t!("gui.dialog.cancel"), true)
+                .clicked()
+            {
                 actions.push(Action::CloseDialog);
             }
         });
     });
 }
 
-/// "Backup umbenennen"
+/// The "rename backup" dialog (`gui.dialog.rename_backup_title`).
 fn rename_backup(app: &App, ui: &mut Ui, index: usize, label: &str, actions: &mut Vec<Action>) {
-    header(ui, "Backup umbenennen", false, actions);
+    header(ui, &t!("gui.dialog.rename_backup_title"), false, actions);
     body(ui, |ui| {
         if let Some(entry) = app.backups.get(index) {
-            field(ui, "Erstellt", &human_time(&entry.created_at), mono(12.0), color::TEXT);
+            field(
+                ui,
+                &t!("gui.dialog.field_created"),
+                &human_time(&entry.created_at),
+                mono(12.0),
+                color::TEXT,
+            );
         }
-        paragraph(
-            ui,
-            "Das Etikett steht in der Liste und im Dateinamen des Backups. Ein leeres Feld \
-             entfernt es wieder.",
-        );
+        paragraph(ui, &t!("gui.dialog.rename_backup_body"));
 
         let mut value = label.to_owned();
-        let response = widgets::text_field(ui, &mut value, "Etikett", ui.available_width(), None);
+        let placeholder = t!("gui.dialog.rename_backup_placeholder");
+        let response = widgets::text_field(ui, &mut value, &placeholder, ui.available_width(), None);
         if response.changed() {
             actions.push(Action::SetRenameLabel(value));
         }
@@ -379,40 +359,45 @@ fn rename_backup(app: &App, ui: &mut Ui, index: usize, label: &str, actions: &mu
         }
 
         footer(ui, |ui| {
-            if widgets::button(ui, &ButtonStyle::primary(), None, "Übernehmen", true).clicked() {
+            if widgets::button(ui, &ButtonStyle::primary(), None, &t!("gui.dialog.apply"), true)
+                .clicked()
+            {
                 actions.push(Action::ConfirmRenameBackup);
             }
-            if widgets::button(ui, &ButtonStyle::neutral(), None, "Abbrechen", true).clicked() {
+            if widgets::button(ui, &ButtonStyle::neutral(), None, &t!("gui.dialog.cancel"), true)
+                .clicked()
+            {
                 actions.push(Action::CloseDialog);
             }
         });
     });
 }
 
-/// "Backup löschen?"
+/// The "delete backup?" dialog (`gui.dialog.delete_backup_title`).
 fn delete_backup(app: &App, ui: &mut Ui, index: usize, actions: &mut Vec<Action>) {
-    header(ui, "Backup löschen?", true, actions);
+    header(ui, &t!("gui.dialog.delete_backup_title"), true, actions);
     body(ui, |ui| {
         if let Some(entry) = app.backups.get(index) {
-            field(ui, "Erstellt", &human_time(&entry.created_at), mono(12.0), color::TEXT);
             field(
                 ui,
-                "Etikett",
-                entry.label.as_deref().unwrap_or("—"),
-                sans(12.5),
+                &t!("gui.dialog.field_created"),
+                &human_time(&entry.created_at),
+                mono(12.0),
                 color::TEXT,
             );
+            let label = entry.label.clone().unwrap_or_else(|| t!("gui.dialog.no_value"));
+            field(ui, &t!("gui.dialog.field_label"), &label, sans(12.5), color::TEXT);
         }
-        paragraph(
-            ui,
-            "Archiv und Manifest werden endgültig entfernt; zurückholen lässt sich das nicht. \
-             Die Spielstände selbst bleiben unberührt – nur diese Sicherung ist danach weg.",
-        );
+        paragraph(ui, &t!("gui.dialog.delete_backup_body"));
         footer(ui, |ui| {
-            if widgets::button(ui, &ButtonStyle::danger(), None, "Löschen", true).clicked() {
+            if widgets::button(ui, &ButtonStyle::danger(), None, &t!("gui.dialog.delete"), true)
+                .clicked()
+            {
                 actions.push(Action::ConfirmDeleteBackup);
             }
-            if widgets::button(ui, &ButtonStyle::neutral(), None, "Abbrechen", true).clicked() {
+            if widgets::button(ui, &ButtonStyle::neutral(), None, &t!("gui.dialog.cancel"), true)
+                .clicked()
+            {
                 actions.push(Action::CloseDialog);
             }
         });

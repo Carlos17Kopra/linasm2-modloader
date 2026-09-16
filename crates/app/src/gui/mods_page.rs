@@ -9,6 +9,7 @@ use crate::app_state::NoticeKind;
 use egui::{
     Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2,
 };
+use sm2_core::t;
 
 /// Height of the detail card: padding, title row and three grid rows —
 /// fixed, because the content always consists of the same fields.
@@ -76,8 +77,7 @@ fn notices(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
 
         let action_width = notice.action.as_ref().map_or(0.0, |action| {
             let label = notice_action_label(action);
-            ui.painter().layout_no_wrap(label.to_owned(), sans(11.5), color::TEXT).size().x + 22.0
-                + 10.0
+            ui.painter().layout_no_wrap(label, sans(11.5), color::TEXT).size().x + 22.0 + 10.0
         });
         let text_width =
             (ui.available_width() - 12.0 - 11.0 - 10.0 - action_width - 11.0 - 12.0).max(40.0);
@@ -163,10 +163,10 @@ fn notices(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     ui.add_space(metric::CONTENT_GAP - 6.0);
 }
 
-fn notice_action_label(action: &NoticeAction) -> &'static str {
+fn notice_action_label(action: &NoticeAction) -> String {
     match action {
-        NoticeAction::OpenModsDir => "Verzeichnis öffnen",
-        NoticeAction::ShowProfile(_) => "Profil anwenden",
+        NoticeAction::OpenModsDir => t!("gui.mods.notice_open_dir"),
+        NoticeAction::ShowProfile(_) => t!("gui.mods.notice_apply_profile"),
     }
 }
 
@@ -223,14 +223,18 @@ fn toolbar_row(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         ui.spacing_mut().item_spacing.x = 10.0;
 
         let can_modify = app.can_modify();
-        if widgets::button(ui, &ButtonStyle::ghost(), Some(Icon::Plus), "Importieren", can_modify)
+        let import_label = t!("gui.mods.import_button");
+        if widgets::button(ui, &ButtonStyle::ghost(), Some(Icon::Plus), &import_label, can_modify)
             .clicked()
         {
             actions.push(Action::Import);
         }
 
         let mut filter = app.filter.clone();
-        if widgets::text_field(ui, &mut filter, "Filtern", 220.0, Some(Icon::Search)).changed() {
+        let filter_placeholder = t!("gui.mods.filter_placeholder");
+        if widgets::text_field(ui, &mut filter, &filter_placeholder, 220.0, Some(Icon::Search))
+            .changed()
+        {
             actions.push(Action::SetFilter(filter));
         }
 
@@ -242,7 +246,7 @@ fn toolbar_row(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         let active = app.entries().iter().filter(|e| !e.disabled).count();
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
-                egui::RichText::new(format!("{active} von {total} aktiv"))
+                egui::RichText::new(t!("gui.mods.active_count", active = active, total = total))
                     .font(mono(11.5))
                     .color(color::TEXT_DIM2),
             );
@@ -252,15 +256,15 @@ fn toolbar_row(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
 
 fn drag_hint(app: &App) -> String {
     if !app.writable {
-        String::from("Sortieren und Import gesperrt – Mods-Verzeichnis ist schreibgeschützt")
+        t!("gui.mods.drag_hint_readonly")
     } else if app.task.is_some() {
-        String::from("Ein Vorgang läuft – Änderungen sind so lange gesperrt")
+        t!("gui.mods.drag_hint_busy")
     } else if app.drag.is_some() {
-        String::from("Einfügemarke zeigt die neue Position – loslassen zum Ablegen")
+        t!("gui.mods.drag_hint_dragging")
     } else if !app.filter.trim().is_empty() {
-        String::from("Ziehen erst ohne Filter möglich")
+        t!("gui.mods.drag_hint_filtered")
     } else {
-        String::from("Zeilen ziehen zum Sortieren · Dateien aufs Fenster ziehen zum Importieren")
+        t!("gui.mods.drag_hint_default")
     }
 }
 
@@ -280,14 +284,14 @@ fn column_head(ui: &Ui, rect: Rect) {
             color::TEXT_FAINT,
         );
     };
-    head(1, "AN");
-    head(2, "MOD · LADEREIHENFOLGE, OBEN GEWINNT");
-    head(3, "VERSION");
-    head(4, "STATUS");
+    head(1, &t!("gui.mods.col_on"));
+    head(2, &t!("gui.mods.col_mod"));
+    head(3, &t!("gui.mods.col_version"));
+    head(4, &t!("gui.mods.col_status"));
     painter.text(
         cells[5].center(),
         Align2::CENTER_CENTER,
-        "RANG",
+        t!("gui.mods.col_rank"),
         font,
         color::TEXT_FAINT,
     );
@@ -450,7 +454,7 @@ fn row_content(
     widgets::column_text(ui, pak_rect, pak, mono(11.0), color::TEXT_FAINT);
 
     // Version.
-    let version = info.and_then(|i| i.version.clone()).unwrap_or_else(|| String::from("—"));
+    let version = info.and_then(|i| i.version.clone()).unwrap_or_else(|| t!("gui.mods.no_value"));
     widgets::column_text(ui, cells[3], &version, mono(11.5), color::TEXT_DIM2);
 
     // Status marker.
@@ -460,7 +464,7 @@ fn row_content(
                 .max_rect(cells[4])
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
-        widgets::badge(&mut badge_ui, Some(icon), label, foreground, background);
+        widgets::badge(&mut badge_ui, Some(icon), &label, foreground, background);
     }
 
     // Rank: up and down.
@@ -489,11 +493,11 @@ fn row_content(
 /// message in the notice bar instead of permanently in the row — after a
 /// restart they would no longer be true. What stays in the row are the two
 /// states that can be read off the library and the directory at any time.
-fn badge_for(missing: bool, altered: bool) -> Option<(Icon, &'static str, Color32, Color32)> {
+fn badge_for(missing: bool, altered: bool) -> Option<(Icon, String, Color32, Color32)> {
     if missing {
-        Some((Icon::Warning, "ÜBERNOMMEN", color::WARN, color::WARN_BG))
+        Some((Icon::Warning, t!("gui.mods.badge_taken_over"), color::WARN, color::WARN_BG))
     } else if altered {
-        Some((Icon::Warning, "GEÄNDERT", color::WARN, color::WARN_BG))
+        Some((Icon::Warning, t!("gui.mods.badge_altered"), color::WARN, color::WARN_BG))
     } else {
         None
     }
@@ -514,7 +518,7 @@ fn rank_button(ui: &mut Ui, rect: Rect, icon: Icon, salt: (&str, &str)) -> bool 
     response.clicked()
 }
 
-/// "Noch keine Mods installiert".
+/// The "no mods installed yet" empty state (`gui.mods.empty_title`).
 fn empty_state(ui: &mut Ui, actions: &mut Vec<Action>) {
     let rect = ui.available_rect_before_wrap();
     ui.scope_builder(
@@ -536,32 +540,33 @@ fn empty_state(ui: &mut Ui, actions: &mut Vec<Action>) {
 
             ui.add_space(13.0);
             ui.label(
-                egui::RichText::new("Noch keine Mods installiert")
+                egui::RichText::new(t!("gui.mods.empty_title"))
                     .font(medium(17.0))
                     .color(color::TEXT_STRONG),
             );
             ui.add_space(13.0);
             ui.set_max_width(490.0);
             ui.label(
-                egui::RichText::new(
-                    "Lade den Mod bei Nexus herunter und importiere die Datei hier. Der Loader \
-                     nimmt .pak, .zip, .7z und .rar – auch mehrere auf einmal. Er kopiert das Pak \
-                     ins Mods-Verzeichnis des Spiels und trägt es deaktiviert ans Ende der \
-                     Ladereihenfolge ein; ein Import verändert dein laufendes Setup nicht.",
-                )
-                .font(sans(12.5))
-                .color(color::TEXT_DIM2),
+                egui::RichText::new(t!("gui.mods.empty_body"))
+                    .font(sans(12.5))
+                    .color(color::TEXT_DIM2),
             );
             ui.add_space(15.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
-                if widgets::button(ui, &ButtonStyle::primary().padding_x(16.0), None, "Dateien wählen", true)
-                    .clicked()
+                if widgets::button(
+                    ui,
+                    &ButtonStyle::primary().padding_x(16.0),
+                    None,
+                    &t!("gui.mods.choose_files_button"),
+                    true,
+                )
+                .clicked()
                 {
                     actions.push(Action::Import);
                 }
                 ui.label(
-                    egui::RichText::new("oder hierher ziehen")
+                    egui::RichText::new(t!("gui.mods.or_drag_hint"))
                         .font(sans(11.5))
                         .color(color::TEXT_FAINT),
                 );
@@ -649,42 +654,42 @@ fn details(app: &App, ui: &mut Ui, pak: &str, actions: &mut Vec<Action>) {
         );
     };
 
+    let no_value = t!("gui.mods.no_value");
     let size = match info {
         Some(info) => human_size(info.size),
         None => app
             .state
             .as_ref()
             .and_then(|state| std::fs::metadata(state.paths.mods_dir().join(pak)).ok())
-            .map_or_else(|| String::from("—"), |m| human_size(m.len())),
+            .map_or_else(|| no_value.clone(), |m| human_size(m.len())),
     };
-    let imported = info.map_or("—", |i| i.imported_at.as_str());
+    let imported = info.map_or(no_value.clone(), |i| i.imported_at.clone());
     let source = match info {
-        Some(info) => info.source.clone().unwrap_or_else(|| String::from("—")),
-        None => String::from("von Hand ins Mods-Verzeichnis gelegt"),
+        Some(info) => info.source.clone().unwrap_or_else(|| no_value.clone()),
+        None => t!("gui.mods.source_manual"),
     };
     let hash = match info {
         Some(info) => short_hash(&info.hash),
-        None => String::from("noch nicht gebildet"),
+        None => t!("gui.mods.hash_pending"),
     };
     let notes = match info {
-        Some(info) => info.notes.clone().unwrap_or_else(|| String::from("—")),
-        None => String::from("Nicht über den Loader importiert – Metadaten unbekannt."),
+        Some(info) => info.notes.clone().unwrap_or_else(|| no_value.clone()),
+        None => t!("gui.mods.notes_manual"),
     };
 
-    field(ui, cell(0, 0, 1), "AUTOR", info.and_then(|i| i.author.as_deref()).unwrap_or("—"), false);
-    field(ui, cell(1, 0, 1), "VERSION", info.and_then(|i| i.version.as_deref()).unwrap_or("—"), false);
-    field(ui, cell(2, 0, 1), "GRÖSSE", &size, false);
-    field(ui, cell(3, 0, 1), "IMPORTIERT", imported, false);
-    field(
-        ui,
-        cell(0, 1, 1),
-        "NEXUS-ID",
-        &info.and_then(|i| i.nexus_id).map_or_else(|| String::from("—"), |id| id.to_string()),
-        false,
-    );
-    field(ui, cell(1, 1, 2), "HERKUNFT", &source, true);
-    field(ui, cell(3, 1, 1), "HASH (BLAKE3)", &hash, true);
-    field(ui, cell(0, 2, 4), "NOTIZEN", &notes, false);
+    let author = info.and_then(|i| i.author.as_deref()).map_or_else(|| no_value.clone(), String::from);
+    let version = info.and_then(|i| i.version.as_deref()).map_or_else(|| no_value.clone(), String::from);
+    let nexus_id =
+        info.and_then(|i| i.nexus_id).map_or_else(|| no_value.clone(), |id| id.to_string());
+
+    field(ui, cell(0, 0, 1), &t!("gui.mods.field_author"), &author, false);
+    field(ui, cell(1, 0, 1), &t!("gui.mods.col_version"), &version, false);
+    field(ui, cell(2, 0, 1), &t!("gui.mods.field_size"), &size, false);
+    field(ui, cell(3, 0, 1), &t!("gui.mods.field_imported"), &imported, false);
+    field(ui, cell(0, 1, 1), &t!("gui.mods.field_nexus_id"), &nexus_id, false);
+    field(ui, cell(1, 1, 2), &t!("gui.mods.field_source"), &source, true);
+    field(ui, cell(3, 1, 1), &t!("gui.mods.field_hash"), &hash, true);
+    field(ui, cell(0, 2, 4), &t!("gui.mods.field_notes"), &notes, false);
 }
 
 /// The first-run screen, shown when no installation was found.
@@ -736,19 +741,15 @@ fn game_not_found_content(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
 
     ui.add_space(14.0);
     ui.label(
-        egui::RichText::new("Space Marine 2 nicht gefunden")
+        egui::RichText::new(t!("gui.mods.not_found_title"))
             .font(medium(17.0))
             .color(color::TEXT_STRONG),
     );
     ui.add_space(14.0);
     ui.label(
-        egui::RichText::new(
-            "Der Loader hat die Steam-Bibliotheken durchsucht und keine Installation gefunden. \
-             Alles andere funktioniert weiter – sobald das Spielverzeichnis bekannt ist, liest er \
-             Mods und Ladereihenfolge ein.",
-        )
-        .font(sans(12.5))
-        .color(color::TEXT_DIM2),
+        egui::RichText::new(t!("gui.mods.not_found_body"))
+            .font(sans(12.5))
+            .color(color::TEXT_DIM2),
     );
 
     ui.add_space(14.0);
@@ -757,7 +758,7 @@ fn game_not_found_content(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
             ui.label(widgets::tracked_text(
-                "GESUCHT WURDE IN",
+                &t!("gui.mods.searched_in_title"),
                 sans(10.5),
                 color::TEXT_FAINT,
                 0.6,
@@ -773,7 +774,7 @@ fn game_not_found_content(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
                 );
             }
             ui.label(
-                egui::RichText::new("sowie alle Bibliotheken aus libraryfolders.vdf")
+                egui::RichText::new(t!("gui.mods.searched_in_note"))
                     .font(mono(11.0))
                     .color(color::TEXT_DIM2),
             );
@@ -790,7 +791,7 @@ fn game_not_found_content(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
             ui,
             &ButtonStyle::primary().padding_x(16.0),
             None,
-            "Spielverzeichnis wählen",
+            &t!("gui.mods.pick_game_dir_button"),
             true,
         )
         .clicked()
@@ -801,7 +802,7 @@ fn game_not_found_content(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
             ui,
             &ButtonStyle::ghost().height(metric::BUTTON_HEIGHT_LARGE).corner_radius(8),
             None,
-            "Erneut suchen",
+            &t!("gui.mods.retry_button"),
             true,
         )
         .clicked()
@@ -812,9 +813,7 @@ fn game_not_found_content(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
 
     ui.add_space(10.0);
     ui.label(
-        egui::RichText::new("Das Verzeichnis muss client_pc/root/mods enthalten.")
-            .font(sans(11.0))
-            .color(color::TEXT_FAINT),
+        egui::RichText::new(t!("gui.mods.pick_hint")).font(sans(11.0)).color(color::TEXT_FAINT),
     );
 
     if let Some(error) = &app.open_error {
