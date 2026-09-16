@@ -1,5 +1,5 @@
 use crate::atomic::write_atomic;
-use crate::error::{Error, PakConfigDefect, Result};
+use crate::error::{Error, PakConfigDefect, Result, YamlScalarShape};
 use std::collections::HashMap;
 use std::path::Path;
 use yaml_rust2::{Yaml, YamlLoader};
@@ -64,7 +64,7 @@ impl PakConfig {
                 Some(value) => value.as_bool().ok_or_else(|| {
                     Error::PakConfig(PakConfigDefect::EntryInvalidDisabledValue {
                         index: i + 1,
-                        value: describe_yaml_scalar(value),
+                        found: describe_yaml_scalar(value),
                     })
                 })?,
             };
@@ -274,19 +274,27 @@ fn resolves_to_non_string_scalar(name: &str) -> bool {
     }
 }
 
-/// Renders a YAML scalar for an error message. `yaml-rust2` has no `Display`
-/// for `Yaml`, hence this small, user-readable rendering of the common cases
-/// with a `Debug` fallback for the rest.
-fn describe_yaml_scalar(value: &Yaml) -> String {
+/// Classifies a YAML scalar for an error message. `yaml-rust2` has no
+/// `Display` for `Yaml`, hence this small, user-readable rendering of the
+/// common cases with a `Debug` fallback for the rest.
+///
+/// Returns a `YamlScalarShape` rather than an already-rendered `String`:
+/// `List`/`Object` carry no wording of their own, only a shape, so that
+/// `PakConfigDefect::text` can pick the word in whichever language is
+/// active when the error is actually displayed — not the one active here,
+/// while `parse` runs. The other cases (`Literal`) are data (a quoted
+/// value, a number, a boolean, `null`), not text, so there is nothing to
+/// translate and they carry their rendered form directly.
+fn describe_yaml_scalar(value: &Yaml) -> YamlScalarShape {
     match value {
-        Yaml::String(s) => format!("\"{s}\""),
-        Yaml::Integer(n) => n.to_string(),
-        Yaml::Real(s) => s.clone(),
-        Yaml::Boolean(b) => b.to_string(),
-        Yaml::Null => "null".to_string(),
-        Yaml::Array(_) => crate::t!("error.pak_config_defect.scalar_list"),
-        Yaml::Hash(_) => crate::t!("error.pak_config_defect.scalar_object"),
-        other => format!("{other:?}"),
+        Yaml::String(s) => YamlScalarShape::Literal(format!("\"{s}\"")),
+        Yaml::Integer(n) => YamlScalarShape::Literal(n.to_string()),
+        Yaml::Real(s) => YamlScalarShape::Literal(s.clone()),
+        Yaml::Boolean(b) => YamlScalarShape::Literal(b.to_string()),
+        Yaml::Null => YamlScalarShape::Literal("null".to_string()),
+        Yaml::Array(_) => YamlScalarShape::List,
+        Yaml::Hash(_) => YamlScalarShape::Object,
+        other => YamlScalarShape::Literal(format!("{other:?}")),
     }
 }
 
@@ -568,6 +576,50 @@ mod tests {
                 panic!("expected Error::PakConfig(EntryInvalidDisabledValue) for {text:?}, got {error:?}");
             };
             assert_eq!(index, 1, "the message should name the entry (input: {text:?})");
+        }
+    }
+
+    /// A `disabled:` value that is itself a YAML list or mapping carries no
+    /// data to render, only a shape — and unlike the literal cases above
+    /// (a quoted string, a number, `true`/`false`, `null`), "a list" / "an
+    /// object" is text that needs translating. This guards against baking
+    /// that word in at parse time (see `YamlScalarShape`): `PakConfig::parse`
+    /// runs once, but the resulting error can be displayed later, after a
+    /// live language switch (Task 9 made the GUI's language switch live), so
+    /// parse-time and display-time language are not guaranteed to match.
+    #[test]
+    fn disabled_value_that_is_a_list_or_mapping_translates_at_display_time() {
+        let _guard = crate::i18n::language_test_lock();
+
+        for (text, is_list) in [
+            ("- pak: a.pak\n  disabled: [true]\n", true),
+            ("- pak: a.pak\n  disabled: {a: 1}\n", false),
+        ] {
+            // Parse while German is the active language …
+            crate::i18n::set_language(crate::i18n::Language::German);
+            let error = PakConfig::parse(text).unwrap_err();
+            let Error::PakConfig(PakConfigDefect::EntryInvalidDisabledValue { found, .. }) = &error
+            else {
+                panic!("expected Error::PakConfig(EntryInvalidDisabledValue) for {text:?}, got {error:?}");
+            };
+            match (found, is_list) {
+                (YamlScalarShape::List, true) | (YamlScalarShape::Object, false) => {}
+                _ => panic!("wrong shape stored for {text:?}: {found:?}"),
+            }
+
+            // … but display it in English: the wording must follow the
+            // language active at `Display` time, not the one active while
+            // `parse` ran.
+            crate::i18n::set_language(crate::i18n::Language::English);
+            let english = error.to_string();
+            crate::i18n::set_language(crate::i18n::Language::English);
+
+            let expected = if is_list { "a list" } else { "an object" };
+            assert!(english.contains(expected), "{english:?}");
+            assert!(
+                !english.contains("eine Liste") && !english.contains("ein Objekt"),
+                "the wording must not be frozen into German from parse time: {english:?}"
+            );
         }
     }
 

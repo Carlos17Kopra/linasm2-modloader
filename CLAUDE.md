@@ -28,6 +28,17 @@ a string: every language has exactly the English key set, every key used
 in the sources exists, and no German sentence is left in the code
 (`crates/app/tests/no_german_literals.rs`).
 
+Three identifiers stay German on purpose, the rule's only carve-out:
+`vanilla::VANILLA_SNAPSHOT_PREFIX` (`"vor Vanilla-Start"`), the sibling
+`"vor Modded-Start"` backup label next to it in `gui/commands.rs`, and the
+safety-backup label `"vor Wiederherstellung"` in `saves.rs`. All three are
+matched by prefix and already written into existing profile and backup
+names on disk, so translating them would rename data that is already
+there — they are shown to the user even in an English interface. Whether
+to eventually split the stored form from the displayed form is an open
+question left to the project's owner, not decided here. If you meet one
+of these strings elsewhere, it is this exception, not a leftover.
+
 Comment prose is wrapped at 78 columns including the `///` prefix.
 
 ## Comment style
@@ -50,7 +61,7 @@ of filesystem operations is the entire safety argument.
 
 ## Working on it
 
-    cargo test                  # 277 tests across both crates
+    cargo test                  # 278 tests across both crates
     cargo clippy --all-targets  # kept clean
     cargo run                   # GUI
     cargo run -- <subcommand>   # CLI

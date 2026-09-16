@@ -62,7 +62,23 @@ pub enum PakConfigDefect {
     RootNotAList,
     EntryNotAnObject { index: usize },
     EntryMissingPakKey { index: usize },
-    EntryInvalidDisabledValue { index: usize, value: String },
+    EntryInvalidDisabledValue { index: usize, found: YamlScalarShape },
+}
+
+/// What was found in place of a boolean `disabled:` value. `Literal`
+/// already carries its rendered, language-independent form (a quoted
+/// string, a number, `true`/`false`, `null`) — data, not text. `List` and
+/// `Object` carry no data at all, only a shape: the one-word description
+/// ("a list" / "an object") is resolved by `PakConfigDefect::text` at
+/// `Display` time, not baked in at parse time. Baking it in earlier would
+/// freeze the word in whichever language happened to be active while
+/// `PakConfig::parse` ran — which, now that the GUI can switch languages
+/// live, is not necessarily the language active when the error is shown.
+#[derive(Debug)]
+pub enum YamlScalarShape {
+    Literal(String),
+    List,
+    Object,
 }
 
 impl BackupDefect {
@@ -134,10 +150,17 @@ impl PakConfigDefect {
                 "error.pak_config_defect.entry_missing_pak_key",
                 &[("index", index.to_string())],
             ),
-            PakConfigDefect::EntryInvalidDisabledValue { index, value } => i18n::format(
-                "error.pak_config_defect.entry_invalid_disabled_value",
-                &[("index", index.to_string()), ("value", value.clone())],
-            ),
+            PakConfigDefect::EntryInvalidDisabledValue { index, found } => {
+                let value = match found {
+                    YamlScalarShape::Literal(text) => text.clone(),
+                    YamlScalarShape::List => i18n::lookup("error.pak_config_defect.scalar_list"),
+                    YamlScalarShape::Object => i18n::lookup("error.pak_config_defect.scalar_object"),
+                };
+                i18n::format(
+                    "error.pak_config_defect.entry_invalid_disabled_value",
+                    &[("index", index.to_string()), ("value", value)],
+                )
+            }
         }
     }
 }
