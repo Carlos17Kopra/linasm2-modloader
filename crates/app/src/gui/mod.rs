@@ -195,6 +195,7 @@ pub enum Action {
     AskDeleteProfile(String),
     ConfirmDeleteProfile,
     CreateBackup,
+    ImportBackup,
     VerifyBackup(usize),
     AskRenameBackup(usize),
     SetRenameLabel(String),
@@ -505,6 +506,7 @@ impl App {
             Action::AskDeleteProfile(name) => self.dialog = Some(Dialog::DeleteProfile { name }),
             Action::ConfirmDeleteProfile => self.delete_profile(),
             Action::CreateBackup => self.start_backup(),
+            Action::ImportBackup => self.start_backup_import(),
             Action::VerifyBackup(index) => self.start_verify(index),
             Action::AskRenameBackup(index) => self.ask_rename_backup(index),
             Action::SetRenameLabel(value) => {

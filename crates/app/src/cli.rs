@@ -109,6 +109,16 @@ enum SaveCommand {
         #[arg(long)]
         force: bool,
     },
+    /// Importiert ein Backup aus einem anderen Launcher: eine ZIP-Datei
+    /// mit den Savegame-Dateien darin
+    Import {
+        /// Pfad zur ZIP-Datei
+        archive: PathBuf,
+        /// Etikett für das importierte Backup; ohne Angabe wird der
+        /// Dateiname des Archivs verwendet
+        #[arg(long)]
+        tag: Option<String>,
+    },
     /// Ändert das Etikett eines Backups (Standard: das neueste)
     Rename {
         /// 1-basierter Index aus `save list` (Standard: 1, das neueste)
@@ -496,6 +506,16 @@ fn run_save_command_with(state: &AppState, cmd: SaveCommand, steam_running: impl
             let safety_backup = saves::restore(entry, &saves_dir, &backups)?;
             println!("✓ Wiederhergestellt: {}", entry.created_at);
             println!("  Vorheriger Stand gesichert: {}", safety_backup.archive.display());
+        }
+        SaveCommand::Import { archive, tag } => {
+            // Deliberately without `state.save_dir()`: importing only
+            // writes below the backup directory, so it works even when the
+            // Proton prefix does not exist yet — which is exactly the
+            // situation someone switching launchers is in.
+            let entry = saves::import_archive(&archive, &backups, tag.as_deref())?;
+            let label = entry.label.clone().unwrap_or_default();
+            println!("✓ Importiert: {}  {label}", entry.created_at);
+            println!("  Liegt unter: {}", entry.archive.display());
         }
         SaveCommand::Rename { index, at, tag } => {
             let list = saves::list_backups(&backups)?;
@@ -932,18 +952,25 @@ mod tests {
 
     // --- run_save_command_with / --force (review point 6) -----------------
 
-    /// Builds a fixture with exactly one save user directory (analogous to
-    /// `run_play`'s vanilla backup test) and takes a backup of the original
-    /// content in it before that content is overwritten. That makes it
-    /// possible to check afterwards whether `run_save_command_with` actually
-    /// restored or not.
-    fn fixture_with_one_backup(tmp: &std::path::Path) -> (AppState, PathBuf) {
+    /// A fixture with exactly one save user directory, holding a savegame
+    /// but no backup yet.
+    fn fixture_with_save_dir(tmp: &std::path::Path) -> (AppState, PathBuf) {
         let state = test_fixture(tmp);
         let save_dir = tmp
             .join("steamapps/compatdata/2183900/pfx/drive_c/users/steamuser")
             .join("AppData/Local/Saber/Space Marine 2/storage/steam/user/76561198000000009/Main");
         std::fs::create_dir_all(&save_dir).unwrap();
         std::fs::write(save_dir.join("profile.sav"), b"ORIGINAL").unwrap();
+        (state, save_dir)
+    }
+
+    /// Builds a fixture with exactly one save user directory (analogous to
+    /// `run_play`'s vanilla backup test) and takes a backup of the original
+    /// content in it before that content is overwritten. That makes it
+    /// possible to check afterwards whether `run_save_command_with` actually
+    /// restored or not.
+    fn fixture_with_one_backup(tmp: &std::path::Path) -> (AppState, PathBuf) {
+        let (state, save_dir) = fixture_with_save_dir(tmp);
 
         saves::backup(&save_dir, &state.backups_dir(), None).unwrap();
         std::fs::write(save_dir.join("profile.sav"), b"GEAENDERT").unwrap();
@@ -998,6 +1025,58 @@ mod tests {
         run_save_command_with(&state, restore_default(), || false).unwrap();
 
         assert_eq!(std::fs::read(save_dir.join("profile.sav")).unwrap(), b"ORIGINAL");
+    }
+
+    /// A backup archive of this program is itself a plain ZIP holding the
+    /// savegame files — exactly the shape another launcher's backup has.
+    /// Using one here keeps the test free of a `zip` dependency in this
+    /// crate, and the manifest next to it is deliberately not passed to the
+    /// import: what is imported is the bare archive.
+    fn foreign_archive(tmp: &std::path::Path) -> PathBuf {
+        let source = tmp.join("fremder-launcher/Main");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("profile.cfg"), b"PROFIL").unwrap();
+
+        let staging = tmp.join("fremder-launcher/archiv");
+        let entry = saves::backup(&source, &staging, None).unwrap();
+        let archive = tmp.join("fremd.zip");
+        std::fs::rename(&entry.archive, &archive).unwrap();
+        archive
+    }
+
+    #[test]
+    fn save_import_adds_the_foreign_archive_to_the_backup_list() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = test_fixture(tmp.path());
+        let archive = foreign_archive(tmp.path());
+
+        run_save_command_with(
+            &state,
+            SaveCommand::Import { archive, tag: None },
+            || false,
+        )
+        .unwrap();
+
+        let list = saves::list_backups(&state.backups_dir()).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].label.as_deref(), Some("fremd"));
+    }
+
+    /// An imported backup has to be restorable like any other — that is the
+    /// whole point of importing it.
+    #[test]
+    fn imported_backup_can_be_restored() {
+        let tmp = tempfile::tempdir().unwrap();
+        // No backup exists yet on purpose: created within the same second,
+        // an existing one would share the imported backup's timestamp and
+        // `restore` without `--index` could pick either of them.
+        let (state, save_dir) = fixture_with_save_dir(tmp.path());
+        let archive = foreign_archive(tmp.path());
+
+        run_save_command_with(&state, SaveCommand::Import { archive, tag: None }, || false).unwrap();
+        run_save_command_with(&state, restore_default(), || false).unwrap();
+
+        assert_eq!(std::fs::read(save_dir.join("profile.cfg")).unwrap(), b"PROFIL");
     }
 
     // --- find_profile_by_name (2e: an ambiguous case-insensitive ---------

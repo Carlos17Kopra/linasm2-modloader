@@ -45,6 +45,12 @@ pub enum Error {
     #[error("Archiv enthält keine .pak-Datei: {0}")]
     NoPakInArchive(PathBuf),
 
+    #[error("Archiv enthält keine Savegame-Dateien (.cfg oder .sav): {0}")]
+    NoSaveInArchive(PathBuf),
+
+    #[error("Archiv kann nicht importiert werden: {0}")]
+    UnusableArchive(String),
+
     #[error("kein Schreibrecht für {0}")]
     NotWritable(PathBuf),
 

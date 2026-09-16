@@ -14,7 +14,7 @@ use crate::import::now_rfc3339;
 use crate::platform::{Current, Platform};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 /// Hash and size of a single backed-up file.
@@ -188,6 +188,21 @@ fn write_manifest(path: &Path, manifest: &BackupManifest) -> Result<()> {
 /// archive under `backup_root`, accompanied by a manifest holding the hash
 /// and size of each file.
 pub fn backup(save_dir: &Path, backup_root: &Path, label: Option<&str>) -> Result<BackupEntry> {
+    backup_from(save_dir, backup_root, label, save_dir)
+}
+
+/// The body of `backup`, with the manifest's `source` field as a separate
+/// parameter. `import_archive` unpacks a foreign archive into a temporary
+/// directory and then goes through here, so that an imported backup is
+/// written by exactly the same (crash-safe) sequence as any other — while
+/// the manifest still names the ZIP it came from and not the temporary
+/// directory, which is gone by the time anyone reads it.
+fn backup_from(
+    save_dir: &Path,
+    backup_root: &Path,
+    label: Option<&str>,
+    source: &Path,
+) -> Result<BackupEntry> {
     if !save_dir.is_dir() {
         return Err(Error::io(
             save_dir,
@@ -240,7 +255,7 @@ pub fn backup(save_dir: &Path, backup_root: &Path, label: Option<&str>) -> Resul
 
     let manifest = BackupManifest {
         created_at: now.clone(),
-        source: save_dir.display().to_string(),
+        source: source.display().to_string(),
         label: label.map(str::to_string),
         files: records,
     };
@@ -624,6 +639,200 @@ pub fn restore(entry: &BackupEntry, save_dir: &Path, backup_root: &Path) -> Resu
 /// detection), not hard-wired here.
 pub fn steam_is_running() -> bool {
     Current::steam_is_running()
+}
+
+/// Upper bound for the uncompressed total size of an archive being
+/// imported. Savegames are a few megabytes; anything far beyond that is
+/// either not a savegame archive or a zip bomb, and the check happens
+/// before the first entry is unpacked so that neither can fill the disk.
+const MAX_IMPORT_BYTES: u64 = 512 * 1024 * 1024;
+
+/// The file extensions a Space Marine 2 savegame uses. An archive without
+/// any of them is rejected — the most likely mistake in the file dialog is
+/// picking a mod archive.
+const SAVE_EXTENSIONS: [&str; 2] = ["cfg", "sav"];
+
+/// Imports a backup produced by another launcher: a plain ZIP whose entries
+/// are the savegame files. The archive is checked, unpacked into a
+/// temporary directory and written back out through `backup_from`, so what
+/// ends up under `backup_root` is an ordinary backup of this program —
+/// archive plus manifest, verifiable, restorable.
+///
+/// Without a `label` the archive's file name becomes the label, so that an
+/// imported backup can still be told apart from the locally created ones in
+/// the list.
+pub fn import_archive(archive: &Path, backup_root: &Path, label: Option<&str>) -> Result<BackupEntry> {
+    import_archive_limited(archive, backup_root, label, MAX_IMPORT_BYTES)
+}
+
+/// `import_archive` with the size limit as a parameter, so that the limit
+/// can be tested without building a 512 MiB archive.
+fn import_archive_limited(
+    archive: &Path,
+    backup_root: &Path,
+    label: Option<&str>,
+    max_bytes: u64,
+) -> Result<BackupEntry> {
+    let file = std::fs::File::open(archive).map_err(|e| Error::io(archive, e))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|_| {
+        // The raw (English) message of the zip crate stays out of this: the
+        // user is told in German that the file is not a readable ZIP.
+        Error::UnusableArchive(format!("Datei lässt sich nicht als ZIP öffnen: {}", archive.display()))
+    })?;
+
+    let names = collect_import_entries(&mut zip, archive, max_bytes)?;
+    if !names.iter().any(|(_, name)| has_save_extension(name)) {
+        return Err(Error::NoSaveInArchive(archive.to_path_buf()));
+    }
+    let prefix = common_directory_prefix(&names);
+
+    // Everything is unpacked into a temporary directory first and only then
+    // packed into a backup. A rejected archive therefore leaves nothing
+    // behind under `backup_root`, and `backup_from` computes the hashes
+    // over the same bytes that were actually written.
+    let staging = tempfile::tempdir().map_err(|e| Error::io(archive, e))?;
+    let mut budget = max_bytes;
+    for (index, name) in &names {
+        let mut entry = zip.by_index(*index).map_err(|e| {
+            Error::io(archive, std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        })?;
+        let relative = strip_leading_components(name, prefix);
+        let target = resolve_target_path(staging.path(), &relative);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
+        }
+
+        // Read one byte beyond the remaining budget: the size in the
+        // archive's header is only a claim, and a lying header must not be
+        // able to slip past the check made before unpacking.
+        let mut content = Vec::new();
+        std::io::copy(&mut entry.by_ref().take(budget.saturating_add(1)), &mut content)
+            .map_err(|e| Error::io(archive, e))?;
+        if content.len() as u64 > budget {
+            return Err(oversized(max_bytes));
+        }
+        budget -= content.len() as u64;
+
+        std::fs::write(&target, &content).map_err(|e| Error::io(&target, e))?;
+    }
+
+    let fallback = archive.file_stem().map(|stem| stem.to_string_lossy().into_owned());
+    let label = label.map(str::to_string).or(fallback).filter(|text| !text.trim().is_empty());
+    backup_from(staging.path(), backup_root, label.as_deref(), archive)
+}
+
+/// Checks every entry of the archive and returns the ones to import, as
+/// pairs of index in the archive and normalized name.
+///
+/// Rejected are symlink entries (restored, a link would let a later write
+/// land outside the save directory — the archive counterpart of the rule
+/// `backup` and `restore` follow), names that escape the save directory,
+/// names that appear twice (read by position, the second would silently
+/// overwrite the first while unpacking) and a declared total size beyond
+/// `max_bytes`.
+fn collect_import_entries(
+    zip: &mut zip::ZipArchive<std::fs::File>,
+    archive: &Path,
+    max_bytes: u64,
+) -> Result<Vec<(usize, String)>> {
+    let mut names: Vec<(usize, String)> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut declared = 0u64;
+
+    for index in 0..zip.len() {
+        let entry = zip.by_index(index).map_err(|e| {
+            Error::io(archive, std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        })?;
+        if entry.unix_mode().is_some_and(|mode| mode & 0o170_000 == 0o120_000) {
+            return Err(Error::UnusableArchive(format!("Archiv enthält einen Symlink: {}", entry.name())));
+        }
+        if !entry.is_file() {
+            continue;
+        }
+
+        let name = normalize_entry_name(entry.name());
+        validate_entry_name(&name).map_err(|_| {
+            Error::UnusableArchive(format!("unzulässiger Pfad im Archiv: {}", entry.name()))
+        })?;
+        if !seen.insert(name.clone()) {
+            return Err(Error::UnusableArchive(format!("{name} kommt mehrfach im Archiv vor")));
+        }
+
+        declared = declared.saturating_add(entry.size());
+        if declared > max_bytes {
+            return Err(oversized(max_bytes));
+        }
+        names.push((index, name));
+    }
+    Ok(names)
+}
+
+fn oversized(max_bytes: u64) -> Error {
+    Error::UnusableArchive(format!("Archiv ist entpackt größer als {}", describe_size(max_bytes)))
+}
+
+/// A byte count for an error message: whole MiB once it is worth it, plain
+/// bytes below that — a limit shown as "0 MiB" would tell the user nothing.
+fn describe_size(bytes: u64) -> String {
+    const MIB: u64 = 1024 * 1024;
+    if bytes >= MIB { format!("{} MiB", bytes / MIB) } else { format!("{bytes} Byte") }
+}
+
+/// Brings a foreign entry name into the form the rest of this module
+/// expects: '/' as the separator (some Windows packers write '\\', which
+/// `validate_entry_name` rejects as a component of a file name) and no
+/// leading "./". A leading '/' is deliberately *not* removed — an absolute
+/// path is rejected, not silently made relative.
+fn normalize_entry_name(name: &str) -> String {
+    let converted = name.replace('\\', "/");
+    let mut rest = converted.as_str();
+    while let Some(stripped) = rest.strip_prefix("./") {
+        rest = stripped;
+    }
+    rest.to_string()
+}
+
+fn has_save_extension(name: &str) -> bool {
+    match name.rsplit_once('.') {
+        Some((_, extension)) => SAVE_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str()),
+        None => false,
+    }
+}
+
+/// The number of leading path components every entry shares. Other
+/// launchers pack their saves below a directory of their own ("Main/",
+/// "Backup/Main/"); kept as is, `restore` would create that directory
+/// inside the save directory instead of replacing the files in it.
+///
+/// Only a directory *all* entries lie in counts — a single file next to
+/// that directory (a readme, say) would otherwise move the whole rest of
+/// the archive one level up.
+fn common_directory_prefix(names: &[(usize, String)]) -> usize {
+    let mut shared: Option<Vec<&str>> = None;
+    for (_, name) in names {
+        let mut directories: Vec<&str> = name.split('/').collect();
+        directories.pop();
+        shared = Some(match shared {
+            None => directories,
+            Some(previous) => previous
+                .into_iter()
+                .zip(directories)
+                .take_while(|(a, b)| a == b)
+                .map(|(a, _)| a)
+                .collect(),
+        });
+        if shared.as_ref().is_some_and(Vec::is_empty) {
+            return 0;
+        }
+    }
+    shared.map_or(0, |prefix| prefix.len())
+}
+
+/// Drops the first `count` components of an entry name. `count` always
+/// comes from `common_directory_prefix` and therefore never covers the file
+/// name itself, so the result is never empty.
+fn strip_leading_components(name: &str, count: usize) -> String {
+    name.split('/').skip(count).collect::<Vec<_>>().join("/")
 }
 
 #[cfg(test)]
@@ -1347,5 +1556,251 @@ mod tests {
 
         delete(&entry).unwrap();
         delete(&entry).unwrap();
+    }
+
+    /// Builds a ZIP the way a foreign launcher would leave one behind:
+    /// entry names exactly as given, no manifest next to it.
+    fn foreign_zip(path: &Path, files: &[(&str, &[u8])]) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
+        for (name, content) in files {
+            zip.start_file(*name, opts).unwrap();
+            zip.write_all(content).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    fn manifest_of(entry: &BackupEntry) -> BackupManifest {
+        serde_json::from_str(&std::fs::read_to_string(&entry.manifest).unwrap()).unwrap()
+    }
+
+    /// An imported archive must be indistinguishable from one this program
+    /// created itself — including a manifest that `verify` accepts.
+    /// Otherwise the imported backup would be a second class of backup that
+    /// `restore` (which verifies) could never use.
+    #[test]
+    fn import_archive_creates_a_verified_backup() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("fremd.zip");
+        foreign_zip(&archive, &[("profile.cfg", b"PROFIL"), ("slot1/campaign.cfg", b"KAMPAGNE")]);
+
+        let entry = import_archive(&archive, &backups, Some("von Nexus")).unwrap();
+
+        verify(&entry).unwrap();
+        let manifest = manifest_of(&entry);
+        assert_eq!(manifest.files.len(), 2);
+        assert!(manifest.files.contains_key("profile.cfg"));
+        assert!(manifest.files.contains_key("slot1/campaign.cfg"));
+        assert_eq!(manifest.source, archive.display().to_string());
+    }
+
+    #[test]
+    fn imported_backup_appears_in_the_list() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("fremd.zip");
+        foreign_zip(&archive, &[("profile.cfg", b"PROFIL")]);
+
+        let entry = import_archive(&archive, &backups, None).unwrap();
+
+        let listed = list_backups(&backups).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].archive, entry.archive);
+    }
+
+    /// Foreign launchers pack their saves below some directory of their
+    /// own. Kept as is, `restore` would create that directory inside the
+    /// save directory instead of replacing the files in it.
+    #[test]
+    fn import_archive_strips_the_common_directory_prefix() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("fremd.zip");
+        foreign_zip(
+            &archive,
+            &[("Backup/Main/profile.cfg", b"PROFIL"), ("Backup/Main/slot1/campaign.cfg", b"KAMPAGNE")],
+        );
+
+        let entry = import_archive(&archive, &backups, None).unwrap();
+
+        let manifest = manifest_of(&entry);
+        assert!(manifest.files.contains_key("profile.cfg"), "{:?}", manifest.files.keys());
+        assert!(manifest.files.contains_key("slot1/campaign.cfg"), "{:?}", manifest.files.keys());
+    }
+
+    /// Only a directory *all* entries share may be stripped. A single file
+    /// next to the save directory would otherwise silently move the rest of
+    /// the archive one level up.
+    #[test]
+    fn import_archive_keeps_paths_when_entries_share_no_directory() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("fremd.zip");
+        foreign_zip(&archive, &[("Main/profile.cfg", b"PROFIL"), ("liesmich.txt", b"HINWEIS")]);
+
+        let entry = import_archive(&archive, &backups, None).unwrap();
+
+        let manifest = manifest_of(&entry);
+        assert!(manifest.files.contains_key("Main/profile.cfg"), "{:?}", manifest.files.keys());
+        assert!(manifest.files.contains_key("liesmich.txt"), "{:?}", manifest.files.keys());
+    }
+
+    /// Some Windows packers write '\' as the separator. Taken literally,
+    /// `validate_entry_name` would reject the archive (and a restore would
+    /// create one file with a backslash in its name).
+    #[test]
+    fn import_archive_normalizes_backslash_separators() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("fremd.zip");
+        foreign_zip(&archive, &[("profile.cfg", b"PROFIL"), ("slot1\\campaign.cfg", b"KAMPAGNE")]);
+
+        let entry = import_archive(&archive, &backups, None).unwrap();
+
+        let manifest = manifest_of(&entry);
+        assert!(manifest.files.contains_key("slot1/campaign.cfg"), "{:?}", manifest.files.keys());
+    }
+
+    #[test]
+    fn import_archive_recognizes_uppercase_savegame_extensions() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("fremd.zip");
+        foreign_zip(&archive, &[("PROFILE.SAV", b"PROFIL")]);
+
+        import_archive(&archive, &backups, None).unwrap();
+    }
+
+    /// The most likely mistake is picking a mod archive in the file dialog.
+    #[test]
+    fn import_archive_rejects_an_archive_without_savegame_files() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("mod.zip");
+        foreign_zip(&archive, &[("cool_mod.pak", b"PAKDATEN"), ("liesmich.txt", b"HINWEIS")]);
+
+        let err = import_archive(&archive, &backups, None).unwrap_err();
+
+        assert!(matches!(err, Error::NoSaveInArchive(_)), "{err:?}");
+    }
+
+    #[test]
+    fn import_archive_rejects_an_escaping_entry_name() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("boese.zip");
+        foreign_zip(&archive, &[("profile.cfg", b"PROFIL"), ("../entkommen.cfg", b"BOESE")]);
+
+        let err = import_archive(&archive, &backups, None).unwrap_err();
+
+        assert!(matches!(err, Error::UnusableArchive(_)), "{err:?}");
+    }
+
+    /// A symlink entry is the archive counterpart of the symlink rule that
+    /// `backup` and `restore` follow: a link stored in the archive would,
+    /// once restored, let a later write land outside the save directory.
+    #[test]
+    fn import_archive_rejects_a_symlink_entry() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("boese.zip");
+        let file = std::fs::File::create(&archive).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
+        zip.start_file("profile.cfg", opts).unwrap();
+        zip.write_all(b"PROFIL").unwrap();
+        zip.add_symlink("slot1.cfg", "/etc/passwd", opts).unwrap();
+        zip.finish().unwrap();
+
+        let err = import_archive(&archive, &backups, None).unwrap_err();
+
+        assert!(matches!(err, Error::UnusableArchive(_)), "{err:?}");
+    }
+
+    /// Two entries that differ only in the separator collapse into one name
+    /// during normalization. Unpacked in order, the second would silently
+    /// overwrite the first and the backup would claim a state that never
+    /// existed that way — so the archive is rejected instead.
+    ///
+    /// (Two *identical* names cannot reach this point: `ZipArchive` keeps
+    /// its entries in a map keyed by name and already collapses them while
+    /// opening the file.)
+    #[test]
+    fn import_archive_rejects_names_that_collide_after_normalization() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("doppelt.zip");
+        foreign_zip(&archive, &[("slot1/campaign.cfg", b"ERSTER"), ("slot1\\campaign.cfg", b"ZWEITER")]);
+
+        let err = import_archive(&archive, &backups, None).unwrap_err();
+
+        assert!(matches!(err, Error::UnusableArchive(_)), "{err:?}");
+    }
+
+    #[test]
+    fn import_archive_reports_an_unreadable_archive_clearly() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("kaputt.zip");
+        std::fs::write(&archive, b"das ist kein ZIP").unwrap();
+
+        let err = import_archive(&archive, &backups, None).unwrap_err();
+
+        let message = err.to_string();
+        assert!(matches!(err, Error::UnusableArchive(_)), "{err:?}");
+        assert!(
+            !message.contains("invalid") && !message.contains("Invalid"),
+            "the message should be in German, not carry the raw zip message: {message}"
+        );
+    }
+
+    /// Without a label an imported backup would only be a timestamp in the
+    /// list, indistinguishable from the ones created here.
+    #[test]
+    fn import_archive_labels_the_backup_with_the_file_name() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("GameSaveManager 2026.zip");
+        foreign_zip(&archive, &[("profile.cfg", b"PROFIL")]);
+
+        let entry = import_archive(&archive, &backups, None).unwrap();
+
+        assert_eq!(entry.label.as_deref(), Some("GameSaveManager 2026"));
+        let stem = entry.archive.file_stem().unwrap().to_str().unwrap();
+        assert!(stem.ends_with("_GameSaveManager-2026"), "{stem}");
+    }
+
+    #[test]
+    fn import_archive_prefers_the_given_label() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("GameSaveManager 2026.zip");
+        foreign_zip(&archive, &[("profile.cfg", b"PROFIL")]);
+
+        let entry = import_archive(&archive, &backups, Some("Kapitel 3")).unwrap();
+
+        assert_eq!(entry.label.as_deref(), Some("Kapitel 3"));
+    }
+
+    /// The declared uncompressed size is checked before a single entry is
+    /// unpacked: a zip bomb must not be able to fill the disk first and be
+    /// noticed afterwards.
+    #[test]
+    fn import_archive_rejects_an_oversized_archive_before_unpacking() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("gross.zip");
+        foreign_zip(&archive, &[("profile.cfg", &[b'X'; 4096])]);
+
+        let err = import_archive_limited(&archive, &backups, None, 1024).unwrap_err();
+
+        assert!(matches!(err, Error::UnusableArchive(_)), "{err:?}");
+        // A limit below one MiB has to be named in bytes; "0 MiB" would
+        // leave the user with no idea what the limit actually is.
+        assert!(err.to_string().contains("1024 Byte"), "{err}");
+    }
+
+    /// A rejected archive must not leave a half-finished backup behind:
+    /// the list is what the user restores from.
+    #[test]
+    fn import_archive_leaves_nothing_behind_when_it_rejects_the_archive() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("boese.zip");
+        foreign_zip(&archive, &[("profile.cfg", b"PROFIL"), ("../entkommen.cfg", b"BOESE")]);
+
+        import_archive(&archive, &backups, None).unwrap_err();
+
+        assert!(list_backups(&backups).unwrap().is_empty());
+        let stray = backups.is_dir()
+            && std::fs::read_dir(&backups).unwrap().next().is_some();
+        assert!(!stray, "no file may remain under the backup directory");
     }
 }

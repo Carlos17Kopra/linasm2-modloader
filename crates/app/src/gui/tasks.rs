@@ -71,6 +71,9 @@ enum Outcome {
         cancelled: bool,
     },
     BackedUp(Result<BackupEntry, String>),
+    /// Import of a backup from another launcher — a plain ZIP without
+    /// a manifest of ours next to it.
+    ImportedBackup(Result<BackupEntry, String>),
     Verified { created_at: String, result: Result<(), String> },
     Restored { created_at: String, result: Result<BackupEntry, String> },
 }
@@ -156,6 +159,17 @@ impl App {
             }
             Outcome::BackedUp(Err(error)) => {
                 self.set_warning(format!("Backup fehlgeschlagen – {error}"));
+            }
+            Outcome::ImportedBackup(Ok(entry)) => {
+                self.refresh_backups();
+                self.set_status(format!(
+                    "Backup importiert: {} – als „{}“ in der Liste.",
+                    entry.created_at,
+                    entry.label.as_deref().unwrap_or("ohne Etikett")
+                ));
+            }
+            Outcome::ImportedBackup(Err(error)) => {
+                self.set_warning(format!("Import fehlgeschlagen – {error}"));
             }
             Outcome::Verified { created_at, result } => match result {
                 Ok(()) => {
@@ -245,6 +259,37 @@ impl App {
             let result = saves::backup(&save_dir, &backups, label.as_deref())
                 .map_err(|e| e.to_string());
             Outcome::BackedUp(result)
+        }));
+    }
+
+    /// Imports a backup from another launcher. Unlike `start_backup` this
+    /// needs no save directory: nothing is read from the Proton prefix and
+    /// nothing written to it, so the import also works before the game has
+    /// ever been started on this machine.
+    pub(super) fn start_backup_import(&mut self) {
+        let Some(backups) = self.backups_dir() else {
+            self.set_warning("Import nicht möglich – Datenverzeichnis unbekannt.");
+            return;
+        };
+        let Some(archive) = rfd::FileDialog::new()
+            .set_title("Backup importieren")
+            .add_filter("ZIP-Archive", &["zip"])
+            .add_filter("Alle Dateien", &["*"])
+            .pick_file()
+        else {
+            return;
+        };
+        let label = self.backup_label.trim().to_owned();
+        let label = (!label.is_empty()).then_some(label);
+        let ctx = self.egui_ctx.clone();
+
+        self.backup_label.clear();
+        self.set_status("Backup wird importiert …");
+        self.task = Some(spawn(ctx, false, move |_cancel, progress| {
+            report(progress, 0.4, String::from("Archiv wird geprüft und entpackt"));
+            let result = saves::import_archive(&archive, &backups, label.as_deref())
+                .map_err(|e| e.to_string());
+            Outcome::ImportedBackup(result)
         }));
     }
 

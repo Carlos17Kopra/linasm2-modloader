@@ -55,6 +55,21 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
                 {
                     actions.push(Action::CreateBackup);
                 }
+                // Importing only writes below the backup directory and
+                // therefore stays available while the save directory is
+                // still unknown — which is exactly the situation of someone
+                // coming over from another launcher.
+                if widgets::button(
+                    ui,
+                    &ButtonStyle::ghost().font(medium(12.5)),
+                    None,
+                    "Backup importieren",
+                    app.task.is_none(),
+                )
+                .clicked()
+                {
+                    actions.push(Action::ImportBackup);
+                }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
