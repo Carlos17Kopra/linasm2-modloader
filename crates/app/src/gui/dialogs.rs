@@ -20,9 +20,12 @@ pub fn show(app: &App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         Dialog::Vanilla => 540.0,
         Dialog::SteamUser { .. } => 490.0,
         Dialog::DeleteProfile { .. } => 450.0,
+        Dialog::RenameBackup { .. } => 460.0,
+        Dialog::DeleteBackup { .. } => 470.0,
     };
     let border = match &dialog {
         Dialog::Restore { .. } => color::WARN_BORDER,
+        Dialog::DeleteBackup { .. } => color::DANGER_BORDER,
         _ => color::BORDER,
     };
 
@@ -42,6 +45,10 @@ pub fn show(app: &App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                 Dialog::Vanilla => vanilla(app, ui, actions),
                 Dialog::SteamUser { picked } => steam_user(app, ui, picked.as_deref(), actions),
                 Dialog::DeleteProfile { name } => delete_profile(ui, name, actions),
+                Dialog::RenameBackup { index, label } => {
+                    rename_backup(app, ui, *index, label, actions)
+                }
+                Dialog::DeleteBackup { index } => delete_backup(app, ui, *index, actions),
             }
         });
 
@@ -332,6 +339,77 @@ fn delete_profile(ui: &mut Ui, name: &str, actions: &mut Vec<Action>) {
         footer(ui, |ui| {
             if widgets::button(ui, &ButtonStyle::danger(), None, "Löschen", true).clicked() {
                 actions.push(Action::ConfirmDeleteProfile);
+            }
+            if widgets::button(ui, &ButtonStyle::neutral(), None, "Abbrechen", true).clicked() {
+                actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
+/// „Backup umbenennen“
+fn rename_backup(app: &App, ui: &mut Ui, index: usize, label: &str, actions: &mut Vec<Action>) {
+    header(ui, "Backup umbenennen", false, actions);
+    body(ui, |ui| {
+        if let Some(entry) = app.backups.get(index) {
+            field(ui, "Erstellt", &human_time(&entry.created_at), mono(12.0), color::TEXT);
+        }
+        paragraph(
+            ui,
+            "Das Etikett steht in der Liste und im Dateinamen des Backups. Ein leeres Feld \
+             entfernt es wieder.",
+        );
+
+        let mut value = label.to_owned();
+        let response = widgets::text_field(ui, &mut value, "Etikett", ui.available_width(), None);
+        if response.changed() {
+            actions.push(Action::SetRenameLabel(value));
+        }
+        // Der Dialog öffnet mit dem Feld unter der Schreibmarke – er hat
+        // genau eine Eingabe, und die will jede Nutzerin sofort ändern.
+        if ui.memory(|m| m.focused().is_none()) {
+            response.request_focus();
+        }
+        // Die Reihenfolge trägt: `SetRenameLabel` steht in derselben Liste
+        // vor `ConfirmRenameBackup` und wird vorher angewendet, so dass die
+        // Bestätigung nie auf einem veralteten Etikett arbeitet.
+        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            actions.push(Action::ConfirmRenameBackup);
+        }
+
+        footer(ui, |ui| {
+            if widgets::button(ui, &ButtonStyle::primary(), None, "Übernehmen", true).clicked() {
+                actions.push(Action::ConfirmRenameBackup);
+            }
+            if widgets::button(ui, &ButtonStyle::neutral(), None, "Abbrechen", true).clicked() {
+                actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
+/// „Backup löschen?“
+fn delete_backup(app: &App, ui: &mut Ui, index: usize, actions: &mut Vec<Action>) {
+    header(ui, "Backup löschen?", true, actions);
+    body(ui, |ui| {
+        if let Some(entry) = app.backups.get(index) {
+            field(ui, "Erstellt", &human_time(&entry.created_at), mono(12.0), color::TEXT);
+            field(
+                ui,
+                "Etikett",
+                entry.label.as_deref().unwrap_or("—"),
+                sans(12.5),
+                color::TEXT,
+            );
+        }
+        paragraph(
+            ui,
+            "Archiv und Manifest werden endgültig entfernt; zurückholen lässt sich das nicht. \
+             Die Spielstände selbst bleiben unberührt – nur diese Sicherung ist danach weg.",
+        );
+        footer(ui, |ui| {
+            if widgets::button(ui, &ButtonStyle::danger(), None, "Löschen", true).clicked() {
+                actions.push(Action::ConfirmDeleteBackup);
             }
             if widgets::button(ui, &ButtonStyle::neutral(), None, "Abbrechen", true).clicked() {
                 actions.push(Action::CloseDialog);

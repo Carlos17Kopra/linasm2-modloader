@@ -34,6 +34,9 @@ pub enum Icon {
     NavProfiles,
     NavSaves,
     NavSettings,
+    Pencil,
+    Folder,
+    Trash,
 }
 
 impl Icon {
@@ -55,6 +58,9 @@ impl Icon {
             Self::NavProfiles => icons::nav_profiles(painter, center, size, color),
             Self::NavSaves => icons::nav_saves(painter, center, size, color),
             Self::NavSettings => icons::nav_settings(painter, center, size, color),
+            Self::Pencil => icons::pencil(painter, center, size, color),
+            Self::Folder => icons::folder(painter, center, size, color),
+            Self::Trash => icons::trash(painter, center, size, color),
         }
     }
 }
@@ -466,6 +472,62 @@ pub fn truncated(
         overflow_character: Some('…'),
     };
     ui.painter().layout_job(job)
+}
+
+/// Breite eines Kontextmenüs. Fest, damit alle Einträge dieselbe
+/// Trefferfläche bekommen – bei einer aus dem längsten Eintrag
+/// abgeleiteten Breite änderte sich die Klickfläche je nach Beschriftung.
+pub const MENU_WIDTH: f32 = 204.0;
+
+/// Ein Eintrag in einem Kontextmenü; gibt zurück, ob er angeklickt wurde.
+///
+/// Das Gehäuse (Fläche, Rahmen, Schatten, Öffnen und Schließen) stellt
+/// `egui` über `Response::context_menu`; Zeile, Schrift und Farben zeichnet
+/// diese Funktion selbst – aus demselben Grund wie bei `button`: `egui`s
+/// eigene Menüeinträge lassen sich nur global über `Visuals` gestalten und
+/// träfen den Entwurf nicht.
+pub fn menu_item(ui: &mut Ui, icon: Option<Icon>, label: &str, enabled: bool, danger: bool) -> bool {
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
+
+    let base = if danger { color::DANGER } else { color::TEXT };
+    let foreground = if enabled { base } else { base.gamma_multiply(0.4) };
+    let highlight = enabled && response.hovered();
+    if highlight {
+        ui.painter().rect_filled(
+            rect,
+            CornerRadius::same(6),
+            if danger { color::DANGER_BG } else { color::HOVER },
+        );
+        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+    }
+
+    let mut x = rect.left() + 9.0;
+    if let Some(icon) = icon {
+        icon.paint(ui.painter(), Pos2::new(x + 5.5, rect.center().y), 11.0, foreground);
+    }
+    x += 20.0;
+    ui.painter().text(
+        Pos2::new(x, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        sans(12.5),
+        if highlight && !danger { color::TEXT_STRONG } else { foreground },
+    );
+
+    // Ein gesperrter Eintrag schließt das Menü nicht: der Klick soll
+    // folgenlos bleiben, nicht das Menü wegnehmen, ohne etwas zu tun.
+    let clicked = enabled && response.clicked();
+    if clicked {
+        ui.close();
+    }
+    clicked
+}
+
+/// Die Trennlinie zwischen zwei Gruppen von Menüeinträgen.
+pub fn menu_separator(ui: &mut Ui) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 7.0), Sense::hover());
+    ui.painter().hline(rect.x_range(), rect.center().y, Stroke::new(1.0, color::BORDER_SOFT));
 }
 
 /// Schreibt gekürzten Text linksbündig und senkrecht zentriert in eine

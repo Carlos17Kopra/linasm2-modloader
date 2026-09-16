@@ -158,9 +158,15 @@ fn blocked_banner(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
 fn row(app: &App, ui: &mut Ui, index: usize, actions: &mut Vec<Action>) {
     let entry = &app.backups[index];
     let width = ui.available_width();
+    // `Sense::click()` statt `hover()`: ohne einen Klick-Sinn bekommt die
+    // Zeile den rechten Mausklick nicht zu sehen, an dem das Kontextmenü
+    // hängt.
     let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(width, metric::LIST_ROW_HEIGHT), Sense::hover());
-    if response.hovered() {
+        ui.allocate_exact_size(Vec2::new(width, metric::LIST_ROW_HEIGHT), Sense::click());
+    // Die Zeile bleibt hervorgehoben, solange ihr Menü offen steht – sonst
+    // ließe sich bei mehreren Backups nicht mehr erkennen, zu welchem das
+    // Menü gehört, sobald der Zeiger darin liegt.
+    if response.hovered() || response.context_menu_opened() {
         ui.painter().rect_filled(rect, CornerRadius::ZERO, color::HOVER);
     }
     ui.painter().hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, color::BORDER_ROW));
@@ -244,6 +250,48 @@ fn row(app: &App, ui: &mut Ui, index: usize, actions: &mut Vec<Action>) {
     {
         actions.push(Action::VerifyBackup(index));
     }
+
+    context_menu(app, &response, index, actions);
+}
+
+/// Das Kontextmenü einer Backup-Zeile: die beiden Knöpfe der Zeile plus
+/// das, wofür dort kein Platz ist.
+///
+/// Umbenennen, Löschen und Anzeigen rühren nur an das Backup-Verzeichnis des
+/// Loaders, nicht an die Spielstände. Sie bleiben deshalb auch dann nutzbar,
+/// wenn die Savegame-Funktionen wegen eines ungeklärten Steam-Nutzerprofils
+/// gesperrt sind – gerade dann hilft es, die vorhandenen Backups
+/// aufzuräumen und zu beschriften.
+fn context_menu(app: &App, response: &egui::Response, index: usize, actions: &mut Vec<Action>) {
+    let idle = app.task.is_none();
+    let usable = app.saves_blocked.is_none() && idle;
+
+    response.context_menu(|ui| {
+        ui.set_width(widgets::MENU_WIDTH);
+        ui.spacing_mut().item_spacing.y = 1.0;
+
+        if widgets::menu_item(ui, Some(Icon::Pencil), "Umbenennen …", idle, false) {
+            actions.push(Action::AskRenameBackup(index));
+        }
+        if widgets::menu_item(ui, Some(Icon::Folder), "Im Dateimanager zeigen", idle, false) {
+            actions.push(Action::ShowBackupInFiles(index));
+        }
+
+        widgets::menu_separator(ui);
+
+        if widgets::menu_item(ui, Some(Icon::Check), "Prüfen", usable, false) {
+            actions.push(Action::VerifyBackup(index));
+        }
+        if widgets::menu_item(ui, Some(Icon::Warning), "Wiederherstellen …", usable, false) {
+            actions.push(Action::AskRestore(index));
+        }
+
+        widgets::menu_separator(ui);
+
+        if widgets::menu_item(ui, Some(Icon::Trash), "Löschen …", idle, true) {
+            actions.push(Action::AskDeleteBackup(index));
+        }
+    });
 }
 
 /// Größe des Archivs auf der Platte. Steht nirgends im Manifest – die Datei

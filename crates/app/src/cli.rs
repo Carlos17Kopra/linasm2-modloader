@@ -109,6 +109,34 @@ enum SaveCommand {
         #[arg(long)]
         force: bool,
     },
+    /// Ändert das Etikett eines Backups (Standard: das neueste)
+    Rename {
+        /// 1-basierter Index aus `save list` (Standard: 1, das neueste)
+        #[arg(long)]
+        index: Option<usize>,
+        /// Exakter Zeitstempel aus `save list`
+        #[arg(long, conflicts_with = "index")]
+        at: Option<String>,
+        /// Neues Etikett; ohne Angabe wird das Etikett entfernt
+        #[arg(long)]
+        tag: Option<String>,
+    },
+    /// Löscht ein Backup endgültig (Standard: das neueste)
+    Delete {
+        /// 1-basierter Index aus `save list` (Standard: 1, das neueste)
+        #[arg(long)]
+        index: Option<usize>,
+        /// Exakter Zeitstempel aus `save list`
+        #[arg(long, conflicts_with = "index")]
+        at: Option<String>,
+        // Ein gelöschtes Backup ist unwiederbringlich weg – anders als bei
+        // `restore` gibt es hier keine Sicherung, die den Schritt
+        // zurücknehmen könnte. Deshalb verlangt auch der nicht-interaktive
+        // Weg eine ausdrückliche Zusage.
+        /// Bestätigt das endgültige Löschen (erforderlich)
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 pub fn run() -> Result<()> {
@@ -472,6 +500,33 @@ fn run_save_command_with(state: &AppState, cmd: SaveCommand, steam_running: impl
             let safety_backup = saves::restore(entry, &saves_dir, &backups)?;
             println!("✓ Wiederhergestellt: {}", entry.created_at);
             println!("  Vorheriger Stand gesichert: {}", safety_backup.archive.display());
+        }
+        SaveCommand::Rename { index, at, tag } => {
+            let list = saves::list_backups(&backups)?;
+            if list.is_empty() {
+                bail!("keine Backups vorhanden");
+            }
+            let entry = resolve_backup_selection(&list, index, at.as_deref())?;
+            let renamed = saves::rename(entry, &backups, tag.as_deref())?;
+            println!("✓ Umbenannt: {}  {}", renamed.created_at, renamed.label.as_deref().unwrap_or("—"));
+            println!("  {}", renamed.archive.display());
+        }
+        SaveCommand::Delete { index, at, yes } => {
+            let list = saves::list_backups(&backups)?;
+            if list.is_empty() {
+                bail!("keine Backups vorhanden");
+            }
+            let entry = resolve_backup_selection(&list, index, at.as_deref())?;
+            let label = entry.label.clone().unwrap_or_default();
+            if !yes {
+                bail!(
+                    "Löschen ist unwiderruflich. Ausgewählt wäre: {}  {label}. Mit --yes \
+                     bestätigen.",
+                    entry.created_at
+                );
+            }
+            saves::delete(entry)?;
+            println!("✓ Gelöscht: {}  {label}", entry.created_at);
         }
     }
     Ok(())

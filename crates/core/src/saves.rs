@@ -153,6 +153,39 @@ fn sanitize_label(label: &str) -> String {
         .to_string()
 }
 
+/// Der Dateinamen-Stamm eines Backups: der Zeitstempel, bei beschriftetem
+/// Backup gefolgt von '_' und dem dateinamentauglichen Etikett. Anlegen
+/// (`backup`) und Umbenennen (`rename`) müssen dieselbe Regel benutzen –
+/// sonst bekäme ein umbenanntes Backup einen Namen, den `backup` nie
+/// vergeben hätte, und `rename` könnte anschließend nicht mehr erkennen,
+/// dass der Name bereits stimmt.
+fn backup_base_name(created_at: &str, label: Option<&str>) -> String {
+    let base = timestamp_for_filename(created_at);
+    match label.map(sanitize_label) {
+        Some(clean) if !clean.is_empty() => format!("{base}_{clean}"),
+        _ => base,
+    }
+}
+
+/// Schreibt ein Manifest atomar.
+///
+/// Der Serialisierungsfehler ist für die aktuellen Feldtypen (String,
+/// `Option<_>`, u64, `BTreeMap<String, _>`) unerreichbar; der rohe Fehler
+/// wird bewusst verworfen, damit die Meldung rein deutsch bleibt (vgl.
+/// `Library::save`).
+fn write_manifest(path: &Path, manifest: &BackupManifest) -> Result<()> {
+    let json = serde_json::to_string_pretty(manifest).map_err(|_| {
+        Error::io(
+            path,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Manifest konnte nicht als JSON serialisiert werden",
+            ),
+        )
+    })?;
+    write_atomic(path, &format!("{json}\n"))
+}
+
 /// Erstellt ein Backup: alle Dateien aus `save_dir` werden in ein neues
 /// ZIP-Archiv unter `backup_root` gepackt, begleitet von einem Manifest mit
 /// Hash und Größe jeder Datei.
@@ -166,13 +199,7 @@ pub fn backup(save_dir: &Path, backup_root: &Path, label: Option<&str>) -> Resul
     std::fs::create_dir_all(backup_root).map_err(|e| Error::io(backup_root, e))?;
 
     let now = now_rfc3339();
-    let mut base = timestamp_for_filename(&now);
-    if let Some(l) = label {
-        let clean = sanitize_label(l);
-        if !clean.is_empty() {
-            base = format!("{base}_{clean}");
-        }
-    }
+    let base = backup_base_name(&now, label);
 
     // Der Zeitstempel hat Sekundenauflösung. Zwei Backups in derselben
     // Sekunde dürfen einander nicht überschreiben – `restore` legt
@@ -219,20 +246,7 @@ pub fn backup(save_dir: &Path, backup_root: &Path, label: Option<&str>) -> Resul
         label: label.map(str::to_string),
         files: records,
     };
-    // Unerreichbar für die aktuellen Feldtypen (String, Option<_>, u64,
-    // BTreeMap<String, _> können nicht fehlschlagen); der rohe Fehler wird
-    // bewusst verworfen, damit die Meldung rein deutsch bleibt (vgl.
-    // `Library::save`).
-    let json = serde_json::to_string_pretty(&manifest).map_err(|_| {
-        Error::io(
-            &manifest_path,
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Manifest konnte nicht als JSON serialisiert werden",
-            ),
-        )
-    })?;
-    write_atomic(&manifest_path, &format!("{json}\n"))?;
+    write_manifest(&manifest_path, &manifest)?;
 
     Ok(BackupEntry {
         archive: archive_path,
@@ -385,6 +399,82 @@ pub fn list_backups(backup_root: &Path) -> Result<Vec<BackupEntry>> {
             .then_with(|| a.archive.cmp(&b.archive))
     });
     Ok(entries)
+}
+
+/// Ändert das Etikett eines Backups. Der Zeitstempel – die Identität eines
+/// Backups, über die es die Oberfläche wiedererkennt – bleibt unberührt.
+/// Archiv und Manifest wandern auf den Dateinamen, den `backup` für dieses
+/// Etikett vergeben hätte, damit ein Backup im Dateimanager so heißt wie in
+/// der Oberfläche.
+///
+/// Die Reihenfolge der drei Schritte ist der eigentliche Schutz: erst das
+/// neue Manifest schreiben, dann das Archiv verschieben, dann das alte
+/// Manifest löschen. An jedem Absturzpunkt dazwischen existiert genau ein
+/// vollständiges `.zip`/`.json`-Paar, und das Archiv – der einzige
+/// unersetzliche Teil – geht nie verloren; die jeweils übrige Hälfte ist
+/// eine Waise, die `list_backups` stillschweigend übergeht. Die umgekehrte
+/// Reihenfolge (erst verschieben) ließe das Backup nach einem Absturz
+/// zwischen den Schritten ganz aus der Liste verschwinden.
+pub fn rename(entry: &BackupEntry, backup_root: &Path, label: Option<&str>) -> Result<BackupEntry> {
+    // Das Manifest, nicht `entry`, ist die Quelle für `created_at`:
+    // `list_backups` baut seine Einträge zwar daraus, ein von Hand
+    // zusammengesetzter `BackupEntry` muss es aber nicht gefüllt haben.
+    let mut manifest = read_manifest(entry)?;
+    manifest.label = label.map(str::to_string);
+
+    let base = backup_base_name(&manifest.created_at, label);
+    if entry.archive.file_stem().and_then(|s| s.to_str()) == Some(base.as_str()) {
+        // „Kapitel-3“ → „Kapitel 3“: derselbe Dateiname, nur ein anderes
+        // Etikett. Würde hier trotzdem verschoben, hielte
+        // `unique_backup_name` den eigenen, gerade belegten Namen für
+        // besetzt und hängte dem Backup grundlos ein `~1` an.
+        write_manifest(&entry.manifest, &manifest)?;
+        return Ok(BackupEntry {
+            archive: entry.archive.clone(),
+            manifest: entry.manifest.clone(),
+            created_at: manifest.created_at,
+            label: manifest.label,
+        });
+    }
+
+    let (new_archive, new_manifest) = unique_backup_name(backup_root, &base);
+    write_manifest(&new_manifest, &manifest)?;
+    if let Err(e) = std::fs::rename(&entry.archive, &new_archive) {
+        // Ohne dieses Aufräumen bliebe eine Manifest-Waise liegen, die
+        // `unique_backup_name` für alle Zeit als belegten Namen läse – ein
+        // späterer Versuch mit demselben Etikett bekäme dann ein `~1`.
+        let _ = std::fs::remove_file(&new_manifest);
+        return Err(Error::io(&entry.archive, e));
+    }
+    std::fs::remove_file(&entry.manifest).map_err(|e| Error::io(&entry.manifest, e))?;
+    sync_dir(backup_root)?;
+
+    Ok(BackupEntry {
+        archive: new_archive,
+        manifest: new_manifest,
+        created_at: manifest.created_at,
+        label: manifest.label,
+    })
+}
+
+/// Löscht ein Backup endgültig, Archiv wie Manifest. Eine bereits
+/// verschwundene Datei ist kein Fehler – das Ziel ist dann schon erreicht,
+/// und ein zweiter Klick auf „Löschen“ soll keine Fehlermeldung erzeugen.
+pub fn delete(entry: &BackupEntry) -> Result<()> {
+    remove_if_present(&entry.archive)?;
+    remove_if_present(&entry.manifest)?;
+    if let Some(dir) = entry.manifest.parent() {
+        sync_dir(dir)?;
+    }
+    Ok(())
+}
+
+fn remove_if_present(path: &Path) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(Error::io(path, e)),
+    }
 }
 
 /// Löst einen (bereits über `validate_entry_name` geprüften) Eintragsnamen
@@ -1117,5 +1207,166 @@ mod tests {
     #[test]
     fn steam_is_running_does_not_panic() {
         let _ = steam_is_running();
+    }
+
+    #[test]
+    fn rename_changes_the_label_in_the_listing() {
+        let (_tmp, saves, backups) = save_fixture();
+        let entry = backup(&saves, &backups, Some("Kapitel 3")).unwrap();
+
+        rename(&entry, &backups, Some("Vor dem Bossfight")).unwrap();
+
+        let list = list_backups(&backups).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].label.as_deref(), Some("Vor dem Bossfight"));
+    }
+
+    /// Das Etikett steckt auch im Dateinamen – wer das Backup im
+    /// Dateimanager sucht, soll dort denselben Namen sehen wie in der
+    /// Oberfläche.
+    #[test]
+    fn rename_moves_archive_and_manifest_to_the_new_name() {
+        let (_tmp, saves, backups) = save_fixture();
+        let entry = backup(&saves, &backups, Some("Kapitel 3")).unwrap();
+        let old_archive = entry.archive.clone();
+        let old_manifest = entry.manifest.clone();
+
+        let renamed = rename(&entry, &backups, Some("Vor dem Bossfight")).unwrap();
+
+        assert!(!old_archive.exists(), "das alte Archiv muss verschwinden");
+        assert!(!old_manifest.exists(), "das alte Manifest muss verschwinden");
+        assert!(renamed.archive.is_file());
+        assert!(renamed.manifest.is_file());
+        let stem = renamed.archive.file_stem().unwrap().to_str().unwrap();
+        assert!(stem.ends_with("_Vor-dem-Bossfight"), "{stem}");
+    }
+
+    /// Der Zeitstempel ist die Identität eines Backups (die Oberfläche
+    /// merkt sich darüber, welche Backups in dieser Sitzung geprüft
+    /// wurden). Umbenennen ist reine Beschriftung und darf ihn nicht
+    /// verschieben – und das Archiv muss die Prüfung danach weiter
+    /// bestehen.
+    #[test]
+    fn rename_keeps_created_at_and_a_verifiable_archive() {
+        let (_tmp, saves, backups) = save_fixture();
+        let entry = backup(&saves, &backups, Some("Kapitel 3")).unwrap();
+
+        let renamed = rename(&entry, &backups, Some("Anderes")).unwrap();
+
+        assert_eq!(renamed.created_at, entry.created_at);
+        verify(&renamed).unwrap();
+    }
+
+    /// „Kapitel-3“ und „Kapitel 3“ ergeben denselben Dateinamen-Stamm
+    /// (`sanitize_label` macht aus beidem `Kapitel-3`). Dann darf gar nicht
+    /// erst umbenannt werden – sonst hängte `unique_backup_name` dem
+    /// Backup grundlos ein `~1` an, weil sein eigener Name schon belegt
+    /// ist.
+    #[test]
+    fn rename_to_a_label_with_the_same_file_stem_keeps_the_file_names() {
+        let (_tmp, saves, backups) = save_fixture();
+        let entry = backup(&saves, &backups, Some("Kapitel-3")).unwrap();
+
+        let renamed = rename(&entry, &backups, Some("Kapitel 3")).unwrap();
+
+        assert_eq!(renamed.archive, entry.archive);
+        assert_eq!(renamed.manifest, entry.manifest);
+        assert_eq!(renamed.label.as_deref(), Some("Kapitel 3"), "das Etikett selbst ändert sich trotzdem");
+    }
+
+    /// Ein leeres Etikett entfernt die Beschriftung, statt ein Backup
+    /// namens „“ anzulegen.
+    #[test]
+    fn rename_with_an_empty_label_removes_the_label() {
+        let (_tmp, saves, backups) = save_fixture();
+        let entry = backup(&saves, &backups, Some("Kapitel 3")).unwrap();
+
+        let renamed = rename(&entry, &backups, None).unwrap();
+
+        assert_eq!(renamed.label, None);
+        let stem = renamed.archive.file_stem().unwrap().to_str().unwrap();
+        assert_eq!(stem, timestamp_for_filename(&entry.created_at), "nur der Zeitstempel darf übrig bleiben");
+    }
+
+    /// Zwei Backups derselben Sekunde mit demselben Ziel-Etikett dürfen
+    /// einander nicht überschreiben – dieselbe Regel wie beim Anlegen.
+    #[test]
+    fn rename_onto_an_occupied_name_appends_a_collision_counter() {
+        let (_tmp, saves, backups) = save_fixture();
+        let occupant = backup(&saves, &backups, Some("Ziel")).unwrap();
+        let entry = BackupEntry {
+            archive: backups.join("2026-09-16_180000_Anders.zip"),
+            manifest: backups.join("2026-09-16_180000_Anders.json"),
+            created_at: String::from("2026-09-16T18:00:00Z"),
+            label: Some(String::from("Anders")),
+        };
+        std::fs::copy(&occupant.archive, &entry.archive).unwrap();
+        let mut manifest = read_manifest(&occupant).unwrap();
+        manifest.created_at = entry.created_at.clone();
+        manifest.label = entry.label.clone();
+        std::fs::write(&entry.manifest, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
+
+        // Beide Backups zielen jetzt auf denselben Stamm, sobald dieses
+        // hier „Ziel“ heißen soll – aber nur, wenn auch der Zeitstempel
+        // übereinstimmt.
+        let taken = backups.join(format!(
+            "{}_Ziel.zip",
+            timestamp_for_filename(&entry.created_at)
+        ));
+        std::fs::write(&taken, b"belegt").unwrap();
+
+        let renamed = rename(&entry, &backups, Some("Ziel")).unwrap();
+
+        assert_ne!(renamed.archive, taken, "die belegte Datei darf nicht überschrieben werden");
+        assert_eq!(std::fs::read(&taken).unwrap(), b"belegt");
+        let stem = renamed.archive.file_stem().unwrap().to_str().unwrap();
+        assert!(stem.ends_with("_Ziel~1"), "{stem}");
+    }
+
+    /// `rename` schreibt das neue Manifest, bevor es das Archiv verschiebt
+    /// (damit nie ein Zustand ohne vollständiges Paar entsteht). Scheitert
+    /// das Verschieben danach – etwa weil das Archiv nebenher von Hand
+    /// gelöscht wurde –, muss dieses neue Manifest wieder verschwinden.
+    /// Bliebe es liegen, hielte `unique_backup_name` den Namen für dauerhaft
+    /// belegt und hängte jedem künftigen Umbenennen auf dieses Etikett ein
+    /// `~1` an.
+    #[test]
+    fn rename_removes_the_new_manifest_when_the_archive_cannot_be_moved() {
+        let (_tmp, saves, backups) = save_fixture();
+        let entry = backup(&saves, &backups, Some("Kapitel 3")).unwrap();
+        std::fs::remove_file(&entry.archive).unwrap();
+
+        let err = rename(&entry, &backups, Some("Blockiert")).unwrap_err();
+
+        assert!(matches!(err, Error::Io { .. }), "{err:?}");
+        let new_stem = format!("{}_Blockiert", timestamp_for_filename(&entry.created_at));
+        assert!(
+            !backups.join(format!("{new_stem}.json")).exists(),
+            "das neue Manifest muss wieder entfernt werden"
+        );
+        assert!(entry.manifest.is_file(), "das alte Manifest bleibt unangetastet");
+    }
+
+    #[test]
+    fn delete_removes_archive_and_manifest() {
+        let (_tmp, saves, backups) = save_fixture();
+        let entry = backup(&saves, &backups, Some("weg damit")).unwrap();
+
+        delete(&entry).unwrap();
+
+        assert!(!entry.archive.exists());
+        assert!(!entry.manifest.exists());
+        assert!(list_backups(&backups).unwrap().is_empty());
+    }
+
+    /// Wer zweimal auf „Löschen“ kommt – oder das Backup nebenher von Hand
+    /// entfernt hat –, soll keinen Fehler sehen: das Ziel ist erreicht.
+    #[test]
+    fn delete_is_idempotent() {
+        let (_tmp, saves, backups) = save_fixture();
+        let entry = backup(&saves, &backups, None).unwrap();
+
+        delete(&entry).unwrap();
+        delete(&entry).unwrap();
     }
 }

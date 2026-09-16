@@ -278,6 +278,63 @@ impl App {
         }
     }
 
+    /// Öffnet „Backup umbenennen“ mit dem aktuellen Etikett vorbelegt.
+    pub(super) fn ask_rename_backup(&mut self, index: usize) {
+        let Some(entry) = self.backups.get(index) else { return };
+        self.dialog =
+            Some(Dialog::RenameBackup { index, label: entry.label.clone().unwrap_or_default() });
+    }
+
+    /// Schreibt das neue Etikett. Das rührt nur an das Backup-Verzeichnis
+    /// des Loaders, nicht an die Spielstände – deshalb ist das, anders als
+    /// Sichern und Wiederherstellen, auch bei ungeklärtem Steam-Nutzerprofil
+    /// erlaubt und braucht keinen Hintergrundthread.
+    pub(super) fn confirm_rename_backup(&mut self) {
+        let Some(Dialog::RenameBackup { index, label }) = self.dialog.clone() else { return };
+        self.dialog = None;
+        let Some(entry) = self.backups.get(index).cloned() else { return };
+        let Some(backups) = self.backups_dir() else { return };
+
+        let label = label.trim().to_owned();
+        let label = (!label.is_empty()).then_some(label);
+        match saves::rename(&entry, &backups, label.as_deref()) {
+            Ok(renamed) => {
+                self.refresh_backups();
+                match renamed.label {
+                    Some(label) => self
+                        .set_status(format!("Backup {} heißt jetzt „{label}“.", renamed.created_at)),
+                    None => self
+                        .set_status(format!("Etikett von Backup {} entfernt.", renamed.created_at)),
+                }
+            }
+            Err(e) => self.set_warning(format!("Backup nicht umbenannt – {e}")),
+        }
+    }
+
+    pub(super) fn delete_backup(&mut self) {
+        let Some(Dialog::DeleteBackup { index }) = self.dialog.clone() else { return };
+        self.dialog = None;
+        let Some(entry) = self.backups.get(index).cloned() else { return };
+
+        match saves::delete(&entry) {
+            Ok(()) => {
+                // Das „geprüft“-Abzeichen hängt am Zeitstempel. Bliebe der
+                // Eintrag stehen, trüge ein später in derselben Sekunde
+                // angelegtes Backup eine Prüfung, die nie stattgefunden hat.
+                self.verified.remove(&entry.created_at);
+                self.refresh_backups();
+                self.set_status(format!("Backup {} gelöscht.", entry.created_at));
+            }
+            Err(e) => self.set_warning(format!("Backup nicht gelöscht – {e}")),
+        }
+    }
+
+    pub(super) fn show_backup_in_files(&mut self, index: usize) {
+        let Some(entry) = self.backups.get(index) else { return };
+        let Some(dir) = entry.archive.parent().map(PathBuf::from) else { return };
+        self.open_folder(dir);
+    }
+
     pub(super) fn confirm_restore(&mut self) {
         let Some(Dialog::Restore { index, force }) = self.dialog.clone() else { return };
         if !force {

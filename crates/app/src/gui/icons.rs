@@ -203,6 +203,79 @@ pub fn nav_saves(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     painter.rect_filled(inner, 0.0, color);
 }
 
+/// `✎` – Umbenennen: ein Stift, schräg von links unten nach rechts oben,
+/// mit abgesetzter Spitze.
+pub fn pencil(painter: &Painter, center: Pos2, size: f32, color: Color32) {
+    let line = stroke(size, color);
+    let tip = Pos2::new(center.x - size * 0.40, center.y + size * 0.40);
+    let neck = Pos2::new(center.x - size * 0.22, center.y + size * 0.22);
+    let end = Pos2::new(center.x + size * 0.40, center.y - size * 0.40);
+    painter.line_segment([neck, end], line);
+    painter.line_segment([tip, neck], line);
+    // Der Querstrich trennt Spitze und Schaft – ohne ihn bliebe eine bloße
+    // Diagonale übrig, die sich vom Schrägstrich nicht unterscheidet.
+    painter.line_segment(
+        [
+            Pos2::new(neck.x - size * 0.11, neck.y - size * 0.11),
+            Pos2::new(neck.x + size * 0.11, neck.y + size * 0.11),
+        ],
+        line,
+    );
+}
+
+/// `🗀` – Verzeichnis: Mappe mit angedeutetem Reiter.
+pub fn folder(painter: &Painter, center: Pos2, size: f32, color: Color32) {
+    let line = stroke(size, color);
+    let body = Rect::from_center_size(
+        Pos2::new(center.x, center.y + size * 0.06),
+        Vec2::new(size * 0.84, size * 0.62),
+    );
+    painter.rect_stroke(body, 1.0, line, egui::StrokeKind::Inside);
+    painter.line_segment(
+        [
+            Pos2::new(body.left(), body.top()),
+            Pos2::new(body.left() + size * 0.14, body.top() - size * 0.16),
+        ],
+        line,
+    );
+    painter.line_segment(
+        [
+            Pos2::new(body.left() + size * 0.14, body.top() - size * 0.16),
+            Pos2::new(body.left() + size * 0.40, body.top() - size * 0.16),
+        ],
+        line,
+    );
+    painter.line_segment(
+        [
+            Pos2::new(body.left() + size * 0.40, body.top() - size * 0.16),
+            Pos2::new(body.left() + size * 0.50, body.top()),
+        ],
+        line,
+    );
+}
+
+/// `🗑` – Löschen: Behälter mit Deckel und Griff.
+pub fn trash(painter: &Painter, center: Pos2, size: f32, color: Color32) {
+    let line = stroke(size, color);
+    let body = Rect::from_center_size(
+        Pos2::new(center.x, center.y + size * 0.12),
+        Vec2::new(size * 0.60, size * 0.62),
+    );
+    painter.rect_stroke(body, 1.0, line, egui::StrokeKind::Inside);
+    let lid_y = body.top() - size * 0.12;
+    painter.line_segment(
+        [Pos2::new(center.x - size * 0.40, lid_y), Pos2::new(center.x + size * 0.40, lid_y)],
+        line,
+    );
+    painter.line_segment(
+        [
+            Pos2::new(center.x - size * 0.15, lid_y - size * 0.13),
+            Pos2::new(center.x + size * 0.15, lid_y - size * 0.13),
+        ],
+        line,
+    );
+}
+
 /// `⚙` – Navigationssymbol „Einstellungen“: Zahnrad mit acht Zähnen.
 pub fn nav_settings(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     let line = stroke(size, color);

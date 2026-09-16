@@ -115,6 +115,11 @@ pub enum Dialog {
     SteamUser { picked: Option<String> },
     /// „Profil löschen?“
     DeleteProfile { name: String },
+    /// „Backup umbenennen“ – das Etikett ist das, woran man ein Backup
+    /// später wiedererkennt.
+    RenameBackup { index: usize, label: String },
+    /// „Backup löschen?“
+    DeleteBackup { index: usize },
 }
 
 /// Was eine Hinweiszeile als Schaltfläche anbietet.
@@ -193,6 +198,12 @@ pub enum Action {
     ConfirmDeleteProfile,
     CreateBackup,
     VerifyBackup(usize),
+    AskRenameBackup(usize),
+    SetRenameLabel(String),
+    ConfirmRenameBackup,
+    AskDeleteBackup(usize),
+    ConfirmDeleteBackup,
+    ShowBackupInFiles(usize),
     AskRestore(usize),
     SetRestoreForce(bool),
     ConfirmRestore,
@@ -498,6 +509,20 @@ impl App {
             Action::ConfirmDeleteProfile => self.delete_profile(),
             Action::CreateBackup => self.start_backup(),
             Action::VerifyBackup(index) => self.start_verify(index),
+            Action::AskRenameBackup(index) => self.ask_rename_backup(index),
+            Action::SetRenameLabel(value) => {
+                if let Some(Dialog::RenameBackup { label, .. }) = &mut self.dialog {
+                    *label = value;
+                }
+            }
+            Action::ConfirmRenameBackup => self.confirm_rename_backup(),
+            Action::AskDeleteBackup(index) => {
+                if index < self.backups.len() {
+                    self.dialog = Some(Dialog::DeleteBackup { index });
+                }
+            }
+            Action::ConfirmDeleteBackup => self.delete_backup(),
+            Action::ShowBackupInFiles(index) => self.show_backup_in_files(index),
             Action::AskRestore(index) => self.ask_restore(index),
             Action::SetRestoreForce(value) => {
                 if let Some(Dialog::Restore { force, .. }) = &mut self.dialog {
