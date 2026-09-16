@@ -10,6 +10,7 @@ use sm2_core::launch::{self, LaunchMode};
 use sm2_core::paths::GamePaths;
 use sm2_core::profile::Profile;
 use sm2_core::saves;
+use sm2_core::t;
 use std::path::PathBuf;
 
 impl App {
@@ -17,7 +18,7 @@ impl App {
     /// confirmation dialog first — it discards the current selection.
     pub(super) fn launch(&mut self) {
         if self.state.is_none() {
-            self.set_warning("Start nicht möglich – Spielverzeichnis unbekannt.");
+            self.set_warning(t!("gui.message.launch_no_game_dir"));
             return;
         }
         match self.launch_choice {
@@ -38,10 +39,7 @@ impl App {
     /// most the outcome of the reconciliation.
     pub(super) fn perform_launch(&mut self, vanilla_start: bool, no_eac: bool) {
         if no_eac && !self.no_eac_available {
-            self.set_warning(
-                "Start ohne EAC ist auf diesem System nicht möglich – umu-launcher wurde nicht \
-                 gefunden.",
-            );
+            self.set_warning(t!("gui.message.no_eac_unavailable"));
             return;
         }
 
@@ -51,22 +49,18 @@ impl App {
                 Ok(Some(snapshot)) => {
                     let name = snapshot.name.clone();
                     self.notices.push(
-                        Notice::info(format!(
-                            "Bisheriger Zustand als Profil „{name}“ gesichert. Darüber kommst du \
-                             zurück."
-                        ))
-                        .with_action(NoticeAction::ShowProfile(name)),
+                        Notice::info(t!("gui.message.vanilla_snapshot_saved", name = &name))
+                            .with_action(NoticeAction::ShowProfile(name)),
                     );
                     self.refresh_profiles();
                 }
                 Ok(None) => {
-                    self.notices.push(Notice::info(
-                        "Bereits vollständig deaktiviert – keine neue Sicherung angelegt.",
-                    ));
+                    self.notices.push(Notice::info(t!("gui.message.vanilla_already_disabled")));
                 }
                 Err(e) => {
-                    self.set_warning(format!(
-                        "Nichts verändert und nichts gestartet – {e:#}"
+                    self.set_warning(t!(
+                        "gui.message.vanilla_disable_failed",
+                        detail = format!("{e:#}")
                     ));
                     return;
                 }
@@ -87,15 +81,15 @@ impl App {
         match launch::launch(&state.paths, mode) {
             Ok(()) => {
                 let how = if no_eac {
-                    "ohne EAC gestartet – Multiplayer ist damit nicht möglich."
+                    t!("gui.message.launch_how_no_eac")
                 } else if vanilla_start {
-                    "ohne Mods gestartet – alle Einträge deaktiviert."
+                    t!("gui.message.launch_how_vanilla")
                 } else {
-                    "über Steam gestartet."
+                    t!("gui.message.launch_how_steam")
                 };
-                self.set_status(format!("Spiel {how}"));
+                self.set_status(t!("gui.message.launch_done", how = how));
             }
-            Err(e) => self.set_warning(format!("Start fehlgeschlagen – {e}")),
+            Err(e) => self.set_warning(t!("gui.message.launch_failed", detail = e)),
         }
     }
 
@@ -106,6 +100,10 @@ impl App {
         if !self.settings().auto_backup {
             return;
         }
+        // These two backup labels stay German by decision: they are
+        // matched by prefix and already written into existing backup
+        // names on disk, so translating them would rename user data (see
+        // `vanilla::VANILLA_SNAPSHOT_PREFIX`).
         let label = if vanilla_start { "vor Vanilla-Start" } else { "vor Modded-Start" };
         let Some(state) = &self.state else { return };
         let Some(backups) = self.backups_dir() else { return };
@@ -113,41 +111,49 @@ impl App {
         match state.paths.save_dir(state.settings.steam_user.as_deref()) {
             Ok(save_dir) => match saves::backup(&save_dir, &backups, Some(label)) {
                 Ok(entry) => {
-                    self.notices
-                        .push(Notice::info(format!("Savegame gesichert: {}", entry.created_at)));
+                    self.notices.push(Notice::info(t!(
+                        "gui.message.save_backup_done",
+                        created_at = entry.created_at
+                    )));
                     self.refresh_backups();
                 }
                 Err(e) => self
                     .notices
-                    .push(Notice::warning(format!("Save-Backup fehlgeschlagen – {e}"))),
+                    .push(Notice::warning(t!("gui.message.save_backup_failed", detail = e))),
             },
-            Err(e) => {
-                self.notices.push(Notice::warning(format!("Kein Save-Backup möglich – {e}")))
-            }
+            Err(e) => self
+                .notices
+                .push(Notice::warning(t!("gui.message.no_save_backup_possible", detail = e))),
         }
     }
 
     pub(super) fn save_profile(&mut self) {
         let name = self.profile_name.trim().to_owned();
         if name.is_empty() {
-            self.set_warning("Bitte einen Namen für das Profil eingeben.");
+            self.set_warning(t!("gui.message.profile_name_required"));
             return;
         }
         let (Some(state), Some(dir)) = (&self.state, self.profiles_dir()) else {
-            self.set_warning("Speichern nicht möglich – Spielverzeichnis unbekannt.");
+            self.set_warning(t!("gui.message.profile_save_no_game_dir"));
             return;
         };
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            self.set_warning(format!("{} konnte nicht angelegt werden – {e}", dir.display()));
+            self.set_warning(t!(
+                "gui.message.profile_dir_create_failed",
+                path = dir.display(),
+                detail = e
+            ));
             return;
         }
         match Profile::from_config(&name, &state.config).save(&dir) {
             Ok(_) => {
                 self.profile_name.clear();
                 self.refresh_profiles();
-                self.set_status(format!("Profil „{name}“ gespeichert."));
+                self.set_status(t!("gui.message.profile_saved", name = &name));
             }
-            Err(e) => self.set_warning(format!("Profil „{name}“ nicht gespeichert – {e}")),
+            Err(e) => {
+                self.set_warning(t!("gui.message.profile_save_failed", name = &name, detail = e))
+            }
         }
     }
 
@@ -156,7 +162,7 @@ impl App {
     /// which is what the text above the table promises.
     pub(super) fn apply_profile(&mut self, name: &str) {
         if !self.can_modify() {
-            self.set_warning(self.blocked_reason("Anwenden"));
+            self.set_warning(self.blocked_reason(&t!("gui.message.action_apply")));
             return;
         }
         let Some(profile) = self.profiles.iter().find(|p| p.name == name).cloned() else { return };
@@ -165,7 +171,7 @@ impl App {
         let present = match state.paths.list_paks() {
             Ok(present) => present,
             Err(e) => {
-                self.set_warning(format!("Mods-Verzeichnis nicht lesbar – {e}"));
+                self.set_warning(t!("gui.message.mods_dir_unreadable", detail = e));
                 return;
             }
         };
@@ -173,13 +179,11 @@ impl App {
         state.config = config;
 
         for pak in &missing {
-            self.notices.push(Notice::warning(format!(
-                "{pak} aus dem Profil ist nicht installiert und wurde übersprungen."
-            )));
+            self.notices.push(Notice::warning(t!("gui.message.pak_missing_in_profile", pak = pak)));
         }
         if self.persist() {
             let active = self.entries().iter().filter(|e| !e.disabled).count();
-            self.set_status(format!("Profil „{name}“ angewendet – {active} Mods aktiv."));
+            self.set_status(t!("gui.message.profile_applied", name = &name, active = active));
         }
     }
 
@@ -193,9 +197,11 @@ impl App {
         match std::fs::remove_file(&path) {
             Ok(()) => {
                 self.refresh_profiles();
-                self.set_status(format!("Profil „{name}“ gelöscht."));
+                self.set_status(t!("gui.message.profile_deleted", name = &name));
             }
-            Err(e) => self.set_warning(format!("Profil „{name}“ nicht gelöscht – {e}")),
+            Err(e) => {
+                self.set_warning(t!("gui.message.profile_delete_failed", name = &name, detail = e))
+            }
         }
     }
 
@@ -204,7 +210,7 @@ impl App {
     /// error message on every further start.
     pub(super) fn pick_game_dir(&mut self) {
         let Some(dir) = rfd::FileDialog::new()
-            .set_title("Verzeichnis von Space Marine 2 wählen")
+            .set_title(t!("gui.message.pick_game_dir_title"))
             .pick_folder()
         else {
             return;
@@ -228,7 +234,7 @@ impl App {
         let Some(Dialog::SteamUser { picked }) = self.dialog.clone() else { return };
         self.dialog = None;
         let Some(user) = picked else {
-            self.set_warning("Kein Nutzerprofil gewählt.");
+            self.set_warning(t!("gui.message.no_steam_user_chosen"));
             return;
         };
 
@@ -239,9 +245,7 @@ impl App {
         self.save_settings();
         self.refresh_steam_users();
         self.refresh_backups();
-        self.set_status(format!(
-            "Steam-Nutzerprofil {user} gesetzt – Savegame-Funktionen freigegeben."
-        ));
+        self.set_status(t!("gui.message.steam_user_set", user = &user));
     }
 
     pub(super) fn toggle_auto_backup(&mut self) {
@@ -251,8 +255,8 @@ impl App {
             state.settings.auto_backup = next;
         }
         self.save_settings();
-        let word = if next { "ein" } else { "aus" };
-        self.set_status(format!("Automatisches Backup vor dem Start {word}."));
+        let word = if next { t!("gui.message.word_on") } else { t!("gui.message.word_off") };
+        self.set_status(t!("gui.message.auto_backup_toggled", word = word));
     }
 
     /// Decides whether a restore runs right away or has to pass through
@@ -265,7 +269,7 @@ impl App {
     /// current save beforehand.
     pub(super) fn ask_restore(&mut self, index: usize) {
         if self.saves_blocked.is_some() {
-            self.set_warning("Wiederherstellen nicht möglich – Steam-Nutzerprofil nicht gewählt.");
+            self.set_warning(t!("gui.message.restore_no_steam_user"));
             return;
         }
         if index >= self.backups.len() {
@@ -301,13 +305,18 @@ impl App {
             Ok(renamed) => {
                 self.refresh_backups();
                 match renamed.label {
-                    Some(label) => self
-                        .set_status(format!("Backup {} heißt jetzt „{label}“.", renamed.created_at)),
-                    None => self
-                        .set_status(format!("Etikett von Backup {} entfernt.", renamed.created_at)),
+                    Some(label) => self.set_status(t!(
+                        "gui.message.backup_renamed",
+                        created_at = renamed.created_at,
+                        label = label
+                    )),
+                    None => self.set_status(t!(
+                        "gui.message.backup_label_removed",
+                        created_at = renamed.created_at
+                    )),
                 }
             }
-            Err(e) => self.set_warning(format!("Backup nicht umbenannt – {e}")),
+            Err(e) => self.set_warning(t!("gui.message.backup_rename_failed", detail = e)),
         }
     }
 
@@ -323,9 +332,9 @@ impl App {
                 // would carry a check that never happened.
                 self.verified.remove(&entry.created_at);
                 self.refresh_backups();
-                self.set_status(format!("Backup {} gelöscht.", entry.created_at));
+                self.set_status(t!("gui.message.backup_deleted", created_at = entry.created_at));
             }
-            Err(e) => self.set_warning(format!("Backup nicht gelöscht – {e}")),
+            Err(e) => self.set_warning(t!("gui.message.backup_delete_failed", detail = e)),
         }
     }
 
@@ -338,10 +347,7 @@ impl App {
     pub(super) fn confirm_restore(&mut self) {
         let Some(Dialog::Restore { index, force }) = self.dialog.clone() else { return };
         if !force {
-            self.set_warning(
-                "Bitte zuerst bestätigen, dass die Cloud-Synchronisation den Stand überschreiben \
-                 kann.",
-            );
+            self.set_warning(t!("gui.message.restore_confirm_required"));
             return;
         }
         self.dialog = None;
@@ -367,6 +373,48 @@ const _: Option<fn(Section)> = None;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_state::language_test_lock;
+    use sm2_core::i18n::{set_language, Language};
+
+    /// `perform_launch` builds its status line as "Game {how}" (English) /
+    /// "Spiel {how}" (German) from one of three `launch_how_*` fragments —
+    /// checks the composed sentence reads correctly in both languages
+    /// instead of just checking the fragments exist.
+    #[test]
+    fn the_launch_result_sentence_composes_correctly_in_both_languages() {
+        let _held = language_test_lock();
+        set_language(Language::English);
+        let how = t!("gui.message.launch_how_steam");
+        assert_eq!(
+            t!("gui.message.launch_done", how = how),
+            "Game started via Steam."
+        );
+        set_language(Language::German);
+        let how = t!("gui.message.launch_how_vanilla");
+        assert_eq!(
+            t!("gui.message.launch_done", how = how),
+            "Spiel ohne Mods gestartet – alle Einträge deaktiviert."
+        );
+        set_language(Language::English);
+    }
+
+    /// `toggle_auto_backup` fills `{word}` with `word_on`/`word_off` —
+    /// checks both combinations render as one sentence in both languages.
+    #[test]
+    fn auto_backup_toggle_message_substitutes_on_and_off_in_both_languages() {
+        let _held = language_test_lock();
+        set_language(Language::English);
+        assert_eq!(
+            t!("gui.message.auto_backup_toggled", word = t!("gui.message.word_on")),
+            "Automatic backup before launch on."
+        );
+        set_language(Language::German);
+        assert_eq!(
+            t!("gui.message.auto_backup_toggled", word = t!("gui.message.word_off")),
+            "Automatisches Backup vor dem Start aus."
+        );
+        set_language(Language::English);
+    }
 
     #[test]
     fn the_library_is_derived_from_the_game_directory() {

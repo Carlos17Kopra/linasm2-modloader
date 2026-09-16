@@ -18,6 +18,7 @@ use sm2_core::pak_config::PakConfig;
 use sm2_core::paths::GamePaths;
 use sm2_core::saves::{self, BackupEntry};
 use sm2_core::import;
+use sm2_core::t;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, PoisonError};
@@ -122,7 +123,7 @@ impl App {
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.task = None;
-                self.set_warning("Der Vorgang wurde unerwartet beendet.");
+                self.set_warning(t!("gui.message.task_ended_unexpectedly"));
                 return;
             }
         };
@@ -143,58 +144,75 @@ impl App {
                 }
                 self.refresh_profiles();
                 match (error, cancelled) {
-                    (Some(error), _) => self.set_warning(format!("Import abgebrochen – {error}")),
-                    (None, true) => self.set_status(format!(
-                        "Import abgebrochen – {imported} bereits übernommene Mods bleiben eingetragen."
+                    (Some(error), _) => {
+                        self.set_warning(t!("gui.message.import_cancelled_error", detail = error))
+                    }
+                    (None, true) => self.set_status(t!(
+                        "gui.message.import_cancelled",
+                        imported = imported
                     )),
                     (None, false) if !saved => {}
-                    (None, false) => self.set_status(format!(
-                        "{imported} Mods importiert – deaktiviert, am Ende der Ladereihenfolge."
-                    )),
+                    (None, false) => {
+                        self.set_status(t!("gui.message.import_done", imported = imported))
+                    }
                 }
             }
             Outcome::BackedUp(Ok(entry)) => {
                 self.refresh_backups();
-                self.set_status(format!("Backup angelegt: {}", entry.created_at));
+                self.set_status(t!("gui.message.backup_done", created_at = entry.created_at));
             }
             Outcome::BackedUp(Err(error)) => {
-                self.set_warning(format!("Backup fehlgeschlagen – {error}"));
+                self.set_warning(t!("gui.message.backup_failed", detail = error));
             }
             Outcome::ImportedBackup(Ok(entry)) => {
                 self.refresh_backups();
-                self.set_status(format!(
-                    "Backup importiert: {} – als „{}“ in der Liste.",
-                    entry.created_at,
-                    entry.label.as_deref().unwrap_or("ohne Etikett")
+                let label = entry
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| t!("gui.message.backup_no_label"));
+                self.set_status(t!(
+                    "gui.message.backup_imported",
+                    created_at = entry.created_at,
+                    label = label
                 ));
             }
             Outcome::ImportedBackup(Err(error)) => {
-                self.set_warning(format!("Import fehlgeschlagen – {error}"));
+                self.set_warning(t!("gui.message.backup_import_failed", detail = error));
             }
             Outcome::Verified { created_at, result } => match result {
                 Ok(()) => {
                     self.verified.insert(created_at.clone());
-                    self.set_status(format!(
-                        "Backup {created_at} geprüft – alle Hashes stimmen mit dem Manifest überein."
-                    ));
+                    self.set_status(t!("gui.message.backup_verified", created_at = created_at));
                 }
                 Err(error) => {
                     self.verified.remove(&created_at);
-                    self.set_warning(format!("Backup {created_at} ist nicht in Ordnung – {error}"));
+                    self.set_warning(t!(
+                        "gui.message.backup_verify_failed",
+                        created_at = created_at,
+                        detail = error
+                    ));
                 }
             },
             Outcome::Restored { created_at, result } => match result {
                 Ok(safety) => {
                     self.refresh_backups();
-                    self.set_status(format!(
-                        "Wiederhergestellt: {created_at} – vorheriger Stand automatisch als \
-                         „{}“ gesichert.",
-                        safety.label.as_deref().unwrap_or("vor Wiederherstellung")
+                    // "vor Wiederherstellung" is the persisted label
+                    // `saves::restore` always writes for the safety copy
+                    // (see `crates/core/src/saves.rs`) — a fixed identifier
+                    // already written into existing backup names, so it is
+                    // not translated here either (same standing decision as
+                    // `vanilla::VANILLA_SNAPSHOT_PREFIX`).
+                    let label =
+                        safety.label.clone().unwrap_or_else(|| "vor Wiederherstellung".to_string());
+                    self.set_status(t!(
+                        "gui.message.restore_done",
+                        created_at = created_at,
+                        label = label
                     ));
                 }
                 Err(error) => {
                     self.refresh_backups();
-                    self.set_warning(format!("Wiederherstellung fehlgeschlagen – {error}"));
+                    self.set_warning(t!("gui.message.restore_failed", detail = error));
                 }
             },
         }
@@ -203,13 +221,13 @@ impl App {
     /// Opens the file dialog and starts importing the chosen files.
     pub(super) fn start_import(&mut self) {
         if !self.can_modify() {
-            self.set_warning(self.blocked_reason("Import"));
+            self.set_warning(self.blocked_reason(&t!("gui.message.action_import")));
             return;
         }
         let files = rfd::FileDialog::new()
-            .set_title("Mods importieren")
-            .add_filter("Mods und Archive", &["pak", "zip", "7z", "rar"])
-            .add_filter("Alle Dateien", &["*"])
+            .set_title(t!("gui.message.import_dialog_title"))
+            .add_filter(t!("gui.message.filter_mods_archives"), &["pak", "zip", "7z", "rar"])
+            .add_filter(t!("gui.message.filter_all_files"), &["*"])
             .pick_files();
         let Some(files) = files else { return };
         if files.is_empty() {
@@ -228,7 +246,7 @@ impl App {
         let ctx = self.egui_ctx.clone();
 
         self.section = Section::Mods;
-        self.set_busy(format!("Import läuft – {} Datei(en).", files.len()));
+        self.set_busy(t!("gui.message.import_running", count = files.len()));
         self.task = Some(spawn(ctx, true, move |cancel, progress| {
             import_files(&paths, library, config, &files, cancel, progress)
         }));
@@ -236,14 +254,14 @@ impl App {
 
     pub(super) fn start_backup(&mut self) {
         if self.saves_blocked.is_some() {
-            self.set_warning("Kein Backup möglich – Steam-Nutzerprofil nicht gewählt.");
+            self.set_warning(t!("gui.message.backup_no_steam_user"));
             return;
         }
         let Some(state) = &self.state else { return };
         let save_dir = match state.paths.save_dir(state.settings.steam_user.as_deref()) {
             Ok(dir) => dir,
             Err(e) => {
-                self.set_warning(format!("Kein Backup möglich – {e}"));
+                self.set_warning(t!("gui.message.backup_dir_failed", detail = e));
                 return;
             }
         };
@@ -253,9 +271,9 @@ impl App {
         let ctx = self.egui_ctx.clone();
 
         self.backup_label.clear();
-        self.set_busy("Backup wird angelegt …");
+        self.set_busy(t!("gui.message.backup_creating"));
         self.task = Some(spawn(ctx, false, move |_cancel, progress| {
-            report(progress, 0.3, String::from("Spielstände werden gelesen und gehasht"));
+            report(progress, 0.3, t!("gui.message.reading_hashing_saves"));
             let result = saves::backup(&save_dir, &backups, label.as_deref())
                 .map_err(|e| e.to_string());
             Outcome::BackedUp(result)
@@ -268,13 +286,13 @@ impl App {
     /// ever been started on this machine.
     pub(super) fn start_backup_import(&mut self) {
         let Some(backups) = self.backups_dir() else {
-            self.set_warning("Import nicht möglich – Datenverzeichnis unbekannt.");
+            self.set_warning(t!("gui.message.backup_import_no_data_dir"));
             return;
         };
         let Some(archive) = rfd::FileDialog::new()
-            .set_title("Backup importieren")
-            .add_filter("ZIP-Archive", &["zip"])
-            .add_filter("Alle Dateien", &["*"])
+            .set_title(t!("gui.message.import_backup_dialog_title"))
+            .add_filter(t!("gui.message.filter_zip_archives"), &["zip"])
+            .add_filter(t!("gui.message.filter_all_files"), &["*"])
             .pick_file()
         else {
             return;
@@ -284,9 +302,9 @@ impl App {
         let ctx = self.egui_ctx.clone();
 
         self.backup_label.clear();
-        self.set_busy("Backup wird importiert …");
+        self.set_busy(t!("gui.message.backup_importing"));
         self.task = Some(spawn(ctx, false, move |_cancel, progress| {
-            report(progress, 0.4, String::from("Archiv wird geprüft und entpackt"));
+            report(progress, 0.4, t!("gui.message.checking_unpacking_archive"));
             let result = saves::import_archive(&archive, &backups, label.as_deref())
                 .map_err(|e| e.to_string());
             Outcome::ImportedBackup(result)
@@ -295,16 +313,20 @@ impl App {
 
     pub(super) fn start_verify(&mut self, index: usize) {
         if self.saves_blocked.is_some() {
-            self.set_warning("Prüfen nicht möglich – Steam-Nutzerprofil nicht gewählt.");
+            self.set_warning(t!("gui.message.verify_no_steam_user"));
             return;
         }
         let Some(entry) = self.backups.get(index).cloned() else { return };
         let created_at = entry.created_at.clone();
         let ctx = self.egui_ctx.clone();
 
-        self.set_busy(format!("Backup {created_at} wird geprüft …"));
+        self.set_busy(t!("gui.message.backup_verifying", created_at = created_at));
         self.task = Some(spawn(ctx, false, move |_cancel, progress| {
-            report(progress, 0.5, format!("Hashes von {} werden nachgerechnet", entry.created_at));
+            report(
+                progress,
+                0.5,
+                t!("gui.message.recomputing_hashes", created_at = entry.created_at.clone()),
+            );
             let result = saves::verify(&entry).map_err(|e| e.to_string());
             Outcome::Verified { created_at: entry.created_at.clone(), result }
         }));
@@ -318,7 +340,7 @@ impl App {
         let save_dir = match state.paths.save_dir(state.settings.steam_user.as_deref()) {
             Ok(dir) => dir,
             Err(e) => {
-                self.set_warning(format!("Wiederherstellen nicht möglich – {e}"));
+                self.set_warning(t!("gui.message.restore_prep_failed", detail = e));
                 return;
             }
         };
@@ -326,9 +348,9 @@ impl App {
         let created_at = entry.created_at.clone();
         let ctx = self.egui_ctx.clone();
 
-        self.set_busy(format!("Backup {created_at} wird zurückgespielt …"));
+        self.set_busy(t!("gui.message.backup_restoring", created_at = created_at));
         self.task = Some(spawn(ctx, false, move |_cancel, progress| {
-            report(progress, 0.4, String::from("Vorheriger Stand wird zuerst gesichert"));
+            report(progress, 0.4, t!("gui.message.backing_up_previous_state"));
             let result = saves::restore(&entry, &save_dir, &backups).map_err(|e| e.to_string());
             Outcome::Restored { created_at: entry.created_at.clone(), result }
         }));
@@ -360,7 +382,7 @@ fn import_files(
                 config,
                 messages,
                 imported,
-                error: Some(format!("temporäres Verzeichnis nicht anlegbar – {e}")),
+                error: Some(t!("gui.message.temp_dir_unavailable", detail = e)),
                 cancelled: false,
             }
         }
@@ -383,7 +405,12 @@ fn import_files(
         report(
             progress,
             index as f32 / total,
-            format!("Entpacken: {shown} — Datei {} von {}", index + 1, files.len()),
+            t!(
+                "gui.message.unpacking_progress",
+                shown = &shown,
+                index = index + 1,
+                total = files.len()
+            ),
         );
 
         let extracted = match import::extract_paks(file, temp.path()) {
@@ -394,7 +421,7 @@ fn import_files(
                     config,
                     messages,
                     imported,
-                    error: Some(format!("{shown} konnte nicht gelesen werden – {e}")),
+                    error: Some(t!("gui.message.pak_read_failed", path = &shown, detail = e)),
                     cancelled: false,
                 }
             }
@@ -404,10 +431,11 @@ fn import_files(
             report(
                 progress,
                 (index as f32 + position as f32 / extracted.len().max(1) as f32) / total,
-                format!(
-                    "Übernehmen: {shown} — Pak {} von {}",
-                    position + 1,
-                    extracted.len()
+                t!(
+                    "gui.message.adopting_progress",
+                    shown = &shown,
+                    position = position + 1,
+                    total = extracted.len()
                 ),
             );
 
@@ -429,16 +457,14 @@ fn import_files(
             match import::import_pak(paths, &mut library, &mut config, &working_copy, Some(&source))
             {
                 Ok(outcome) => match outcome.duplicate_of {
-                    Some(existing) => messages.push(format!(
-                        "{} ist inhaltsgleich mit {existing} und wurde übersprungen.",
-                        outcome.pak
+                    Some(existing) => messages.push(t!(
+                        "gui.message.pak_duplicate",
+                        pak = outcome.pak,
+                        existing = existing
                     )),
                     None => {
                         imported += 1;
-                        messages.push(format!(
-                            "{} importiert – deaktiviert, am Ende der Ladereihenfolge.",
-                            outcome.pak
-                        ));
+                        messages.push(t!("gui.message.pak_imported", pak = outcome.pak));
                     }
                 },
                 Err(e) => {
@@ -447,9 +473,10 @@ fn import_files(
                         config,
                         messages,
                         imported,
-                        error: Some(format!(
-                            "{} konnte nicht importiert werden – {e}",
-                            working_copy.display()
+                        error: Some(t!(
+                            "gui.message.pak_import_failed",
+                            path = working_copy.display(),
+                            detail = e
                         )),
                         cancelled: false,
                     }
@@ -458,7 +485,7 @@ fn import_files(
         }
     }
 
-    report(progress, 1.0, String::from("fertig"));
+    report(progress, 1.0, t!("gui.message.import_finished"));
     Outcome::Imported {
         library: Box::new(library),
         config,
@@ -478,7 +505,7 @@ fn working_copy_of(pak: &Path, temp: &Path) -> Result<PathBuf, String> {
     }
     let target = unique_copy_target(temp, pak);
     std::fs::copy(pak, &target)
-        .map_err(|e| format!("{} konnte nicht gelesen werden – {e}", pak.display()))?;
+        .map_err(|e| t!("gui.message.pak_read_failed", path = pak.display(), detail = e))?;
     Ok(target)
 }
 
@@ -505,6 +532,27 @@ fn unique_copy_target(temp: &Path, source: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_state::language_test_lock;
+    use sm2_core::i18n::{set_language, Language};
+
+    /// The per-file progress label carries three substitutions
+    /// (`{shown}`, `{index}`, `{total}`) — checks they land in the right
+    /// places in both languages rather than just that the key exists.
+    #[test]
+    fn unpacking_progress_substitutes_all_three_placeholders() {
+        let _held = language_test_lock();
+        set_language(Language::English);
+        assert_eq!(
+            t!("gui.message.unpacking_progress", shown = "mod.zip", index = 2, total = 5),
+            "Unpacking: mod.zip — file 2 of 5"
+        );
+        set_language(Language::German);
+        assert_eq!(
+            t!("gui.message.unpacking_progress", shown = "mod.zip", index = 2, total = 5),
+            "Entpacken: mod.zip — Datei 2 von 5"
+        );
+        set_language(Language::English);
+    }
 
     #[test]
     fn a_pak_from_the_archive_is_not_copied_a_second_time() {

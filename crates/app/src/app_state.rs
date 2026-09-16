@@ -92,9 +92,7 @@ impl AppState {
                     .unwrap_or_else(|| dir.clone());
                 GamePaths::from_game_dir(dir, &library)?
             }
-            None => GamePaths::discover().context(
-                "Space Marine 2 nicht gefunden – Pfad in settings.toml unter game_dir eintragen",
-            )?,
+            None => GamePaths::discover().context(t!("app.notice.game_not_found_context"))?,
         };
 
         let library_path = dirs.data.join("library.json");
@@ -183,10 +181,10 @@ impl AppState {
                     Ok(info) => {
                         self.library.mods.insert(entry.pak.clone(), info);
                     }
-                    Err(e) => warnings.push(Notice::warning(format!(
-                        "{} konnte nicht für die Positions-/Aktivierungshistorie \
-                         registriert werden – {e}",
-                        entry.pak
+                    Err(e) => warnings.push(Notice::warning(t!(
+                        "app.notice.registration_failed",
+                        pak = &entry.pak,
+                        detail = e
                     ))),
                 },
             }
@@ -257,21 +255,13 @@ fn reconcile_and_collect(
         reconciliation.restored.iter().map(String::as_str).collect();
     for pak in &reconciliation.added {
         if restored.contains(pak.as_str()) {
-            notices.push(Notice::info(format!(
-                "{pak} war zwischenzeitlich nicht vorhanden und wurde mit vorherigem \
-                 Aktivierungszustand und vorheriger Position wiederhergestellt."
-            )));
+            notices.push(Notice::info(t!("app.notice.pak_restored", pak = pak)));
         } else {
-            notices.push(Notice::warning(format!(
-                "{pak} stand nicht in pak_config.yaml und wurde aktiv übernommen – eine Datei \
-                 im Mods-Verzeichnis lädt ohnehin, ungesteuert und zuerst."
-            )));
+            notices.push(Notice::warning(t!("app.notice.pak_added_unlisted", pak = pak)));
         }
     }
     for pak in &reconciliation.removed {
-        notices.push(Notice::error(format!(
-            "{pak} steht in pak_config.yaml, die Datei fehlt aber – Eintrag entfernt."
-        )));
+        notices.push(Notice::error(t!("app.notice.pak_removed_missing", pak = pak)));
     }
 
     // Only size and modification time are checked here by default (see
@@ -279,9 +269,7 @@ fn reconcile_and_collect(
     // that cheap pre-filter indicates a difference.
     let report = library.detect_altered(&paths.mods_dir(), &present)?;
     for pak in &report.altered {
-        notices.push(Notice::warning(format!(
-            "{pak} wurde außerhalb des Loaders verändert (Hash weicht ab)."
-        )));
+        notices.push(Notice::warning(t!("app.notice.pak_altered", pak = pak)));
     }
     for warning in &report.warnings {
         notices.push(Notice::warning(warning.clone()));
@@ -303,9 +291,7 @@ fn reconcile_and_collect(
 /// real game installation.
 fn save_library_cache_best_effort(library: &Library, library_path: &Path, notices: &mut Vec<Notice>) {
     if let Err(e) = library.save(library_path) {
-        notices.push(Notice::warning(format!(
-            "Cache-Auffrischung in library.json konnte nicht gespeichert werden – {e}"
-        )));
+        notices.push(Notice::warning(t!("app.notice.cache_save_failed", detail = e)));
     }
 }
 
@@ -365,11 +351,14 @@ fn register_unknown_pak(
 /// where to write a directory chosen by the user after game detection has
 /// failed.
 pub fn load_dirs_and_settings() -> Result<(AppDirs, Settings)> {
-    let dirs = app_dirs().context("Basisverzeichnisse nicht ermittelbar")?;
+    let dirs = app_dirs().context(t!("app.notice.base_dirs_context"))?;
+    // Reuses the CLI's own wording (`cli.error.dir_create_failed`): both call
+    // sites report the exact same failure, a directory that could not be
+    // created, so a second, differently-named key would only duplicate it.
     std::fs::create_dir_all(&dirs.config)
-        .with_context(|| format!("{} konnte nicht angelegt werden", dirs.config.display()))?;
+        .with_context(|| t!("cli.error.dir_create_failed", path = dirs.config.display()))?;
     std::fs::create_dir_all(&dirs.data)
-        .with_context(|| format!("{} konnte nicht angelegt werden", dirs.data.display()))?;
+        .with_context(|| t!("cli.error.dir_create_failed", path = dirs.data.display()))?;
     let settings = Settings::load(&dirs.config.join("settings.toml"))?;
     Ok((dirs, settings))
 }
@@ -424,8 +413,28 @@ pub(crate) fn test_fixture(base: &Path) -> AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sm2_core::i18n::{set_language, Language};
     use sm2_core::library::ModInfo;
     use sm2_core::pak_config::PakEntry;
+
+    /// `reconcile_and_collect` fills every `app.notice.*` text with the
+    /// affected pak's name via `{pak}` — checks the rendered sentence in
+    /// both languages instead of only that the key exists.
+    #[test]
+    fn reconciliation_notices_substitute_the_pak_name_in_both_languages() {
+        let _held = language_test_lock();
+        set_language(Language::English);
+        assert_eq!(
+            sm2_core::t!("app.notice.pak_altered", pak = "evil.pak"),
+            "evil.pak was changed outside the loader (hash differs)."
+        );
+        set_language(Language::German);
+        assert_eq!(
+            sm2_core::t!("app.notice.pak_removed_missing", pak = "weg.pak"),
+            "weg.pak steht in pak_config.yaml, die Datei fehlt aber – Eintrag entfernt."
+        );
+        set_language(Language::English);
+    }
 
     fn minimal_mod_info(pak: &str) -> ModInfo {
         ModInfo {

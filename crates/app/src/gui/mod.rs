@@ -50,6 +50,7 @@ use sm2_core::platform::{Current, Platform};
 use sm2_core::profile::{list_profiles, Profile};
 use sm2_core::saves::{self, BackupEntry};
 use sm2_core::settings::Settings;
+use sm2_core::t;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -92,11 +93,11 @@ pub enum LaunchChoice {
 }
 
 impl LaunchChoice {
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Self::Steam => "Mit Mods (über Steam)",
-            Self::Vanilla => "Ohne Mods (Vanilla)",
-            Self::NoEac => "Ohne EAC (kein Multiplayer)",
+            Self::Steam => t!("gui.top_bar.choice_steam"),
+            Self::Vanilla => t!("gui.top_bar.choice_vanilla"),
+            Self::NoEac => t!("gui.top_bar.choice_no_eac"),
         }
     }
 }
@@ -284,7 +285,7 @@ impl App {
             launch_choice: LaunchChoice::Steam,
             launch_menu_open: false,
             dialog: None,
-            status: String::from("Bereit."),
+            status: t!("gui.message.ready"),
             status_is_warning: false,
             profiles: Vec::new(),
             profile_name: String::new(),
@@ -308,7 +309,7 @@ impl App {
             Ok(pair) => pair,
             Err(e) => {
                 self.open_error = Some(format!("{e:#}"));
-                self.set_warning(format!("Anwendungsverzeichnisse nicht nutzbar – {e:#}"));
+                self.set_warning(t!("gui.message.app_dirs_unusable", detail = format!("{e:#}")));
                 return;
             }
         };
@@ -323,24 +324,19 @@ impl App {
                 self.state = Some(state);
                 if !self.writable {
                     self.notices.push(
-                        Notice::warning(
-                            "Das Mods-Verzeichnis ist schreibgeschützt. Aktivieren, Reihenfolge \
-                             und Import sind deshalb gesperrt – Lesen und Starten gehen weiter.",
-                        )
-                        .with_action(NoticeAction::OpenModsDir),
+                        Notice::warning(t!("gui.message.mods_dir_read_only"))
+                            .with_action(NoticeAction::OpenModsDir),
                     );
-                    self.set_warning("Nur Lesen möglich – Änderungen werden nicht gespeichert.");
+                    self.set_warning(t!("gui.message.read_only_mode"));
                 } else {
-                    self.set_status("Bereit.");
+                    self.set_status(t!("gui.message.ready"));
                 }
             }
             Err(e) => {
                 self.state = None;
                 self.writable = false;
                 self.open_error = Some(format!("{e:#}"));
-                self.set_warning(
-                    "Spielverzeichnis unbekannt – Mods und Ladereihenfolge nicht lesbar.",
-                );
+                self.set_warning(t!("gui.message.game_dir_unknown"));
             }
         }
 
@@ -364,7 +360,7 @@ impl App {
     /// design locks every savegame function until one has been chosen.
     fn refresh_steam_users(&mut self) {
         let Some(state) = &self.state else {
-            self.saves_blocked = Some(String::from("Spielverzeichnis unbekannt."));
+            self.saves_blocked = Some(t!("gui.message.save_dir_unknown"));
             return;
         };
         match state.paths.save_dir(state.settings.steam_user.as_deref()) {
@@ -373,11 +369,9 @@ impl App {
             }
             Err(sm2_core::Error::AmbiguousSaveUser(users)) => {
                 self.steam_users = users;
-                self.saves_blocked = Some(format!(
-                    "Im Proton-Prefix liegen {} Steam-Nutzerprofile. Der Loader kann nicht \
-                     entscheiden, welche Spielstände gemeint sind – bis zur Auswahl sind alle \
-                     Savegame-Funktionen gesperrt.",
-                    self.steam_users.len()
+                self.saves_blocked = Some(t!(
+                    "gui.message.ambiguous_steam_profiles",
+                    count = self.steam_users.len()
                 ));
             }
             Err(e) => {
@@ -434,7 +428,7 @@ impl App {
         let settings = self.settings().clone();
         self.fallback_settings = settings.clone();
         if let Err(e) = settings.save(&dirs.config.join("settings.toml")) {
-            self.set_warning(format!("Einstellungen konnten nicht gespeichert werden – {e}"));
+            self.set_warning(t!("gui.message.settings_save_failed", detail = e));
         }
     }
 
@@ -451,7 +445,7 @@ impl App {
                 true
             }
             Err(e) => {
-                self.set_warning(format!("Nicht gespeichert – {e:#}"));
+                self.set_warning(t!("gui.message.persist_failed", detail = format!("{e:#}")));
                 false
             }
         }
@@ -500,7 +494,7 @@ impl App {
             Action::RetryDiscover => {
                 self.load();
                 if self.state.is_none() {
-                    self.set_warning("Steam-Bibliotheken erneut durchsucht – nichts gefunden.");
+                    self.set_warning(t!("gui.message.discover_retry_nothing_found"));
                 }
             }
             Action::OpenFolder(path) => self.open_folder(path),
@@ -580,7 +574,7 @@ impl App {
             Action::CancelTask => {
                 if let Some(task) = &self.task {
                     task.cancel();
-                    self.set_status("Abbruch angefordert – der laufende Schritt wird beendet.");
+                    self.set_status(t!("gui.message.task_cancel_requested"));
                 }
             }
         }
@@ -588,7 +582,7 @@ impl App {
 
     fn toggle_mod(&mut self, pak: &str) {
         if !self.can_modify() {
-            self.set_warning(self.blocked_reason("Änderung"));
+            self.set_warning(self.blocked_reason(&t!("gui.message.action_change")));
             return;
         }
         let Some(state) = &mut self.state else { return };
@@ -597,14 +591,18 @@ impl App {
         let now_disabled = entry.disabled;
         if self.persist() {
             let name = self.display_name(pak);
-            let verb = if now_disabled { "deaktiviert" } else { "aktiviert" };
-            self.set_status(format!("{name} {verb} – in pak_config.yaml geschrieben."));
+            let verb = if now_disabled {
+                t!("gui.message.state_disabled")
+            } else {
+                t!("gui.message.state_enabled")
+            };
+            self.set_status(t!("gui.message.mod_toggled", name = name, verb = verb));
         }
     }
 
     fn move_mod(&mut self, pak: &str, delta: isize) {
         if !self.can_modify() {
-            self.set_warning(self.blocked_reason("Verschieben"));
+            self.set_warning(self.blocked_reason(&t!("gui.message.action_move")));
             return;
         }
         let Some(state) = &mut self.state else { return };
@@ -618,9 +616,10 @@ impl App {
         let total = state.config.entries.len();
         self.selected = Some(pak.to_string());
         if self.persist() {
-            self.set_status(format!(
-                "Ladereihenfolge geändert – Position {} von {total}.",
-                to + 1
+            self.set_status(t!(
+                "gui.message.load_order_changed",
+                position = to + 1,
+                total = total
             ));
         }
     }
@@ -633,7 +632,7 @@ impl App {
     /// low.
     fn drop_mod(&mut self, pak: &str, before: usize) {
         if !self.can_modify() {
-            self.set_warning(self.blocked_reason("Verschieben"));
+            self.set_warning(self.blocked_reason(&t!("gui.message.action_move")));
             return;
         }
         let Some(state) = &mut self.state else { return };
@@ -646,7 +645,12 @@ impl App {
         self.selected = Some(pak.to_string());
         if self.persist() {
             let name = self.display_name(pak);
-            self.set_status(format!("{name} auf Position {} von {total} gezogen.", to + 1));
+            self.set_status(t!(
+                "gui.message.pak_dragged",
+                name = name,
+                position = to + 1,
+                total = total
+            ));
         }
     }
 
@@ -654,22 +658,22 @@ impl App {
     /// affects the user.
     fn blocked_reason(&self, what: &str) -> String {
         if self.state.is_none() {
-            format!("{what} nicht möglich – Spielverzeichnis unbekannt.")
+            t!("gui.message.blocked_no_game_dir", what = what)
         } else if self.task.is_some() {
-            format!("{what} nicht möglich, solange ein Vorgang läuft.")
+            t!("gui.message.blocked_task_running", what = what)
         } else {
-            format!("{what} nicht möglich – Mods-Verzeichnis ist schreibgeschützt.")
+            t!("gui.message.blocked_read_only", what = what)
         }
     }
 
     fn open_folder(&mut self, path: PathBuf) {
         if let Err(e) = std::fs::create_dir_all(&path) {
-            self.set_warning(format!("{} nicht vorhanden – {e}", path.display()));
+            self.set_warning(t!("gui.message.folder_missing", path = path.display(), detail = e));
             return;
         }
         match Current::open_folder(&path) {
-            Ok(()) => self.set_status(format!("{} im Dateimanager geöffnet.", path.display())),
-            Err(e) => self.set_warning(format!("Öffnen fehlgeschlagen – {e}")),
+            Ok(()) => self.set_status(t!("gui.message.folder_opened", path = path.display())),
+            Err(e) => self.set_warning(t!("gui.message.folder_open_failed", detail = e)),
         }
     }
 
@@ -684,7 +688,7 @@ impl App {
             }
             Some(NoticeAction::ShowProfile(name)) => {
                 self.section = Section::Profiles;
-                self.set_status(format!("Profil „{name}“ – mit Anwenden zurückstellen."));
+                self.set_status(t!("gui.message.profile_notice_hint", name = &name));
             }
             None => {}
         }
@@ -812,7 +816,7 @@ impl App {
             return;
         }
         if !self.can_modify() {
-            self.set_warning(self.blocked_reason("Import"));
+            self.set_warning(self.blocked_reason(&t!("gui.message.action_import")));
             return;
         }
         self.section = Section::Mods;
@@ -927,6 +931,82 @@ fn empty_hint(ui: &mut egui::Ui, text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_state::language_test_lock;
+    use sm2_core::i18n::{set_language, Language};
+
+    /// `LaunchChoice::label()` is one of the two literals Task 6 left for
+    /// this task on purpose (see the module doc comment) — it must actually
+    /// come from the catalogue in both languages, not just compile.
+    #[test]
+    fn launch_choice_labels_come_from_the_catalogue_in_both_languages() {
+        let _held = language_test_lock();
+        set_language(Language::German);
+        assert_eq!(LaunchChoice::Steam.label(), "Mit Mods (über Steam)");
+        assert_eq!(LaunchChoice::Vanilla.label(), "Ohne Mods (Vanilla)");
+        assert_eq!(LaunchChoice::NoEac.label(), "Ohne EAC (kein Multiplayer)");
+        set_language(Language::English);
+        assert_eq!(LaunchChoice::Steam.label(), "With mods (via Steam)");
+        assert_eq!(LaunchChoice::Vanilla.label(), "Without mods (Vanilla)");
+        assert_eq!(LaunchChoice::NoEac.label(), "Without EAC (no multiplayer)");
+    }
+
+    /// `blocked_reason` builds its sentence around a `{what}` placeholder
+    /// filled in by the caller (see `apply_profile`/`toggle_mod`/`move_mod`)
+    /// — a wrong placeholder name would show up as a literal `{what}` on
+    /// screen, which only a rendered-text test like this one catches.
+    #[test]
+    fn blocked_reason_texts_substitute_the_action_word_in_both_languages() {
+        let _held = language_test_lock();
+        set_language(Language::English);
+        assert_eq!(
+            sm2_core::t!("gui.message.blocked_no_game_dir", what = "Apply"),
+            "Apply not possible – game directory unknown."
+        );
+        assert_eq!(
+            sm2_core::t!("gui.message.blocked_task_running", what = "Move"),
+            "Move not possible while a task is running."
+        );
+        assert_eq!(
+            sm2_core::t!("gui.message.blocked_read_only", what = "Import"),
+            "Import not possible – mods directory is read-only."
+        );
+        set_language(Language::German);
+        assert_eq!(
+            sm2_core::t!("gui.message.blocked_no_game_dir", what = "Anwenden"),
+            "Anwenden nicht möglich – Spielverzeichnis unbekannt."
+        );
+        set_language(Language::English);
+    }
+
+    /// `toggle_mod` fills `{verb}` with either `state_enabled` or
+    /// `state_disabled` — checks both combinations render as one sentence,
+    /// not as a literal placeholder.
+    #[test]
+    fn mod_toggled_message_substitutes_the_state_word() {
+        let _held = language_test_lock();
+        set_language(Language::English);
+        assert_eq!(
+            sm2_core::t!("gui.message.mod_toggled", name = "Some Mod", verb = "enabled"),
+            "Some Mod enabled – written to pak_config.yaml."
+        );
+        set_language(Language::German);
+        assert_eq!(
+            sm2_core::t!("gui.message.mod_toggled", name = "Some Mod", verb = "deaktiviert"),
+            "Some Mod deaktiviert – in pak_config.yaml geschrieben."
+        );
+        set_language(Language::English);
+    }
+
+    /// The default status shown before anything has happened — one of the
+    /// two literals Task 6 left for this task (see the module doc comment).
+    #[test]
+    fn the_ready_status_comes_from_the_catalogue() {
+        let _held = language_test_lock();
+        set_language(Language::German);
+        assert_eq!(sm2_core::t!("gui.message.ready"), "Bereit.");
+        set_language(Language::English);
+        assert_eq!(sm2_core::t!("gui.message.ready"), "Ready.");
+    }
 
     #[test]
     fn dragging_down_lands_exactly_in_front_of_the_insertion_marker() {
