@@ -2,16 +2,49 @@
 //!
 //! `clap`'s derive takes its help from doc comments, which are `&'static
 //! str` and therefore cannot change with the language. So the tree is
-//! walked once before parsing and every `about` and `help` is replaced
-//! with catalogue text. The doc comments stay in the source as English
-//! developer notes and as the fallback should a key ever be missing.
+//! walked once before parsing and `localize` overwrites every `about`
+//! and `help` unconditionally with a catalogue lookup. The doc comments
+//! are not a runtime fallback: if a key is ever missing,
+//! `i18n::lookup`'s own fallback chain (active language → English →
+//! the raw key) means the user sees the dotted key itself (e.g.
+//! `cli.play.arg.foo`), not the doc comment.
+//! `every_command_and_argument_has_a_key` below exists so that a missing
+//! key is caught in `cargo test`, not by a user reading `--help`.
 
 use sm2_core::i18n::{self, Language};
 
-/// The keys clap's own built-in arguments use, at every level of the
-/// tree: `help` and `version` are added by clap to each subcommand, and
-/// giving them a key per command would mean one pointless entry per
-/// subcommand.
+/// The keys for clap's own `-h`/`--help` and `-V`/`--version` — currently
+/// unreachable dead entries, kept only as the documented, deliberate
+/// limitation described below.
+///
+/// clap adds its default `-h`/`--help` (every level) and `-V`/`--version`
+/// (root only) while *building* the command for parsing, which happens
+/// after this walk has already run over the still-unbuilt tree (see the
+/// module doc comment above) — so `"help"`/`"version"` are never in
+/// `command.get_arguments()` here, and `mut_arg` is never called for
+/// them.
+///
+/// The seemingly cheap fix — `Cli::command().disable_help_flag(true)`/
+/// `.disable_version_flag(true)` plus declaring `-h`/`--help`/`-V`/
+/// `--version` ourselves so they exist pre-build — was tried and
+/// reverted: `disable_help_flag`/`disable_version_flag` are always
+/// `global_setting`s in clap (there is no non-propagating variant in the
+/// public API), and `Command::_propagate_subcommand` ORs a parent's
+/// global settings into every descendant's settings unconditionally, so
+/// disabling the flag on the root disables it on every subcommand too —
+/// irreversibly, since a child clearing its own copy of the setting is
+/// overwritten again by that OR the next time a build runs. The
+/// observable regression was verified directly: before the attempt,
+/// `sm2-modloader save --help` printed that subcommand's help (exit 0);
+/// after, it errored with "unexpected argument '--help' found" (exit 2)
+/// for every subcommand, because none of them still had a `-h`/`--help`
+/// of their own. Making root's `-h`/`--help`/`-V`/`--version` localizable
+/// this way is therefore not achievable without also re-declaring a
+/// `-h`/`--help` on every existing subcommand by hand (reproducing
+/// clap's own default `Arg` exactly, to keep their behaviour identical),
+/// which is no longer the "cheap" route. `-h`/`--help`/`-V`/`--version`
+/// stay in clap's fixed English text everywhere, including at the root —
+/// the accepted, documented gap.
 const BUILT_IN: [(&str, &str); 2] =
     [("help", "cli.built_in.help"), ("version", "cli.built_in.version")];
 
