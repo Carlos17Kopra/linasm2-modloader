@@ -45,7 +45,7 @@ of filesystem operations is the entire safety argument.
 
 ## Working on it
 
-    cargo test                  # 232 tests across both crates
+    cargo test                  # 240 tests across both crates
     cargo clippy --all-targets  # kept clean
     cargo run                   # GUI
     cargo run -- <subcommand>   # CLI

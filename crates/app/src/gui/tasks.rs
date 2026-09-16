@@ -228,7 +228,7 @@ impl App {
         let ctx = self.egui_ctx.clone();
 
         self.section = Section::Mods;
-        self.set_status(format!("Import läuft – {} Datei(en).", files.len()));
+        self.set_busy(format!("Import läuft – {} Datei(en).", files.len()));
         self.task = Some(spawn(ctx, true, move |cancel, progress| {
             import_files(&paths, library, config, &files, cancel, progress)
         }));
@@ -253,7 +253,7 @@ impl App {
         let ctx = self.egui_ctx.clone();
 
         self.backup_label.clear();
-        self.set_status("Backup wird angelegt …");
+        self.set_busy("Backup wird angelegt …");
         self.task = Some(spawn(ctx, false, move |_cancel, progress| {
             report(progress, 0.3, String::from("Spielstände werden gelesen und gehasht"));
             let result = saves::backup(&save_dir, &backups, label.as_deref())
@@ -284,7 +284,7 @@ impl App {
         let ctx = self.egui_ctx.clone();
 
         self.backup_label.clear();
-        self.set_status("Backup wird importiert …");
+        self.set_busy("Backup wird importiert …");
         self.task = Some(spawn(ctx, false, move |_cancel, progress| {
             report(progress, 0.4, String::from("Archiv wird geprüft und entpackt"));
             let result = saves::import_archive(&archive, &backups, label.as_deref())
@@ -302,7 +302,7 @@ impl App {
         let created_at = entry.created_at.clone();
         let ctx = self.egui_ctx.clone();
 
-        self.set_status(format!("Backup {created_at} wird geprüft …"));
+        self.set_busy(format!("Backup {created_at} wird geprüft …"));
         self.task = Some(spawn(ctx, false, move |_cancel, progress| {
             report(progress, 0.5, format!("Hashes von {} werden nachgerechnet", entry.created_at));
             let result = saves::verify(&entry).map_err(|e| e.to_string());
@@ -326,7 +326,7 @@ impl App {
         let created_at = entry.created_at.clone();
         let ctx = self.egui_ctx.clone();
 
-        self.set_status(format!("Backup {created_at} wird zurückgespielt …"));
+        self.set_busy(format!("Backup {created_at} wird zurückgespielt …"));
         self.task = Some(spawn(ctx, false, move |_cancel, progress| {
             report(progress, 0.4, String::from("Vorheriger Stand wird zuerst gesichert"));
             let result = saves::restore(&entry, &save_dir, &backups).map_err(|e| e.to_string());

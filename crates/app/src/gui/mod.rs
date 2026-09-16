@@ -37,6 +37,7 @@ mod side_bar;
 mod status_bar;
 mod tasks;
 mod theme;
+mod toasts;
 mod top_bar;
 mod widgets;
 
@@ -212,6 +213,7 @@ pub enum Action {
     ToggleAutoBackup,
     CloseDialog,
     DismissNotice(usize),
+    DismissToast(u64),
     TriggerNotice(usize),
     CancelTask,
 }
@@ -260,6 +262,9 @@ pub struct App {
 
     drag: Option<Drag>,
     task: Option<tasks::Running>,
+    /// The transient messages over the lower right corner — see
+    /// `toasts`. Fed by `set_status`/`set_warning`.
+    toasts: toasts::Toasts,
 }
 
 impl App {
@@ -290,6 +295,7 @@ impl App {
             steam_users: Vec::new(),
             drag: None,
             task: None,
+            toasts: toasts::Toasts::default(),
         };
         app.load();
         app
@@ -392,14 +398,33 @@ impl App {
         self.dirs.as_ref().map(|d| d.data.join("backups/saves"))
     }
 
+    /// Reports a result: into the status bar and, on top of that, as a
+    /// toast. Everything that has happened goes through here, which is why
+    /// no action needs a toast call of its own.
     fn set_status(&mut self, text: impl Into<String>) {
+        let text = text.into();
+        self.push_toast(&text, toasts::ToastKind::Success);
+        self.set_busy(text);
+    }
+
+    fn set_warning(&mut self, text: impl Into<String>) {
+        let text = text.into();
+        self.push_toast(&text, toasts::ToastKind::Warning);
+        self.status = text;
+        self.status_is_warning = true;
+    }
+
+    /// Reports work that is *running*: status bar only, no toast. The
+    /// progress bar right next to it already says the same thing, and the
+    /// result follows in a moment and gets a toast of its own.
+    fn set_busy(&mut self, text: impl Into<String>) {
         self.status = text.into();
         self.status_is_warning = false;
     }
 
-    fn set_warning(&mut self, text: impl Into<String>) {
-        self.status = text.into();
-        self.status_is_warning = true;
+    fn push_toast(&mut self, text: &str, kind: toasts::ToastKind) {
+        let now = self.egui_ctx.input(|input| input.time);
+        self.toasts.push(text, kind, now);
     }
 
     /// Saves the settings and reports a failure in the status bar instead
@@ -545,6 +570,7 @@ impl App {
             Action::ConfirmSteamUser => self.confirm_steam_user(),
             Action::ToggleAutoBackup => self.toggle_auto_backup(),
             Action::CloseDialog => self.dialog = None,
+            Action::DismissToast(id) => self.toasts.dismiss(id),
             Action::DismissNotice(index) => {
                 if index < self.notices.len() {
                     self.notices.remove(index);
@@ -738,6 +764,8 @@ impl eframe::App for App {
                 Section::Settings => settings_page::show(self, ui, &mut actions),
             });
 
+        self.toasts.prune(ctx.input(|input| input.time));
+        toasts::show(self, &ctx, &mut actions);
         dialogs::show(self, &ctx, &mut actions);
         self.draw_panel_borders(&ctx);
         self.handle_dropped_files(&ctx, &mut actions);
