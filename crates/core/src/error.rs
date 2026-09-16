@@ -1,68 +1,119 @@
+use crate::i18n;
 use std::path::PathBuf;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum Error {
-    #[error("Steam-Installation nicht gefunden")]
     SteamNotFound,
-
-    #[error("Space Marine 2 (AppID {0}) ist in keiner Steam-Bibliothek installiert")]
     GameNotFound(u32),
-
-    #[error("Verzeichnis sieht nicht nach Space Marine 2 aus: {0} (erwartet: client_pc/root/mods)")]
     NotAGameDir(PathBuf),
-
-    #[error("Proton-Prefix für AppID {0} fehlt – das Spiel muss mindestens einmal gestartet worden sein")]
     PrefixMissing(u32),
-
-    #[error("kein Steam-Nutzerprofil unter {0} gefunden")]
     NoSaveUser(PathBuf),
-
-    #[error("mehrere Steam-Nutzerprofile gefunden ({0:?}) – bitte eines in den Einstellungen festlegen")]
     AmbiguousSaveUser(Vec<String>),
-
-    #[error("Steam-Nutzerprofil '{requested}' aus den Einstellungen wurde nicht gefunden (vorhanden: {available:?})")]
     UnknownSaveUser { requested: String, available: Vec<String> },
-
-    #[error("pak_config.yaml ist fehlerhaft: {0}")]
     PakConfig(String),
-
-    #[error("Backup beschädigt: {0}")]
-    CorruptBackup(String),
-
-    #[error("Save-Verzeichnis enthält an einer sicherheitsrelevanten Stelle einen Symlink, Wiederherstellung abgebrochen: {0}")]
+    CorruptBackup(BackupDefect),
     UnsafeSaveDir(PathBuf),
-
-    #[error("Wiederherstellung fehlgeschlagen, nachdem bereits eine Sicherung des vorherigen Standes angelegt wurde (liegt unter {safety_backup}): {source}")]
-    RestoreFailedAfterBackup {
-        safety_backup: PathBuf,
-        #[source]
-        source: Box<Error>,
-    },
-
-    #[error("kein Werkzeug zum Entpacken von .rar gefunden – bitte 'unar' oder '7zip' installieren (Debian/Ubuntu: apt install unar, Arch: pacman -S unarchiver, Fedora: dnf install unar)")]
+    RestoreFailedAfterBackup { safety_backup: PathBuf, source: Box<Error> },
     NoRarTool,
-
-    #[error("Archiv enthält keine .pak-Datei: {0}")]
     NoPakInArchive(PathBuf),
-
-    #[error("Archiv enthält keine Savegame-Dateien (.cfg oder .sav): {0}")]
     NoSaveInArchive(PathBuf),
-
-    #[error("Archiv kann nicht importiert werden: {0}")]
-    UnusableArchive(String),
-
-    #[error("kein Schreibrecht für {0}")]
+    UnusableArchive(ArchiveDefect),
     NotWritable(PathBuf),
+    Io { path: PathBuf, source: std::io::Error },
+    PlainIo(std::io::Error),
+}
 
-    #[error("E/A-Fehler bei {path}: {source}")]
-    Io {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
+/// Why a backup failed verification. Its own type rather than a ready-made
+/// sentence, so that the detail can be translated as well (see
+/// `BackupDefect::text`, looked up through the catalogue like everything
+/// else `Display` produces).
+#[derive(Debug)]
+pub enum BackupDefect {
+    NotAZip { path: PathBuf },
+    UnknownEntry { name: String },
+    DuplicateEntry { name: String },
+    SizeMismatch { name: String },
+    HashMismatch { name: String },
+    CountMismatch { found: usize, expected: usize },
+    InvalidPath { name: String },
+    EmptyPath,
+    OutsideSaveDir,
+}
 
-    #[error(transparent)]
-    PlainIo(#[from] std::io::Error),
+/// Why an archive cannot be imported — same idea as `BackupDefect`.
+#[derive(Debug)]
+pub enum ArchiveDefect {
+    NotAZip { path: PathBuf },
+    Symlink { name: String },
+    InvalidPath { name: String },
+    DuplicateName { name: String },
+    TooLarge { limit: u64 },
+}
+
+impl BackupDefect {
+    fn text(&self) -> String {
+        match self {
+            BackupDefect::NotAZip { path } => {
+                i18n::format("error.backup_defect.not_a_zip", &[("path", path.display().to_string())])
+            }
+            BackupDefect::UnknownEntry { name } => {
+                i18n::format("error.backup_defect.unknown_entry", &[("name", name.clone())])
+            }
+            BackupDefect::DuplicateEntry { name } => {
+                i18n::format("error.backup_defect.duplicate_entry", &[("name", name.clone())])
+            }
+            BackupDefect::SizeMismatch { name } => {
+                i18n::format("error.backup_defect.size_mismatch", &[("name", name.clone())])
+            }
+            BackupDefect::HashMismatch { name } => {
+                i18n::format("error.backup_defect.hash_mismatch", &[("name", name.clone())])
+            }
+            BackupDefect::CountMismatch { found, expected } => i18n::format(
+                "error.backup_defect.count_mismatch",
+                &[("found", found.to_string()), ("expected", expected.to_string())],
+            ),
+            BackupDefect::InvalidPath { name } => {
+                i18n::format("error.backup_defect.invalid_path", &[("name", name.clone())])
+            }
+            BackupDefect::EmptyPath => i18n::lookup("error.backup_defect.empty_path"),
+            BackupDefect::OutsideSaveDir => i18n::lookup("error.backup_defect.outside_save_dir"),
+        }
+    }
+}
+
+impl ArchiveDefect {
+    fn text(&self) -> String {
+        match self {
+            ArchiveDefect::NotAZip { path } => {
+                i18n::format("error.archive_defect.not_a_zip", &[("path", path.display().to_string())])
+            }
+            ArchiveDefect::Symlink { name } => {
+                i18n::format("error.archive_defect.symlink", &[("name", name.clone())])
+            }
+            ArchiveDefect::InvalidPath { name } => {
+                i18n::format("error.archive_defect.invalid_path", &[("name", name.clone())])
+            }
+            ArchiveDefect::DuplicateName { name } => {
+                i18n::format("error.archive_defect.duplicate_name", &[("name", name.clone())])
+            }
+            ArchiveDefect::TooLarge { limit } => {
+                i18n::format("error.archive_defect.too_large", &[("limit", describe_size(*limit))])
+            }
+        }
+    }
+}
+
+/// A byte count for an error message: whole MiB once it is worth it, plain
+/// bytes below that — a limit shown as "0 MiB" would tell the user nothing.
+/// Lives here rather than in `saves.rs` because it is exclusively error
+/// text now (only `ArchiveDefect::TooLarge` calls it).
+fn describe_size(bytes: u64) -> String {
+    const MIB: u64 = 1024 * 1024;
+    if bytes >= MIB {
+        i18n::format("error.size.mib", &[("value", (bytes / MIB).to_string())])
+    } else {
+        i18n::format("error.size.bytes", &[("value", bytes.to_string())])
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -74,20 +125,100 @@ impl Error {
     }
 }
 
-/// Translates a `toml` deserialization error into a German message with
-/// line and column, instead of passing the raw (English) library message on
-/// to the user. Mirrors how `Library::load` handles `serde_json` errors
-/// (there line and column come straight from `serde_json`;
-/// `toml::de::Error` only provides a byte range via `span()`, from which
-/// line and column are computed here). Shared between `settings.rs` and
-/// `profile.rs`, the two places that load TOML.
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            Error::SteamNotFound => i18n::lookup("error.steam_not_found"),
+            Error::GameNotFound(app_id) => {
+                i18n::format("error.game_not_found", &[("app_id", app_id.to_string())])
+            }
+            Error::NotAGameDir(path) => {
+                i18n::format("error.not_a_game_dir", &[("path", path.display().to_string())])
+            }
+            Error::PrefixMissing(app_id) => {
+                i18n::format("error.prefix_missing", &[("app_id", app_id.to_string())])
+            }
+            Error::NoSaveUser(path) => {
+                i18n::format("error.no_save_user", &[("path", path.display().to_string())])
+            }
+            Error::AmbiguousSaveUser(users) => {
+                i18n::format("error.ambiguous_save_user", &[("users", users.join(", "))])
+            }
+            Error::UnknownSaveUser { requested, available } => i18n::format(
+                "error.unknown_save_user",
+                &[("requested", requested.clone()), ("available", available.join(", "))],
+            ),
+            Error::PakConfig(detail) => i18n::format("error.pak_config", &[("detail", detail.clone())]),
+            Error::CorruptBackup(defect) => {
+                i18n::format("error.corrupt_backup", &[("detail", defect.text())])
+            }
+            Error::UnsafeSaveDir(path) => {
+                i18n::format("error.unsafe_save_dir", &[("path", path.display().to_string())])
+            }
+            Error::RestoreFailedAfterBackup { safety_backup, source } => i18n::format(
+                "error.restore_failed_after_backup",
+                &[
+                    ("safety_backup", safety_backup.display().to_string()),
+                    ("source", source.to_string()),
+                ],
+            ),
+            Error::NoRarTool => i18n::lookup("error.no_rar_tool"),
+            Error::NoPakInArchive(path) => {
+                i18n::format("error.no_pak_in_archive", &[("path", path.display().to_string())])
+            }
+            Error::NoSaveInArchive(path) => {
+                i18n::format("error.no_save_in_archive", &[("path", path.display().to_string())])
+            }
+            Error::UnusableArchive(defect) => {
+                i18n::format("error.unusable_archive", &[("detail", defect.text())])
+            }
+            Error::NotWritable(path) => {
+                i18n::format("error.not_writable", &[("path", path.display().to_string())])
+            }
+            Error::Io { path, source } => i18n::format(
+                "error.io",
+                &[("path", path.display().to_string()), ("source", source.to_string())],
+            ),
+            Error::PlainIo(source) => source.to_string(),
+        };
+        f.write_str(&text)
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Io { source, .. } => Some(source),
+            Error::PlainIo(source) => Some(source),
+            Error::RestoreFailedAfterBackup { source, .. } => Some(source.as_ref()),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(source: std::io::Error) -> Self {
+        Error::PlainIo(source)
+    }
+}
+
+/// Translates a `toml` deserialization error into a message with line and
+/// column, instead of passing the raw (English) library message on to the
+/// user. Mirrors how `Library::load` handles `serde_json` errors (there line
+/// and column come straight from `serde_json`; `toml::de::Error` only
+/// provides a byte range via `span()`, from which line and column are
+/// computed here). Shared between `settings.rs` and `profile.rs`, the two
+/// places that load TOML.
 pub(crate) fn describe_toml_error(text: &str, error: &toml::de::Error) -> String {
     match error.span() {
         Some(span) => {
             let (line, column) = line_and_column(text, span.start);
-            format!("ungültiges TOML (Zeile {line}, Spalte {column})")
+            i18n::format(
+                "error.invalid_toml",
+                &[("line", line.to_string()), ("column", column.to_string())],
+            )
         }
-        None => "ungültiges TOML".to_string(),
+        None => i18n::lookup("error.invalid_toml_unknown"),
     }
 }
 
@@ -113,18 +244,64 @@ fn line_and_column(text: &str, byte_offset: usize) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::i18n::{set_language, Language};
 
     #[test]
     fn describe_toml_error_names_line_and_column() {
+        // Guards against the same race the three tests below guard
+        // against: `set_language` flips one process-wide static, and
+        // `cargo test` runs this crate's tests concurrently by default.
+        let _guard = crate::i18n::language_test_lock();
         let text = "gueltig = 1\nkaputt : : :\n";
         let error = toml::from_str::<toml::Value>(text).unwrap_err();
 
+        set_language(Language::German);
         let message = describe_toml_error(text, &error);
+        set_language(Language::English);
 
         assert!(message.contains("Zeile 2"), "{message}");
         assert!(
             !message.contains("expected") && !message.contains("invalid"),
             "the message should be in German, not carry the raw toml message: {message}"
         );
+    }
+
+    /// The point of the whole rebuild: the same error speaks whichever
+    /// language is set, without a single caller changing.
+    #[test]
+    fn an_error_speaks_the_active_language() {
+        let _guard = crate::i18n::language_test_lock();
+        let error = Error::GameNotFound(2183900);
+
+        set_language(Language::English);
+        let english = error.to_string();
+        set_language(Language::German);
+        let german = error.to_string();
+        set_language(Language::English);
+
+        assert!(english.contains("is not installed"), "{english}");
+        assert!(german.contains("ist in keiner"), "{german}");
+        assert!(english.contains("2183900") && german.contains("2183900"));
+    }
+
+    #[test]
+    fn a_defect_reason_is_part_of_the_message() {
+        let _guard = crate::i18n::language_test_lock();
+        set_language(Language::English);
+        let error = Error::CorruptBackup(BackupDefect::DuplicateEntry { name: "slot1.sav".into() });
+
+        let text = error.to_string();
+
+        assert!(text.contains("slot1.sav"), "{text}");
+        assert!(text.contains("more than once"), "{text}");
+    }
+
+    /// The chain has to survive the loss of `thiserror`: an I/O error still
+    /// names its cause.
+    #[test]
+    fn an_io_error_keeps_its_source() {
+        let error = Error::io("/tmp/x", std::io::Error::new(std::io::ErrorKind::NotFound, "weg"));
+
+        assert!(std::error::Error::source(&error).is_some());
     }
 }

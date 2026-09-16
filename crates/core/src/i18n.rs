@@ -177,15 +177,26 @@ macro_rules! t {
     };
 }
 
+/// Serialises every test in the crate that touches the global language —
+/// not only this module's own, but also the wording checks in `error.rs`,
+/// which exercise `Display` under both languages. Without a shared lock,
+/// two such tests running concurrently (the default with `cargo test`)
+/// could observe each other's switch mid-assertion, since `CURRENT` is one
+/// process-wide static.
+#[cfg(test)]
+pub(crate) fn language_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    GUARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Serialises the tests that touch the global language, so that they
-    /// cannot see each other's switching.
+    /// Runs `body` under `language`, holding `language_test_lock` for the
+    /// duration so that no other language-flipping test can interleave.
     fn with_language<T>(language: Language, body: impl FnOnce() -> T) -> T {
-        static GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _held = GUARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _held = language_test_lock();
         let before = self::language();
         set_language(language);
         let result = body();

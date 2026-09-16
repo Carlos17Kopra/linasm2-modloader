@@ -167,7 +167,7 @@ pub fn app_dirs() -> Result<AppDirs> {
     let project_dirs = directories::ProjectDirs::from("", "", "sm2-modloader").ok_or_else(|| {
         Error::PlainIo(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            "Basisverzeichnisse des Systems nicht ermittelbar",
+            crate::t!("error.app_dirs_not_found"),
         ))
     })?;
 

@@ -9,7 +9,6 @@ rust-version = "1.85"
 license = "MIT"
 
 [workspace.dependencies]
-thiserror = "2.0"
 anyhow = "1.0"
 tracing = "0.1"
 tempfile = "3.27"

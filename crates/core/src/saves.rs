@@ -9,7 +9,7 @@
 //! symlinks inside the save directory are never followed.
 
 use crate::atomic::write_atomic;
-use crate::error::{Error, Result};
+use crate::error::{ArchiveDefect, BackupDefect, Error, Result};
 use crate::import::now_rfc3339;
 use crate::platform::{Current, Platform};
 use serde::{Deserialize, Serialize};
@@ -80,7 +80,7 @@ fn list_files_recursive(root: &Path) -> Result<Vec<(String, PathBuf)>> {
             } else if file_type.is_file() {
                 let relative = path
                     .strip_prefix(root)
-                    .map_err(|_| Error::CorruptBackup("Pfad außerhalb des Save-Verzeichnisses".into()))?
+                    .map_err(|_| Error::CorruptBackup(BackupDefect::OutsideSaveDir))?
                     .components()
                     .map(|c| c.as_os_str().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
@@ -169,7 +169,8 @@ fn backup_base_name(created_at: &str, label: Option<&str>) -> String {
 ///
 /// The serialization error is unreachable for the current field types
 /// (String, `Option<_>`, u64, `BTreeMap<String, _>`); the raw error is
-/// discarded on purpose so that the message stays purely German (cf.
+/// discarded on purpose so that the message stays a catalogued,
+/// translatable one instead of the library's raw (English) text (cf.
 /// `Library::save`).
 fn write_manifest(path: &Path, manifest: &BackupManifest) -> Result<()> {
     let json = serde_json::to_string_pretty(manifest).map_err(|_| {
@@ -177,7 +178,7 @@ fn write_manifest(path: &Path, manifest: &BackupManifest) -> Result<()> {
             path,
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "Manifest konnte nicht als JSON serialisiert werden",
+                crate::t!("error.manifest_serialize_failed"),
             ),
         )
     })?;
@@ -206,7 +207,7 @@ fn backup_from(
     if !save_dir.is_dir() {
         return Err(Error::io(
             save_dir,
-            std::io::Error::new(std::io::ErrorKind::NotFound, "Save-Verzeichnis fehlt"),
+            std::io::Error::new(std::io::ErrorKind::NotFound, crate::t!("error.missing_save_dir")),
         ));
     }
     std::fs::create_dir_all(backup_root).map_err(|e| Error::io(backup_root, e))?;
@@ -276,11 +277,11 @@ fn backup_from(
 /// rule.
 fn validate_entry_name(name: &str) -> Result<()> {
     if name.is_empty() {
-        return Err(Error::CorruptBackup("unzulässiger (leerer) Pfad im Archiv".into()));
+        return Err(Error::CorruptBackup(BackupDefect::EmptyPath));
     }
     for component in name.split('/') {
         if component.is_empty() || component == "." || component == ".." || component.contains('\\') {
-            return Err(Error::CorruptBackup(format!("unzulässiger Pfad im Archiv: {name}")));
+            return Err(Error::CorruptBackup(BackupDefect::InvalidPath { name: name.to_string() }));
         }
     }
     Ok(())
@@ -293,7 +294,7 @@ fn read_manifest(entry: &BackupEntry) -> Result<BackupManifest> {
             &entry.manifest,
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("ungültiges Manifest (Zeile {}, Spalte {})", e.line(), e.column()),
+                crate::t!("error.invalid_manifest", line = e.line(), column = e.column()),
             ),
         )
     })
@@ -318,7 +319,7 @@ pub fn verify(entry: &BackupEntry) -> Result<()> {
 
     let file = std::fs::File::open(&entry.archive).map_err(|e| Error::io(&entry.archive, e))?;
     let mut zip = zip::ZipArchive::new(file).map_err(|_| {
-        Error::CorruptBackup(format!("Archiv lässt sich nicht als ZIP öffnen: {}", entry.archive.display()))
+        Error::CorruptBackup(BackupDefect::NotAZip { path: entry.archive.clone() })
     })?;
 
     let mut seen = std::collections::BTreeSet::new();
@@ -334,30 +335,29 @@ pub fn verify(entry: &BackupEntry) -> Result<()> {
         let expected = manifest
             .files
             .get(&name)
-            .ok_or_else(|| Error::CorruptBackup(format!("{name} steht nicht im Manifest")))?;
+            .ok_or_else(|| Error::CorruptBackup(BackupDefect::UnknownEntry { name: name.clone() }))?;
 
         if !seen.insert(name.clone()) {
-            return Err(Error::CorruptBackup(format!("{name} kommt mehrfach im Archiv vor")));
+            return Err(Error::CorruptBackup(BackupDefect::DuplicateEntry { name: name.clone() }));
         }
 
         let mut content = Vec::new();
         std::io::copy(&mut zip_entry, &mut content).map_err(|e| Error::io(&entry.archive, e))?;
 
         if content.len() as u64 != expected.size {
-            return Err(Error::CorruptBackup(format!("{name} hat eine abweichende Größe")));
+            return Err(Error::CorruptBackup(BackupDefect::SizeMismatch { name: name.clone() }));
         }
         let actual = blake3::hash(&content).to_hex().to_string();
         if actual != expected.hash {
-            return Err(Error::CorruptBackup(format!("{name} hat einen abweichenden Hash")));
+            return Err(Error::CorruptBackup(BackupDefect::HashMismatch { name: name.clone() }));
         }
     }
 
     if seen.len() != manifest.files.len() {
-        return Err(Error::CorruptBackup(format!(
-            "Archiv enthält {} von {} erwarteten Dateien",
-            seen.len(),
-            manifest.files.len()
-        )));
+        return Err(Error::CorruptBackup(BackupDefect::CountMismatch {
+            found: seen.len(),
+            expected: manifest.files.len(),
+        }));
     }
     Ok(())
 }
@@ -535,7 +535,10 @@ fn resolve_and_check_target(save_dir: &Path, name: &str) -> Result<PathBuf> {
 /// temporary file.
 fn write_atomic_bytes(path: &Path, content: &[u8]) -> Result<()> {
     let dir = path.parent().ok_or_else(|| {
-        Error::io(path, std::io::Error::new(std::io::ErrorKind::InvalidInput, "Pfad hat kein Elternverzeichnis"))
+        Error::io(
+            path,
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, crate::t!("error.path_without_parent")),
+        )
     })?;
     std::fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
 
@@ -559,7 +562,7 @@ fn restore_after_safety_backup(entry: &BackupEntry, save_dir: &Path, safety_back
 
     let file = std::fs::File::open(&entry.archive).map_err(|e| Error::io(&entry.archive, e))?;
     let mut zip = zip::ZipArchive::new(file).map_err(|_| {
-        Error::CorruptBackup(format!("Archiv lässt sich nicht als ZIP öffnen: {}", entry.archive.display()))
+        Error::CorruptBackup(BackupDefect::NotAZip { path: entry.archive.clone() })
     })?;
 
     // A complete dry run first: every target path is resolved and checked
@@ -676,8 +679,9 @@ fn import_archive_limited(
     let file = std::fs::File::open(archive).map_err(|e| Error::io(archive, e))?;
     let mut zip = zip::ZipArchive::new(file).map_err(|_| {
         // The raw (English) message of the zip crate stays out of this: the
-        // user is told in German that the file is not a readable ZIP.
-        Error::UnusableArchive(format!("Datei lässt sich nicht als ZIP öffnen: {}", archive.display()))
+        // user is told, in whichever language is active, that the file is
+        // not a readable ZIP.
+        Error::UnusableArchive(ArchiveDefect::NotAZip { path: archive.to_path_buf() })
     })?;
 
     let names = collect_import_entries(&mut zip, archive, max_bytes)?;
@@ -744,7 +748,7 @@ fn collect_import_entries(
             Error::io(archive, std::io::Error::new(std::io::ErrorKind::InvalidData, e))
         })?;
         if entry.unix_mode().is_some_and(|mode| mode & 0o170_000 == 0o120_000) {
-            return Err(Error::UnusableArchive(format!("Archiv enthält einen Symlink: {}", entry.name())));
+            return Err(Error::UnusableArchive(ArchiveDefect::Symlink { name: entry.name().to_string() }));
         }
         if !entry.is_file() {
             continue;
@@ -752,10 +756,10 @@ fn collect_import_entries(
 
         let name = normalize_entry_name(entry.name());
         validate_entry_name(&name).map_err(|_| {
-            Error::UnusableArchive(format!("unzulässiger Pfad im Archiv: {}", entry.name()))
+            Error::UnusableArchive(ArchiveDefect::InvalidPath { name: entry.name().to_string() })
         })?;
         if !seen.insert(name.clone()) {
-            return Err(Error::UnusableArchive(format!("{name} kommt mehrfach im Archiv vor")));
+            return Err(Error::UnusableArchive(ArchiveDefect::DuplicateName { name: name.clone() }));
         }
 
         declared = declared.saturating_add(entry.size());
@@ -768,14 +772,7 @@ fn collect_import_entries(
 }
 
 fn oversized(max_bytes: u64) -> Error {
-    Error::UnusableArchive(format!("Archiv ist entpackt größer als {}", describe_size(max_bytes)))
-}
-
-/// A byte count for an error message: whole MiB once it is worth it, plain
-/// bytes below that — a limit shown as "0 MiB" would tell the user nothing.
-fn describe_size(bytes: u64) -> String {
-    const MIB: u64 = 1024 * 1024;
-    if bytes >= MIB { format!("{} MiB", bytes / MIB) } else { format!("{bytes} Byte") }
+    Error::UnusableArchive(ArchiveDefect::TooLarge { limit: max_bytes })
 }
 
 /// Brings a foreign entry name into the form the rest of this module
@@ -1784,8 +1781,10 @@ mod tests {
 
         assert!(matches!(err, Error::UnusableArchive(_)), "{err:?}");
         // A limit below one MiB has to be named in bytes; "0 MiB" would
-        // leave the user with no idea what the limit actually is.
-        assert!(err.to_string().contains("1024 Byte"), "{err}");
+        // leave the user with no idea what the limit actually is. The
+        // wording around the number depends on the active language, only
+        // the number itself does not.
+        assert!(err.to_string().contains("1024"), "{err}");
     }
 
     /// A rejected archive must not leave a half-finished backup behind:

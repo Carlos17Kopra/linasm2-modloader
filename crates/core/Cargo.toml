@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-thiserror.workspace = true
 tracing.workspace = true
 tempfile.workspace = true
 blake3.workspace = true

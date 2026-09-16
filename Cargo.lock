@@ -3412,7 +3412,6 @@ dependencies = [
  "sevenz-rust2",
  "steamlocate",
  "tempfile",
- "thiserror 2.0.20",
  "toml",
  "tracing",
  "yaml-rust2",

@@ -94,7 +94,7 @@ impl Library {
                     path,
                     std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
-                        format!("ungültiges JSON (Zeile {}, Spalte {})", e.line(), e.column()),
+                        crate::t!("error.invalid_json", line = e.line(), column = e.column()),
                     ),
                 )
             }),
@@ -106,13 +106,14 @@ impl Library {
     pub fn save(&self, path: &Path) -> Result<()> {
         // Unreachable for the current field types (String, Option<_>, u64,
         // u32, BTreeMap<String, _> cannot fail); the raw error is discarded
-        // on purpose so that the message stays purely German.
+        // on purpose so that the message stays a catalogued, translatable
+        // one instead of the library's raw (English) text.
         let json = serde_json::to_string_pretty(self).map_err(|_| {
             Error::io(
                 path,
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    "Bibliothek konnte nicht als JSON serialisiert werden",
+                    crate::t!("error.library_serialize_failed"),
                 ),
             )
         })?;
@@ -176,7 +177,7 @@ impl Library {
     /// verification: Spec §6.3 describes this third case explicitly as a
     /// marker, not as a hard requirement — a single unreadable pak must not
     /// bring down even purely read-only commands such as `paths`. Such cases
-    /// end up as a German message in `warnings` instead.
+    /// end up as a catalogued message in `warnings` instead.
     pub fn detect_altered(&mut self, mods_dir: &Path, present: &[String]) -> Result<AlteredReport> {
         let mut altered = Vec::new();
         let mut warnings = Vec::new();
@@ -190,9 +191,7 @@ impl Library {
                 Ok(m) => m,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(e) => {
-                    warnings.push(format!(
-                        "{pak}: Prüfung auf Veränderung übersprungen (nicht lesbar: {e})"
-                    ));
+                    warnings.push(crate::t!("error.altered_check_unreadable", pak = pak, source = e));
                     continue;
                 }
             };
@@ -221,7 +220,7 @@ impl Library {
             let hash = match hash_file(&path) {
                 Ok(h) => h,
                 Err(e) => {
-                    warnings.push(format!("{pak}: Prüfung auf Veränderung übersprungen ({e})"));
+                    warnings.push(crate::t!("error.altered_check_failed", pak = pak, source = e));
                     continue;
                 }
             };
@@ -265,7 +264,7 @@ pub struct AlteredReport {
     /// content — the caller should then rewrite `library.json` so that
     /// future runs can make use of the prefilter again.
     pub cache_refreshed: bool,
-    /// German messages about paks that could not be verified at all
+    /// Catalogued messages about paks that could not be verified at all
     /// (missing read permission or similar) — informational, not a failure
     /// of the whole verification.
     pub warnings: Vec<String>,
