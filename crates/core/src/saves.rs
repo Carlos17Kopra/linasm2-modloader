@@ -1,13 +1,12 @@
-//! Sicherung und Wiederherstellung von Savegames.
+//! Backing up and restoring savegames.
 //!
-//! Space-Marine-2-Spielstände liegen in einem Proton-Prefix, den Steam Cloud
-//! jederzeit überschreiben kann. Ein Bug hier vernichtet echten Spielstand –
-//! deshalb überschreibt `restore` nie, ohne vorher den aktuellen Stand
-//! selbst zu sichern und diese Sicherung selbst zu verifizieren, und
-//! `verify` prüft jedes Backup Byte für Byte gegen sein Manifest, bevor es
-//! benutzt wird. Geschrieben wird durchweg fsync-vor-rename (Archiv wie
-//! wiederhergestellte Dateien), Symlinks innerhalb des Save-Verzeichnisses
-//! werden nie verfolgt.
+//! Space Marine 2 saves live in a Proton prefix that Steam Cloud can
+//! overwrite at any moment. A bug here destroys real save data — so
+//! `restore` never overwrites anything without first backing up the current
+//! state itself and verifying that backup, and `verify` checks every backup
+//! byte for byte against its manifest before it is used. Everything is
+//! written fsync-before-rename (the archive as well as restored files), and
+//! symlinks inside the save directory are never followed.
 
 use crate::atomic::write_atomic;
 use crate::error::{Error, Result};
@@ -18,26 +17,26 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// Hash und Größe einer einzelnen gesicherten Datei.
+/// Hash and size of a single backed-up file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileRecord {
     pub hash: String,
     pub size: u64,
 }
 
-/// Begleitet jedes Backup und macht Beschädigung erkennbar.
+/// Accompanies every backup and makes corruption detectable.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BackupManifest {
     pub created_at: String,
     pub source: String,
     #[serde(default)]
     pub label: Option<String>,
-    /// Schlüssel ist der Pfad relativ zum Save-Verzeichnis, mit '/' getrennt.
+    /// The key is the path relative to the save directory, separated by '/'.
     pub files: BTreeMap<String, FileRecord>,
 }
 
-/// Referenz auf ein Backup: Archiv- und Manifest-Datei plus die für
-/// `list_backups`/Anzeige nötigen Metadaten.
+/// A reference to a backup: the archive and manifest files plus the
+/// metadata that `list_backups` and the display need.
 #[derive(Debug, Clone)]
 pub struct BackupEntry {
     pub archive: PathBuf,
@@ -46,25 +45,24 @@ pub struct BackupEntry {
     pub label: Option<String>,
 }
 
-/// Listet alle Dateien unterhalb von `root` rekursiv auf, als Paare aus
-/// Pfad relativ zu `root` (mit '/' getrennt, plattformunabhängig für das
-/// Manifest) und dem absoluten Pfad. Das Ergebnis ist nach dem relativen
-/// Pfad sortiert, damit ein Backup unabhängig von der (nicht zugesicherten)
-/// `read_dir`-Reihenfolge deterministisch ist.
+/// Lists every file below `root` recursively, as pairs of the path relative
+/// to `root` ('/'-separated, platform-independent for the manifest) and the
+/// absolute path. The result is sorted by the relative path so that a
+/// backup is deterministic regardless of the (unspecified) `read_dir`
+/// order.
 ///
-/// Symlinks werden übersprungen statt verfolgt – dieselbe Regel wie beim
-/// Einsammeln entpackter Paks in `import.rs`. Ohne sie würde ein
-/// Symlink-Zyklus unterhalb von `save_dir` diese Funktion (und damit auch
-/// `restore`, das `backup` immer zuerst aufruft) endlos rekursieren lassen;
-/// ein Link auf ein fremdes Verzeichnis würde außerdem dessen Inhalt mit
-/// ins Backup einsammeln.
+/// Symlinks are skipped rather than followed — the same rule as when
+/// collecting unpacked paks in `import.rs`. Without it a symlink cycle
+/// below `save_dir` would make this function recurse forever (and with it
+/// `restore`, which always calls `backup` first); a link to a foreign
+/// directory would also pull that directory's contents into the backup.
 ///
-/// Jeder relative Pfad wird zusätzlich mit `validate_entry_name` geprüft
-/// (leere/`.`/`..`-Komponenten, Rückwärtsschrägstriche): ohne diese Prüfung
-/// könnte `backup` ein Archiv erzeugen, das `verify` – und damit jede
-/// spätere `restore`, die ihre eigene Sicherung verifiziert – als
-/// beschädigt zurückweist, etwa wegen einer echten Datei namens
-/// `slot1\campaign.sav` (auf Unix ein gewöhnlicher, gültiger Dateiname).
+/// Every relative path is additionally checked with `validate_entry_name`
+/// (empty/`.`/`..` components, backslashes): without that check `backup`
+/// could produce an archive that `verify` — and therefore every later
+/// `restore`, which verifies its own safety backup — rejects as corrupt,
+/// for instance because of a real file named `slot1\campaign.sav` (an
+/// ordinary, valid file name on Unix).
 fn list_files_recursive(root: &Path) -> Result<Vec<(String, PathBuf)>> {
     let mut collected = Vec::new();
     let mut pending = vec![root.to_path_buf()];
@@ -96,18 +94,17 @@ fn list_files_recursive(root: &Path) -> Result<Vec<(String, PathBuf)>> {
     Ok(collected)
 }
 
-/// Zeitstempel, der sich als Dateiname eignet: 2026-09-12_180000
+/// A timestamp suitable for use in a file name: 2026-09-12_180000
 fn timestamp_for_filename(rfc: &str) -> String {
     rfc.trim_end_matches('Z').replace(':', "").replace('T', "_")
 }
 
-/// Findet ein noch unbelegtes Paar aus Archiv- und Manifestnamen. Kollidiert
-/// `base` mit einem vorhandenen Backup, wird `~<Zähler>` angehängt. '~' ist
-/// als Trennzeichen sicher, weil weder der Zeitstempel noch `sanitize_label`
-/// dieses Zeichen je erzeugen (anders als '-', das aus einem Etikett wie
-/// "Kapitel-3" stammen könnte) – `collision_counter` kann den Zähler damit
-/// eindeutig zurückgewinnen, ohne ihn mit Bindestrichen aus einem Etikett zu
-/// verwechseln.
+/// Finds a still-unused pair of archive and manifest names. If `base`
+/// collides with an existing backup, `~<counter>` is appended. '~' is safe
+/// as a separator because neither the timestamp nor `sanitize_label` ever
+/// produces that character (unlike '-', which could come from a label such
+/// as "Kapitel-3") — this lets `collision_counter` recover the counter
+/// unambiguously, without confusing it with hyphens from a label.
 fn unique_backup_name(backup_root: &Path, base: &str) -> (PathBuf, PathBuf) {
     let mut attempt = 0u32;
     loop {
@@ -121,29 +118,30 @@ fn unique_backup_name(backup_root: &Path, base: &str) -> (PathBuf, PathBuf) {
     }
 }
 
-/// Liest den von `unique_backup_name` angehängten Kollisionszähler aus
-/// einem Dateinamensstamm zurück (0, wenn keiner angehängt wurde). Dient
-/// `list_backups` als Tie-Break für Backups mit identischem `created_at`:
-/// ein reiner Byte-Vergleich der Dateinamen wäre hier falsch, weil '-'
-/// (0x2D) vor '.' (0x2E) sortiert und "basis-1.zip" damit lexikografisch
-/// vor "basis.zip" läge, obwohl "basis.zip" zuerst angelegt wurde.
+/// Reads back the collision counter that `unique_backup_name` appended to a
+/// file name stem (0 if none was appended). Serves `list_backups` as a
+/// tie-break for backups with an identical `created_at`: a plain byte
+/// comparison of the file names would be wrong here, because '-' (0x2D)
+/// sorts before '.' (0x2E) and "basis-1.zip" would therefore come
+/// lexicographically before "basis.zip", even though "basis.zip" was
+/// created first.
 fn collision_counter(stem: &str) -> u32 {
     stem.rsplit_once('~').and_then(|(_, suffix)| suffix.parse().ok()).unwrap_or(0)
 }
 
-/// Öffnet ein Verzeichnis nur, um `sync_all` darauf aufzurufen. Auf Unix
-/// erzwingt das, dass ein neuer Verzeichniseintrag (hier: die frisch
-/// geschriebene Archivdatei) das Blockgerät tatsächlich erreicht hat.
+/// Opens a directory only to call `sync_all` on it. On Unix this forces a
+/// new directory entry (here: the freshly written archive file) to have
+/// actually reached the block device.
 fn sync_dir(dir: &Path) -> Result<()> {
     std::fs::File::open(dir).and_then(|f| f.sync_all()).map_err(|e| Error::io(dir, e))
 }
 
-/// Macht ein Etikett dateinamentauglich: nur alphanumerische Zeichen und
-/// Bindestriche bleiben erhalten, alles andere wird zu '-', führende und
-/// abschließende Bindestriche entfallen. Besteht das Etikett nur aus
-/// Satzzeichen, ist das Ergebnis leer – der Aufrufer hängt es dann gar
-/// nicht erst an den Dateinamen an (siehe `backup`), so dass nie ein
-/// leerer oder mit '.' beginnender Namensteil entsteht.
+/// Makes a label file-name-safe: only alphanumeric characters and hyphens
+/// survive, everything else becomes '-', and leading and trailing hyphens
+/// are dropped. If the label consists only of punctuation the result is
+/// empty — the caller then does not append it to the file name at all (see
+/// `backup`), so no empty name part and no name starting with '.' can ever
+/// arise.
 fn sanitize_label(label: &str) -> String {
     label
         .chars()
@@ -153,12 +151,12 @@ fn sanitize_label(label: &str) -> String {
         .to_string()
 }
 
-/// Der Dateinamen-Stamm eines Backups: der Zeitstempel, bei beschriftetem
-/// Backup gefolgt von '_' und dem dateinamentauglichen Etikett. Anlegen
-/// (`backup`) und Umbenennen (`rename`) müssen dieselbe Regel benutzen –
-/// sonst bekäme ein umbenanntes Backup einen Namen, den `backup` nie
-/// vergeben hätte, und `rename` könnte anschließend nicht mehr erkennen,
-/// dass der Name bereits stimmt.
+/// A backup's file name stem: the timestamp, followed by '_' and the
+/// file-name-safe label when the backup has one. Creating (`backup`) and
+/// renaming (`rename`) must follow the same rule — otherwise a renamed
+/// backup would end up with a name `backup` would never have assigned, and
+/// `rename` could no longer tell afterwards that the name is already
+/// correct.
 fn backup_base_name(created_at: &str, label: Option<&str>) -> String {
     let base = timestamp_for_filename(created_at);
     match label.map(sanitize_label) {
@@ -167,11 +165,11 @@ fn backup_base_name(created_at: &str, label: Option<&str>) -> String {
     }
 }
 
-/// Schreibt ein Manifest atomar.
+/// Writes a manifest atomically.
 ///
-/// Der Serialisierungsfehler ist für die aktuellen Feldtypen (String,
-/// `Option<_>`, u64, `BTreeMap<String, _>`) unerreichbar; der rohe Fehler
-/// wird bewusst verworfen, damit die Meldung rein deutsch bleibt (vgl.
+/// The serialization error is unreachable for the current field types
+/// (String, `Option<_>`, u64, `BTreeMap<String, _>`); the raw error is
+/// discarded on purpose so that the message stays purely German (cf.
 /// `Library::save`).
 fn write_manifest(path: &Path, manifest: &BackupManifest) -> Result<()> {
     let json = serde_json::to_string_pretty(manifest).map_err(|_| {
@@ -186,9 +184,9 @@ fn write_manifest(path: &Path, manifest: &BackupManifest) -> Result<()> {
     write_atomic(path, &format!("{json}\n"))
 }
 
-/// Erstellt ein Backup: alle Dateien aus `save_dir` werden in ein neues
-/// ZIP-Archiv unter `backup_root` gepackt, begleitet von einem Manifest mit
-/// Hash und Größe jeder Datei.
+/// Creates a backup: every file from `save_dir` is packed into a new ZIP
+/// archive under `backup_root`, accompanied by a manifest holding the hash
+/// and size of each file.
 pub fn backup(save_dir: &Path, backup_root: &Path, label: Option<&str>) -> Result<BackupEntry> {
     if !save_dir.is_dir() {
         return Err(Error::io(
@@ -201,10 +199,10 @@ pub fn backup(save_dir: &Path, backup_root: &Path, label: Option<&str>) -> Resul
     let now = now_rfc3339();
     let base = backup_base_name(&now, label);
 
-    // Der Zeitstempel hat Sekundenauflösung. Zwei Backups in derselben
-    // Sekunde dürfen einander nicht überschreiben – `restore` legt
-    // unmittelbar vor dem Lesen eines Archivs eine Sicherung an und würde
-    // sonst genau das Archiv zerstören, das es gleich einliest.
+    // The timestamp has one-second resolution. Two backups within the same
+    // second must not overwrite each other — `restore` takes a safety
+    // backup immediately before reading an archive and would otherwise
+    // destroy the very archive it is about to read.
     let (archive_path, manifest_path) = unique_backup_name(backup_root, &base);
 
     let files = list_files_recursive(save_dir)?;
@@ -230,12 +228,12 @@ pub fn backup(save_dir: &Path, backup_root: &Path, label: Option<&str>) -> Resul
     let archive_file = zip.finish().map_err(|e| {
         Error::io(&archive_path, std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     })?;
-    // Das Manifest beschreibt genau diese Archivdatei und wird gleich
-    // atomar geschrieben (siehe `write_atomic` unten). Ohne diesen fsync
-    // (und den des Verzeichnisses) könnte ein Absturz kurz danach ein
-    // dauerhaftes Manifest hinterlassen, dessen Archiv seine Bytes nie auf
-    // die Platte geschafft hat – dann wäre auch die Sicherung, die
-    // `restore` aus genau diesem Aufruf erhält, wertlos.
+    // The manifest describes exactly this archive file and is written
+    // atomically in a moment (see `write_atomic` below). Without this fsync
+    // (and the one on the directory) a crash shortly afterwards could leave
+    // behind a durable manifest whose archive never got its bytes onto the
+    // disk — and then the safety backup `restore` receives from this very
+    // call would be worthless too.
     archive_file.sync_all().map_err(|e| Error::io(&archive_path, e))?;
     drop(archive_file);
     sync_dir(backup_root)?;
@@ -256,11 +254,11 @@ pub fn backup(save_dir: &Path, backup_root: &Path, label: Option<&str>) -> Resul
     })
 }
 
-/// Prüft einen Eintragsnamen aus Manifest oder Archiv gegen Zip-Slip: leere,
-/// `.`- oder `..`-Komponenten sowie Rückwärtsschrägstriche (auf manchen
-/// Werkzeugen ein Trennzeichen) sind unzulässig. Ein Name, der mit '/'
-/// beginnt (absoluter Pfad), zerfällt beim Aufteilen in eine leere erste
-/// Komponente und wird darüber ebenfalls abgelehnt.
+/// Checks an entry name from the manifest or the archive against Zip-Slip:
+/// empty, `.` or `..` components and backslashes (a separator in some
+/// tools) are not allowed. A name starting with '/' (an absolute path)
+/// splits into an empty first component and is rejected through that same
+/// rule.
 fn validate_entry_name(name: &str) -> Result<()> {
     if name.is_empty() {
         return Err(Error::CorruptBackup("unzulässiger (leerer) Pfad im Archiv".into()));
@@ -286,17 +284,17 @@ fn read_manifest(entry: &BackupEntry) -> Result<BackupManifest> {
     })
 }
 
-/// Prüft jede Datei im Archiv gegen Hash und Größe im Manifest: das Archiv
-/// muss sich als ZIP öffnen lassen, jeder Name (im Manifest wie im Archiv)
-/// muss ein zulässiger relativer Pfad sein (siehe `validate_entry_name`),
-/// jeder Eintrag muss im Manifest stehen, darf dort nur einmal auftauchen
-/// (sonst könnte ein doppelter Eintrag eine im Archiv fehlende Datei
-/// vortäuschen), und Größe wie Hash müssen übereinstimmen; am Ende muss die
-/// Anzahl geprüfter Einträge exakt der erwarteten entsprechen.
+/// Checks every file in the archive against the hash and size in the
+/// manifest: the archive must open as a ZIP, every name (in the manifest as
+/// well as in the archive) must be a valid relative path (see
+/// `validate_entry_name`), every entry must appear in the manifest and may
+/// appear there only once (otherwise a duplicate entry could mask a file
+/// missing from the archive), and size and hash must match; finally the
+/// number of verified entries must match the expected number exactly.
 ///
-/// Die Pfadprüfung läuft hier und nicht erst in `restore`: ein Aufrufer,
-/// der `verify` benutzt, um "Backup ist in Ordnung" zu melden, darf ein
-/// Archiv mit einem hinausführenden Eintragsnamen nicht grün lackieren.
+/// The path check runs here and not only in `restore`: a caller that uses
+/// `verify` to report "backup is fine" must not paint an archive with an
+/// escaping entry name green.
 pub fn verify(entry: &BackupEntry) -> Result<()> {
     let manifest = read_manifest(entry)?;
     for name in manifest.files.keys() {
@@ -349,9 +347,9 @@ pub fn verify(entry: &BackupEntry) -> Result<()> {
     Ok(())
 }
 
-/// Alle Backups unter `backup_root`, neueste zuerst. Ein `.zip` ohne
-/// begleitendes `.json` (oder umgekehrt) wird stillschweigend übergangen –
-/// es ist kein von dieser Funktion angelegtes Backup.
+/// All backups under `backup_root`, newest first. A `.zip` without an
+/// accompanying `.json` (or the other way round) is silently skipped — it
+/// is not a backup created by this function.
 pub fn list_backups(backup_root: &Path) -> Result<Vec<BackupEntry>> {
     if !backup_root.is_dir() {
         return Ok(Vec::new());
@@ -378,15 +376,14 @@ pub fn list_backups(backup_root: &Path) -> Result<Vec<BackupEntry>> {
         }
     }
 
-    // Neueste zuerst. Bei gleicher Sekunde entscheidet zuerst der
-    // Kollisionszähler aus dem Dateinamen (siehe `collision_counter`) – ein
-    // reiner Byte-Vergleich der Pfade wäre hier falsch (siehe dessen
-    // Doc-Kommentar). Zwei Backups mit gleichem `created_at`, aber
-    // unterschiedlicher Basis (z. B. verschiedenes Etikett, also Zähler
-    // 0 auf beiden Seiten) fielen ohne einen letzten, expliziten Tie-Break
-    // sonst auf die (nicht zugesicherte) `read_dir`-Reihenfolge zurück –
-    // der abschließende Pfadvergleich macht das Ergebnis in jedem Fall
-    // deterministisch.
+    // Newest first. Within the same second the collision counter from the
+    // file name decides first (see `collision_counter`) — a plain byte
+    // comparison of the paths would be wrong here (see its doc comment).
+    // Two backups with the same `created_at` but a different base (e.g. a
+    // different label, so counter 0 on both sides) would otherwise fall
+    // back to the (unspecified) `read_dir` order for lack of a final,
+    // explicit tie-break — the closing path comparison makes the result
+    // deterministic in every case.
     entries.sort_by(|a, b| {
         b.created_at
             .cmp(&a.created_at)
@@ -401,33 +398,31 @@ pub fn list_backups(backup_root: &Path) -> Result<Vec<BackupEntry>> {
     Ok(entries)
 }
 
-/// Ändert das Etikett eines Backups. Der Zeitstempel – die Identität eines
-/// Backups, über die es die Oberfläche wiedererkennt – bleibt unberührt.
-/// Archiv und Manifest wandern auf den Dateinamen, den `backup` für dieses
-/// Etikett vergeben hätte, damit ein Backup im Dateimanager so heißt wie in
-/// der Oberfläche.
+/// Changes a backup's label. The timestamp — a backup's identity, by which
+/// the UI recognizes it again — stays untouched. Archive and manifest move
+/// to the file name `backup` would have assigned for this label, so that a
+/// backup is called the same thing in the file manager as in the UI.
 ///
-/// Die Reihenfolge der drei Schritte ist der eigentliche Schutz: erst das
-/// neue Manifest schreiben, dann das Archiv verschieben, dann das alte
-/// Manifest löschen. An jedem Absturzpunkt dazwischen existiert genau ein
-/// vollständiges `.zip`/`.json`-Paar, und das Archiv – der einzige
-/// unersetzliche Teil – geht nie verloren; die jeweils übrige Hälfte ist
-/// eine Waise, die `list_backups` stillschweigend übergeht. Die umgekehrte
-/// Reihenfolge (erst verschieben) ließe das Backup nach einem Absturz
-/// zwischen den Schritten ganz aus der Liste verschwinden.
+/// The order of the three steps is the actual protection: first write the
+/// new manifest, then move the archive, then delete the old manifest. At
+/// every crash point in between exactly one complete `.zip`/`.json` pair
+/// exists, and the archive — the only irreplaceable part — is never lost;
+/// whichever half is left over is an orphan that `list_backups` silently
+/// skips. The reverse order (moving first) would make the backup disappear
+/// from the list entirely after a crash between the steps.
 pub fn rename(entry: &BackupEntry, backup_root: &Path, label: Option<&str>) -> Result<BackupEntry> {
-    // Das Manifest, nicht `entry`, ist die Quelle für `created_at`:
-    // `list_backups` baut seine Einträge zwar daraus, ein von Hand
-    // zusammengesetzter `BackupEntry` muss es aber nicht gefüllt haben.
+    // The manifest, not `entry`, is the source for `created_at`:
+    // `list_backups` does build its entries from it, but a hand-assembled
+    // `BackupEntry` need not have filled that field.
     let mut manifest = read_manifest(entry)?;
     manifest.label = label.map(str::to_string);
 
     let base = backup_base_name(&manifest.created_at, label);
     if entry.archive.file_stem().and_then(|s| s.to_str()) == Some(base.as_str()) {
-        // „Kapitel-3“ → „Kapitel 3“: derselbe Dateiname, nur ein anderes
-        // Etikett. Würde hier trotzdem verschoben, hielte
-        // `unique_backup_name` den eigenen, gerade belegten Namen für
-        // besetzt und hängte dem Backup grundlos ein `~1` an.
+        // "Kapitel-3" → "Kapitel 3": the same file name, only a different
+        // label. If we moved anyway, `unique_backup_name` would consider
+        // the backup's own, currently occupied name taken and append a
+        // pointless `~1`.
         write_manifest(&entry.manifest, &manifest)?;
         return Ok(BackupEntry {
             archive: entry.archive.clone(),
@@ -440,9 +435,9 @@ pub fn rename(entry: &BackupEntry, backup_root: &Path, label: Option<&str>) -> R
     let (new_archive, new_manifest) = unique_backup_name(backup_root, &base);
     write_manifest(&new_manifest, &manifest)?;
     if let Err(e) = std::fs::rename(&entry.archive, &new_archive) {
-        // Ohne dieses Aufräumen bliebe eine Manifest-Waise liegen, die
-        // `unique_backup_name` für alle Zeit als belegten Namen läse – ein
-        // späterer Versuch mit demselben Etikett bekäme dann ein `~1`.
+        // Without this cleanup a manifest orphan would be left behind,
+        // which `unique_backup_name` would read as a taken name forever —
+        // a later attempt with the same label would then get a `~1`.
         let _ = std::fs::remove_file(&new_manifest);
         return Err(Error::io(&entry.archive, e));
     }
@@ -457,9 +452,9 @@ pub fn rename(entry: &BackupEntry, backup_root: &Path, label: Option<&str>) -> R
     })
 }
 
-/// Löscht ein Backup endgültig, Archiv wie Manifest. Eine bereits
-/// verschwundene Datei ist kein Fehler – das Ziel ist dann schon erreicht,
-/// und ein zweiter Klick auf „Löschen“ soll keine Fehlermeldung erzeugen.
+/// Deletes a backup for good, archive as well as manifest. A file that has
+/// already vanished is not an error — the goal is then already reached, and
+/// a second click on "Delete" should not produce an error message.
 pub fn delete(entry: &BackupEntry) -> Result<()> {
     remove_if_present(&entry.archive)?;
     remove_if_present(&entry.manifest)?;
@@ -477,8 +472,8 @@ fn remove_if_present(path: &Path) -> Result<()> {
     }
 }
 
-/// Löst einen (bereits über `validate_entry_name` geprüften) Eintragsnamen
-/// zu einem Zielpfad unter `save_dir` auf.
+/// Resolves an entry name (already checked via `validate_entry_name`) to a
+/// target path under `save_dir`.
 fn resolve_target_path(save_dir: &Path, name: &str) -> PathBuf {
     let mut target = save_dir.to_path_buf();
     for component in name.split('/') {
@@ -487,15 +482,15 @@ fn resolve_target_path(save_dir: &Path, name: &str) -> PathBuf {
     target
 }
 
-/// Löst einen Archiv-Eintragsnamen zu einem Zielpfad unter `save_dir` auf
-/// und lehnt ihn ab, wenn dabei ein bereits vorhandener Pfadanteil
-/// (Zwischenverzeichnis oder Zieldatei selbst) ein Symlink ist.
-/// `create_dir_all`/das Anlegen einer temporären Datei würden einem solchen
-/// Symlink sonst folgen und könnten außerhalb von `save_dir` landen – etwa
-/// wenn `slot1` durch einen Link auf `~/.config` ersetzt wurde. Da dieser
-/// Pfad Komponente für Komponente mit `symlink_metadata` (statt `metadata`,
-/// das folgen würde) geprüft wird, bevor irgendetwas geschrieben wird, kann
-/// das nicht mehr passieren.
+/// Resolves an archive entry name to a target path under `save_dir` and
+/// rejects it if any already existing part of that path (an intermediate
+/// directory or the target file itself) is a symlink. Otherwise
+/// `create_dir_all` and the creation of the temporary file would follow
+/// such a symlink and could end up outside `save_dir` — for instance if
+/// `slot1` had been replaced by a link to `~/.config`. Because this path is
+/// checked component by component with `symlink_metadata` (instead of
+/// `metadata`, which would follow) before anything is written, that can no
+/// longer happen.
 fn resolve_and_check_target(save_dir: &Path, name: &str) -> Result<PathBuf> {
     validate_entry_name(name)?;
     let target = resolve_target_path(save_dir, name);
@@ -514,15 +509,15 @@ fn resolve_and_check_target(save_dir: &Path, name: &str) -> Result<PathBuf> {
     Ok(target)
 }
 
-/// Schreibt `content` atomar nach `path`: temporäre Datei im selben
-/// Verzeichnis, fsync, dann rename (auf POSIX atomar) – dasselbe Muster wie
-/// `atomic::write_atomic`, nur für binäre statt textuelle Inhalte.
-/// `write_atomic` selbst bleibt bewusst auf `&str` beschränkt
-/// (Konfigurations-/Manifestdateien); diese lokale Variante deckt die aus
-/// dem Archiv wiederhergestellten, beliebigen Binärdaten ab, ohne jene
-/// Signatur aufzuweiten. Ein Absturz mitten in `write_all` (z. B. volle
-/// Platte) hinterlässt so nie eine abgeschnittene Save-Datei – nur die
-/// verworfene temporäre Datei.
+/// Writes `content` atomically to `path`: a temporary file in the same
+/// directory, fsync, then rename (atomic on POSIX) — the same pattern as
+/// `atomic::write_atomic`, only for binary instead of textual content.
+/// `write_atomic` itself deliberately stays restricted to `&str`
+/// (configuration and manifest files); this local variant covers the
+/// arbitrary binary data restored from the archive without widening that
+/// signature. A crash in the middle of `write_all` (e.g. a full disk) can
+/// therefore never leave a truncated save file behind — only the discarded
+/// temporary file.
 fn write_atomic_bytes(path: &Path, content: &[u8]) -> Result<()> {
     let dir = path.parent().ok_or_else(|| {
         Error::io(path, std::io::Error::new(std::io::ErrorKind::InvalidInput, "Pfad hat kein Elternverzeichnis"))
@@ -536,15 +531,15 @@ fn write_atomic_bytes(path: &Path, content: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Der eigentliche Wiederherstellungsvorgang, nachdem die Sicherung des
-/// aktuellen Standes bereits angelegt ist. In eigener Funktion, damit
-/// `restore` jeden hier auftretenden Fehler mit dem Pfad dieser Sicherung
-/// anreichern kann (siehe `Error::RestoreFailedAfterBackup`).
+/// The actual restore operation, after the safety backup of the current
+/// state has already been taken. It lives in its own function so that
+/// `restore` can enrich every error occurring here with the path of that
+/// safety backup (see `Error::RestoreFailedAfterBackup`).
 fn restore_after_safety_backup(entry: &BackupEntry, save_dir: &Path, safety_backup: &BackupEntry) -> Result<()> {
-    // Die Sicherung wird nicht blind vertraut: erst verifizieren, dann
-    // riskieren. Ohne diese Prüfung könnte ein Crash mitten im
-    // Überschreiben unten die einzige Rückfallebene als (unbemerkt)
-    // beschädigt zurücklassen.
+    // The safety backup is not trusted blindly: verify first, then take
+    // the risk. Without this check a crash in the middle of the
+    // overwriting below could leave the only fallback behind as (silently)
+    // corrupt.
     verify(safety_backup)?;
 
     let file = std::fs::File::open(&entry.archive).map_err(|e| Error::io(&entry.archive, e))?;
@@ -552,10 +547,10 @@ fn restore_after_safety_backup(entry: &BackupEntry, save_dir: &Path, safety_back
         Error::CorruptBackup(format!("Archiv lässt sich nicht als ZIP öffnen: {}", entry.archive.display()))
     })?;
 
-    // Vollständiger Vorlauf: jeder Zielpfad wird aufgelöst und geprüft
-    // (Zip-Slip, Symlinks), bevor auch nur eine Datei geschrieben wird. Ein
-    // bösartiger oder beschädigter Eintrag mitten im Archiv darf das
-    // Save-Verzeichnis nicht halb überschrieben zurücklassen.
+    // A complete dry run first: every target path is resolved and checked
+    // (Zip-Slip, symlinks) before even one file is written. A malicious or
+    // damaged entry in the middle of the archive must not leave the save
+    // directory half overwritten.
     let mut targets = Vec::with_capacity(zip.len());
     for i in 0..zip.len() {
         let zip_entry = zip.by_index(i).map_err(|e| {
@@ -584,34 +579,31 @@ fn restore_after_safety_backup(entry: &BackupEntry, save_dir: &Path, safety_back
     Ok(())
 }
 
-/// Stellt ein Backup wieder her. Legt **immer zuerst**, bevor das
-/// wiederherzustellende Archiv gelesen wird, ein Sicherungs-Backup des
-/// aktuellen Standes an, verifiziert diese Sicherung selbst und gibt sie
-/// zurück – so ist ein Überschreiben nie folgenlos, und die Rückfallebene
-/// wird nicht blind vertraut.
+/// Restores a backup. **Always first**, before the archive to be restored
+/// is read, it takes a safety backup of the current state, verifies that
+/// backup itself and returns it — so an overwrite can always be undone, and
+/// the fallback is not trusted blindly.
 ///
-/// `restore` überschreibt nur Dateien, die im Archiv enthalten sind.
-/// Dateien, die in `save_dir` liegen, aber nicht im Archiv, bleiben
-/// unangetastet – gelöscht wird nie. Ein Rückgängigmachen über die
-/// Sicherung wäre bei zusätzlich gelöschten Dateien nicht mehr vollständig
-/// möglich; das Risiko eines liegen gebliebenen Fremdlings in einem
-/// Proton-Prefix wiegt dagegen gering.
+/// `restore` only overwrites files contained in the archive. Files that
+/// live in `save_dir` but are not in the archive stay untouched — nothing
+/// is ever deleted. Undoing a restore via the safety backup would no longer
+/// be complete if files had additionally been deleted; the risk of a stray
+/// leftover in a Proton prefix weighs far less.
 ///
-/// Jede Datei wird atomar geschrieben (temporäre Datei + rename) und kein
-/// bereits vorhandener Symlink innerhalb von `save_dir` wird verfolgt.
-/// Schlägt irgendetwas fehl, nachdem die Sicherung bereits angelegt wurde,
-/// nennt der zurückgegebene Fehler (`Error::RestoreFailedAfterBackup`)
-/// deren Pfad – in dem Moment, in dem die Nutzerin am dringendsten wissen
-/// muss, wohin der vorherige Stand verschwunden ist.
+/// Every file is written atomically (temporary file + rename) and no
+/// already existing symlink inside `save_dir` is followed. If anything
+/// fails after the safety backup has been taken, the returned error
+/// (`Error::RestoreFailedAfterBackup`) names its path — at the very moment
+/// the user most urgently needs to know where the previous state went.
 pub fn restore(entry: &BackupEntry, save_dir: &Path, backup_root: &Path) -> Result<BackupEntry> {
     verify(entry)?;
 
-    // Sicherung zuerst: unmittelbar danach wird das Archiv aus `entry`
-    // gelesen. Läge die Sicherung zeitlich danach, könnte sie – bei einer
-    // Wiederherstellung aus einem soeben selbst erzeugten Backup innerhalb
-    // derselben Sekunde – genau dieses Archiv überschreiben, bevor es
-    // fertig gelesen ist. `unique_backup_name` sorgt zusätzlich dafür, dass
-    // sich zwei Backups nie einen Dateinamen teilen.
+    // Safety backup first: immediately afterwards the archive from `entry`
+    // is read. If the safety backup came later, it could — when restoring
+    // from a backup just created within the same second — overwrite that
+    // very archive before it has been read completely.
+    // `unique_backup_name` additionally makes sure two backups never share
+    // a file name.
     let safety_backup = backup(save_dir, backup_root, Some("vor Wiederherstellung"))?;
 
     restore_after_safety_backup(entry, save_dir, &safety_backup).map_err(|e| {
@@ -621,15 +613,15 @@ pub fn restore(entry: &BackupEntry, save_dir: &Path, backup_root: &Path) -> Resu
     Ok(safety_backup)
 }
 
-/// Prüft, ob der Steam-Client aktuell läuft. Cloud-Synchronisation kann
-/// eine Wiederherstellung im Hintergrund überschreiben – das ist der
-/// wahrscheinlichste Weg zu Datenverlust bei dieser Funktion.
+/// Checks whether the Steam client is currently running. Cloud sync can
+/// overwrite a restore in the background — that is the most likely route to
+/// data loss around this functionality.
 ///
-/// Öffentlicher Einstiegspunkt, der an `Platform::steam_is_running`
-/// weiterreicht: die Prozesserkennung selbst (z. B. `/proc` unter Linux) ist
-/// plattformabhängig und gehört deshalb hinter den `Platform`-Trait (siehe
-/// `platform::unix::Unix::steam_is_running` für die Details der Erkennung),
-/// nicht fest verdrahtet hier.
+/// A public entry point that forwards to `Platform::steam_is_running`:
+/// process detection itself (e.g. `/proc` on Linux) is platform-dependent
+/// and therefore belongs behind the `Platform` trait (see
+/// `platform::unix::Unix::steam_is_running` for the details of the
+/// detection), not hard-wired here.
 pub fn steam_is_running() -> bool {
     Current::steam_is_running()
 }
@@ -677,17 +669,16 @@ mod tests {
         let entry = backup(&saves, &backups, None).unwrap();
         std::fs::write(&entry.archive, b"kaputt").unwrap();
 
-        // Ein Archiv, das sich nicht mehr als ZIP öffnen lässt, bekommt
-        // einen eigenen, selbst formulierten deutschen Satz ohne
-        // eingebettete Bibliotheksmeldung – `CorruptBackup`, damit ein
-        // Aufrufer diesen Fall gezielt von einem gewöhnlichen E/A-Fehler
-        // unterscheiden und zu einem anderen Backup raten kann.
+        // An archive that can no longer be opened as a ZIP gets its own,
+        // self-written German sentence with no embedded library message —
+        // `CorruptBackup`, so that a caller can tell this case apart from
+        // an ordinary I/O error and suggest a different backup.
         assert!(matches!(verify(&entry).unwrap_err(), Error::CorruptBackup(_)));
     }
 
-    /// Minimaler CRC-32 (bit-reflektiert, Standardpolynom 0xEDB88320) ohne
-    /// zusätzliche Abhängigkeit – nur zum Bau eines von Hand
-    /// zusammengesetzten ZIP-Archivs in Tests gebraucht.
+    /// A minimal CRC-32 (bit-reflected, standard polynomial 0xEDB88320)
+    /// without an extra dependency — needed only to build a hand-assembled
+    /// ZIP archive in tests.
     fn crc32(data: &[u8]) -> u32 {
         let mut crc: u32 = 0xFFFF_FFFF;
         for &byte in data {
@@ -700,13 +691,13 @@ mod tests {
         !crc
     }
 
-    /// Baut von Hand ein ungültiges, aber lesbares ZIP-Archiv mit zwei
-    /// Einträgen desselben Namens (Store, unkomprimiert). Die `zip`-Crate
-    /// verweigert das über `ZipWriter` (siehe `InvalidArchive("Duplicate
-    /// filename")`) – ein von Hand erzeugtes Archiv (oder eines aus einem
-    /// anderen Werkzeug, das diese Prüfung nicht kennt) kann so etwas aber
-    /// enthalten, und `ZipArchive::by_index` liest Einträge positionsbasiert,
-    /// nicht namensbasiert, also klaglos.
+    /// Builds, by hand, an invalid but readable ZIP archive with two
+    /// entries of the same name (stored, uncompressed). The `zip` crate
+    /// refuses this via `ZipWriter` (see `InvalidArchive("Duplicate
+    /// filename")`) — but an archive built by hand (or one from another
+    /// tool that does not know this check) can contain exactly that, and
+    /// `ZipArchive::by_index` reads entries by position, not by name, so it
+    /// reads them without complaint.
     fn write_zip_with_duplicate_entry(path: &Path, name: &str, content: &[u8]) {
         let mut bytes = Vec::new();
         let mut local_offsets = Vec::new();
@@ -765,23 +756,23 @@ mod tests {
         std::fs::write(path, bytes).unwrap();
     }
 
-    /// Ein Archiv-Eintrag, der doppelt unter demselben Namen auftaucht,
-    /// darf eine tatsächlich fehlende Datei nicht verdecken: würde nur die
-    /// Anzahl verarbeiteter Einträge gezählt, käme man trotz einer im
-    /// Manifest stehenden, im Archiv aber fehlenden Datei auf die richtige
-    /// Gesamtzahl.
+    /// An archive entry that appears twice under the same name must not
+    /// mask a file that is genuinely missing: if only the number of
+    /// processed entries were counted, the total would still come out right
+    /// despite a file that the manifest lists but the archive lacks.
     #[test]
     fn verify_rejects_duplicate_entry_masking_a_missing_file() {
         let (_tmp, saves, backups) = save_fixture();
         let entry = backup(&saves, &backups, None).unwrap();
 
-        // Von Hand ein Archiv bauen: "profile.sav" taucht zweimal auf,
-        // "slot1/campaign.sav" (im Manifest gefordert) fehlt ganz.
+        // Build an archive by hand: "profile.sav" appears twice,
+        // "slot1/campaign.sav" (required by the manifest) is missing
+        // entirely.
         write_zip_with_duplicate_entry(&entry.archive, "profile.sav", b"PROFILDATEN");
 
         assert!(
             matches!(verify(&entry).unwrap_err(), Error::CorruptBackup(_)),
-            "ein doppelter Eintrag darf eine fehlende Datei nicht verdecken"
+            "a duplicate entry must not mask a missing file"
         );
     }
 
@@ -799,9 +790,9 @@ mod tests {
         assert_eq!(std::fs::read(saves.join("slot1/campaign.sav")).unwrap(), b"KAMPAGNE");
     }
 
-    /// `restore` darf niemals Dateien löschen, die im Archiv nicht
-    /// enthalten sind – nur die im Archiv enthaltenen Dateien werden
-    /// überschrieben (siehe Doc-Kommentar von `restore`).
+    /// `restore` must never delete files that the archive does not contain
+    /// — only the files contained in the archive are overwritten (see the
+    /// doc comment on `restore`).
     #[test]
     fn restore_does_not_delete_files_absent_from_the_archive() {
         let (_tmp, saves, backups) = save_fixture();
@@ -814,7 +805,7 @@ mod tests {
         assert_eq!(
             std::fs::read(saves.join("slot1/nicht_gesichert.sav")).unwrap(),
             b"NEU ANGELEGT",
-            "restore darf nur überschreiben, nicht löschen"
+            "restore may only overwrite, never delete"
         );
     }
 
@@ -829,7 +820,7 @@ mod tests {
         verify(&safety_backup).unwrap();
         assert_eq!(safety_backup.label.as_deref(), Some("vor Wiederherstellung"));
 
-        // Der überschriebene Fortschritt ist aus der Sicherung wiederholbar.
+        // The overwritten progress can be recovered from the safety backup.
         restore(&safety_backup, &saves, &backups).unwrap();
         assert_eq!(std::fs::read(saves.join("profile.sav")).unwrap(), b"NEUER FORTSCHRITT");
     }
@@ -842,15 +833,15 @@ mod tests {
         std::fs::write(saves.join("profile.sav"), b"SPAETER").unwrap();
         let second = backup(&saves, &backups, Some("gleich")).unwrap();
 
-        assert_ne!(first.archive, second.archive, "Namenskollision innerhalb einer Sekunde");
+        assert_ne!(first.archive, second.archive, "name collision within the same second");
         verify(&first).unwrap();
         verify(&second).unwrap();
     }
 
     #[test]
     fn restoring_twice_does_not_destroy_any_archive() {
-        // restore() sichert vor dem Lesen – die Sicherung darf das zu
-        // lesende Archiv niemals überschreiben.
+        // restore() takes a backup before reading — that backup must never
+        // overwrite the archive being read.
         let (_tmp, saves, backups) = save_fixture();
         let original = backup(&saves, &backups, None).unwrap();
 
@@ -862,13 +853,13 @@ mod tests {
         assert_eq!(std::fs::read(saves.join("profile.sav")).unwrap(), b"ZWISCHENSTAND");
     }
 
-    /// Reproduziert genau den Fehler, den ein reiner Byte-Vergleich der
-    /// Dateinamen als Tie-Break verursacht hätte: mit drei Kollisionen
-    /// innerhalb derselben Sekunde (identisches Etikett, also identische
-    /// Basis) müssen die drei Backups in Erzeugungsreihenfolge – neuestes
-    /// zuerst – erscheinen, nicht in der Reihenfolge "Basis, Basis~2,
-    /// Basis~1", die "-" vor "." sortieren ergäbe. Kein Sleep nötig: der
-    /// Kollisionszähler macht die Reihenfolge unabhängig von der Uhr.
+    /// Reproduces exactly the bug a plain byte comparison of the file names
+    /// as a tie-break would have caused: with three collisions within the
+    /// same second (identical label, hence identical base) the three
+    /// backups must appear in creation order — newest first — not in the
+    /// order "base, base~2, base~1" that sorting "-" before "." would
+    /// yield. No sleep needed: the collision counter makes the order
+    /// independent of the clock.
     #[test]
     fn list_backups_orders_same_second_collisions_by_creation_order() {
         let (_tmp, saves, backups) = save_fixture();
@@ -878,15 +869,15 @@ mod tests {
 
         let list = list_backups(&backups).unwrap();
         assert_eq!(list.len(), 3);
-        assert_eq!(list[0].archive, third.archive, "zuletzt erzeugtes Kollisions-Backup muss zuerst stehen");
+        assert_eq!(list[0].archive, third.archive, "the most recently created collision backup must come first");
         assert_eq!(list[1].archive, second.archive);
         assert_eq!(list[2].archive, first.archive);
     }
 
-    /// Legt von Hand ein leeres, aber gültiges Backup (Archiv + Manifest)
-    /// mit fest vorgegebenem `created_at` und Dateinamensbasis an – dient
-    /// Tests, die eine Tie-Break-Situation ohne jede Abhängigkeit von der
-    /// Uhr reproduzieren wollen.
+    /// Creates, by hand, an empty but valid backup (archive + manifest)
+    /// with a fixed `created_at` and file name base — for tests that want
+    /// to reproduce a tie-break situation without any dependency on the
+    /// clock.
     fn write_backup_pair(backup_root: &Path, base: &str, created_at: &str) {
         std::fs::create_dir_all(backup_root).unwrap();
         let archive_path = backup_root.join(format!("{base}.zip"));
@@ -904,12 +895,11 @@ mod tests {
         std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
     }
 
-    /// Zwei Backups mit identischem `created_at`, aber unterschiedlicher
-    /// Basis (z. B. verschiedenes Etikett) kollidieren nicht – der
-    /// Kollisionszähler ist für beide 0 und entscheidet nichts. Ohne einen
-    /// abschließenden, expliziten Tie-Break auf den Archivpfad würde die
-    /// Reihenfolge dann von der (nicht zugesicherten) `read_dir`-Reihenfolge
-    /// abhängen, statt deterministisch zu sein.
+    /// Two backups with an identical `created_at` but a different base
+    /// (e.g. a different label) do not collide — the collision counter is 0
+    /// for both and decides nothing. Without a final, explicit tie-break on
+    /// the archive path the order would then depend on the (unspecified)
+    /// `read_dir` order instead of being deterministic.
     #[test]
     fn list_backups_breaks_ties_deterministically_when_bases_differ() {
         let (_tmp, _saves, backups) = save_fixture();
@@ -923,13 +913,13 @@ mod tests {
         assert_eq!(
             stems,
             vec!["aaa_beta", "zzz_alpha"],
-            "gleicher Zeitstempel, unterschiedliche Basis: Reihenfolge muss deterministisch (aufsteigend nach Pfad) sein"
+            "same timestamp, different base: the order must be deterministic (ascending by path)"
         );
     }
 
-    /// Ein `.zip` ohne begleitendes `.json` (z. B. weil das Manifest von
-    /// Hand gelöscht wurde) ist kein gültiges Backup und darf die Liste
-    /// nicht mit einem kaputten Eintrag füllen.
+    /// A `.zip` without an accompanying `.json` (e.g. because the manifest
+    /// was deleted by hand) is not a valid backup and must not fill the
+    /// list with a broken entry.
     #[test]
     fn list_backups_skips_a_zip_without_its_manifest() {
         let (_tmp, saves, backups) = save_fixture();
@@ -938,13 +928,12 @@ mod tests {
         std::fs::write(backups.join("verwaist.zip"), b"egal").unwrap();
 
         let list = list_backups(&backups).unwrap();
-        assert_eq!(list.len(), 1, "das Archiv ohne Manifest darf nicht auftauchen");
+        assert_eq!(list.len(), 1, "the archive without a manifest must not show up");
     }
 
-    /// Ein Backup eines leeren Save-Verzeichnisses muss ein gültiges, leeres
-    /// Archiv samt Manifest erzeugen, und `restore` davon darf nicht
-    /// scheitern (siehe Doc-Kommentar: es gibt schlicht nichts zu
-    /// überschreiben).
+    /// A backup of an empty save directory must produce a valid, empty
+    /// archive together with a manifest, and restoring from it must not
+    /// fail (see the doc comment: there is simply nothing to overwrite).
     #[test]
     fn backup_and_restore_handle_an_empty_save_dir() {
         let tmp = tempfile::tempdir().unwrap();
@@ -962,9 +951,8 @@ mod tests {
         restore(&entry, &saves, &backups).unwrap();
     }
 
-    /// Ein Etikett, das nur aus Satzzeichen besteht, darf weder einen
-    /// leeren Namensteil noch einen mit '.' beginnenden Dateinamen
-    /// erzeugen.
+    /// A label consisting only of punctuation must produce neither an empty
+    /// name part nor a file name starting with '.'.
     #[test]
     fn label_of_only_punctuation_yields_a_clean_filename() {
         let (_tmp, saves, backups) = save_fixture();
@@ -973,7 +961,7 @@ mod tests {
         let stem = entry.archive.file_stem().unwrap().to_str().unwrap();
         assert!(!stem.is_empty());
         assert!(!stem.starts_with('.'));
-        assert!(!stem.ends_with('_'), "ein leeres Etikett darf keinen toten Trenner hinterlassen");
+        assert!(!stem.ends_with('_'), "an empty label must not leave a dangling separator behind");
     }
 
     #[test]
@@ -985,10 +973,10 @@ mod tests {
         assert!(matches!(backup(&saves, &backups, None).unwrap_err(), Error::Io { .. }));
     }
 
-    /// Baut von Hand ein Backup (Archiv + passendes Manifest) mit genau
-    /// einem Eintrag `name`/`content` – Hash und Größe im Manifest stimmen
-    /// bewusst überein, damit ein Test gezielt nur die Pfadprüfung trifft,
-    /// nicht Hash- oder Größenvergleich.
+    /// Builds, by hand, a backup (archive + matching manifest) with exactly
+    /// one entry `name`/`content` — hash and size in the manifest match on
+    /// purpose, so that a test hits only the path check and neither the
+    /// hash nor the size comparison.
     fn write_backup_with_single_entry(backup_root: &Path, save_dir: &Path, name: &str, content: &[u8]) -> BackupEntry {
         std::fs::create_dir_all(backup_root).unwrap();
         let archive_path = backup_root.join("boese.zip");
@@ -1026,11 +1014,10 @@ mod tests {
         saves.parent().unwrap().to_path_buf()
     }
 
-    /// `verify` muss einen hinausführenden Pfad selbst erkennen – nicht
-    /// erst `restore`. Hash und Anzahl stimmen hier absichtlich exakt mit
-    /// dem Manifest überein: ein Aufrufer, der sich allein auf `verify`
-    /// verlässt, um "Backup ist in Ordnung" zu melden, darf so ein Archiv
-    /// nicht grün lackieren.
+    /// `verify` must detect an escaping path itself — not only `restore`.
+    /// Hash and count deliberately match the manifest exactly here: a
+    /// caller that relies on `verify` alone to report "backup is fine" must
+    /// not paint such an archive green.
     #[test]
     fn verify_rejects_a_hostile_path_even_when_hash_and_count_match() {
         let (_tmp, saves, backups) = save_fixture();
@@ -1047,11 +1034,10 @@ mod tests {
         assert!(matches!(verify(&entry).unwrap_err(), Error::CorruptBackup(_)));
     }
 
-    /// Rückwärtsschrägstriche sind auf Unix zwar nur ein gewöhnliches
-    /// Zeichen im Dateinamen, kein Trennzeichen – `verify` lehnt sie
-    /// trotzdem ab, weil ein Archiv nicht nur von diesem Crate gelesen
-    /// werden muss und andere Werkzeuge sie als Trennzeichen verstehen
-    /// könnten.
+    /// On Unix a backslash is merely an ordinary character in a file name,
+    /// not a separator — `verify` rejects it anyway, because an archive may
+    /// be read by more than this crate and other tools could understand it
+    /// as a separator.
     #[test]
     fn verify_rejects_backslash_components_in_entry_names() {
         let (_tmp, saves, backups) = save_fixture();
@@ -1060,30 +1046,30 @@ mod tests {
         assert!(matches!(verify(&entry).unwrap_err(), Error::CorruptBackup(_)));
     }
 
-    /// Ein von Hand präpariertes Archiv, dessen Eintragsname aus dem
-    /// Save-Verzeichnis hinausführen würde, wird schon von `verify` (dem
-    /// allerersten Schritt von `restore`) abgelehnt – vor jeder Sicherung.
-    /// Das ist strenger, als der ursprüngliche Plan vorsah (der die Prüfung
-    /// erst mitten in der Extraktionsschleife von `restore` ansiedelte).
+    /// A hand-crafted archive whose entry name would lead out of the save
+    /// directory is rejected by `verify` already (the very first step of
+    /// `restore`) — before any safety backup is taken. That is stricter
+    /// than the original design called for, which placed the check in the
+    /// middle of `restore`'s extraction loop.
     #[test]
     fn restore_rejects_path_traversal_before_taking_any_safety_backup() {
         let (_tmp, saves, backups) = save_fixture();
         let entry = write_backup_with_single_entry(&backups, &saves, "../entkommen.sav", b"BOESARTIG");
 
         let err = restore(&entry, &saves, &backups).unwrap_err();
-        assert!(matches!(err, Error::CorruptBackup(_)), "verify() lehnt vor jeder Sicherung ab: {err:?}");
+        assert!(matches!(err, Error::CorruptBackup(_)), "verify() rejects before any safety backup is taken: {err:?}");
         assert_eq!(
             list_backups(&backups).unwrap().len(),
             1,
-            "es darf keine zusätzliche Sicherung entstanden sein, wenn schon verify() ablehnt"
+            "no additional safety backup may have been created when verify() already rejects"
         );
         assert!(!tmp_parent(&saves).join("entkommen.sav").exists());
     }
 
-    /// `verify` prüft jetzt auch die Größe, nicht mehr nur den Hash: ein
-    /// von Hand auf eine falsche Größe gesetztes Manifest muss auch dann
-    /// auffallen, wenn der Hash-Vergleich (der bei unverändertem Inhalt
-    /// weiterhin passt) allein grünes Licht gäbe.
+    /// `verify` now checks the size too, not only the hash: a manifest
+    /// whose size was set to a wrong value by hand must be caught even when
+    /// the hash comparison alone (which still matches for unchanged
+    /// content) would give the green light.
     #[test]
     fn verify_rejects_a_manifest_with_a_tampered_size_even_when_hash_matches() {
         let (_tmp, saves, backups) = save_fixture();
@@ -1110,13 +1096,12 @@ mod tests {
         assert_eq!(archive, backup_root.join("basis~1.zip"));
         assert_eq!(manifest, backup_root.join("basis~1.json"));
         assert_eq!(collision_counter("basis~1"), 1);
-        assert_eq!(collision_counter("basis"), 0, "ohne Kollision gibt es keinen Zähler");
+        assert_eq!(collision_counter("basis"), 0, "without a collision there is no counter");
     }
 
-    /// Eine Sicherung wird nie blind vertraut: ist die soeben angelegte
-    /// Sicherung (aus welchem Grund auch immer) selbst beschädigt, muss der
-    /// eigentliche Wiederherstellungsvorgang das erkennen und abbrechen,
-    /// statt auf ihr aufzubauen.
+    /// A safety backup is never trusted blindly: if the backup just taken
+    /// is itself corrupt (for whatever reason), the actual restore
+    /// operation must detect that and abort instead of building on it.
     #[test]
     fn restore_after_safety_backup_refuses_to_proceed_if_the_safety_copy_is_corrupt() {
         let (_tmp, saves, backups) = save_fixture();
@@ -1127,17 +1112,16 @@ mod tests {
         let err = restore_after_safety_backup(&entry, &saves, &safety).unwrap_err();
         assert!(
             matches!(err, Error::CorruptBackup(_)),
-            "eine beschädigte Sicherung darf niemals als Rückfallebene gelten: {err:?}"
+            "a corrupt safety backup must never count as a fallback: {err:?}"
         );
     }
 
-    /// Ersetzt `slot1` durch einen Symlink auf ein fremdes Verzeichnis,
-    /// bevor wiederhergestellt wird. `profile.sav` steht laut sortiertem
-    /// relativem Pfad im Archiv VOR `slot1/campaign.sav` – trotzdem darf es
-    /// nicht überschrieben worden sein: der vollständige Vorlauf muss den
-    /// unsicheren zweiten Eintrag erkennen, bevor der erste geschrieben
-    /// wird, und es darf nirgends durch den Symlink hindurch geschrieben
-    /// werden.
+    /// Replaces `slot1` with a symlink to a foreign directory before
+    /// restoring. By sorted relative path, `profile.sav` comes BEFORE
+    /// `slot1/campaign.sav` in the archive — it must still not have been
+    /// overwritten: the complete dry run has to spot the unsafe second
+    /// entry before the first one is written, and nothing may be written
+    /// through the symlink anywhere.
     #[test]
     fn restore_does_not_write_any_file_when_a_later_entry_is_unsafe() {
         let (tmp, saves, backups) = save_fixture();
@@ -1151,26 +1135,25 @@ mod tests {
 
         let err = restore(&entry, &saves, &backups).unwrap_err();
         let Error::RestoreFailedAfterBackup { safety_backup, .. } = &err else {
-            panic!("erwartet: Error::RestoreFailedAfterBackup, war: {err:?}");
+            panic!("expected Error::RestoreFailedAfterBackup, was: {err:?}");
         };
         assert!(
             err.to_string().contains(safety_backup.to_str().unwrap()),
-            "die Fehlermeldung muss den Pfad der Sicherung nennen: {err}"
+            "the error message must name the path of the safety backup: {err}"
         );
-        assert!(safety_backup.is_file(), "die genannte Sicherung muss tatsächlich angelegt worden sein");
+        assert!(safety_backup.is_file(), "the named safety backup must actually have been created");
 
         assert_eq!(
             std::fs::read(saves.join("profile.sav")).unwrap(),
             b"UNVERAENDERT LASSEN",
-            "der Vorlauf muss den unsicheren zweiten Eintrag erkennen, bevor der erste geschrieben wird"
+            "the dry run must spot the unsafe second entry before the first one is written"
         );
-        assert!(!outside.join("campaign.sav").exists(), "darf nicht durch den Symlink hindurch geschrieben haben");
+        assert!(!outside.join("campaign.sav").exists(), "must not have written through the symlink");
     }
 
-    /// Ein Symlink innerhalb von `save_dir`, der auf `save_dir` selbst
-    /// zeigt, darf `backup` nicht in eine Endlosrekursion schicken – und da
-    /// `restore` `backup` immer zuerst aufruft, bliebe sonst auch jede
-    /// Wiederherstellung hängen.
+    /// A symlink inside `save_dir` pointing at `save_dir` itself must not
+    /// send `backup` into endless recursion — and since `restore` always
+    /// calls `backup` first, every restore would otherwise hang as well.
     #[test]
     fn backup_does_not_follow_a_symlink_cycle() {
         let (_tmp, saves, backups) = save_fixture();
@@ -1180,16 +1163,15 @@ mod tests {
 
         let manifest: BackupManifest =
             serde_json::from_str(&std::fs::read_to_string(&entry.manifest).unwrap()).unwrap();
-        assert_eq!(manifest.files.len(), 2, "der Symlink selbst darf nicht als Datei eingesammelt werden");
+        assert_eq!(manifest.files.len(), 2, "the symlink itself must not be collected as a file");
     }
 
-    /// Ein Rückwärtsschrägstrich ist auf Unix ein gewöhnliches, gültiges
-    /// Zeichen in einem Dateinamen – `backup` darf ein solches Save trotzdem
-    /// nicht klaglos einpacken: `verify` (und damit jede `restore`, die
-    /// ihre eigene Sicherung verifiziert) würde das erzeugte Archiv sofort
-    /// wieder als beschädigt zurückweisen. `backup` muss also selbst schon
-    /// ablehnen, statt ein Archiv zu erzeugen, das nie eine eigene Prüfung
-    /// besteht.
+    /// On Unix a backslash is an ordinary, valid character in a file name —
+    /// `backup` must still not pack such a save without complaint: `verify`
+    /// (and with it every `restore`, which verifies its own safety backup)
+    /// would immediately reject the resulting archive as corrupt. So
+    /// `backup` has to refuse by itself, instead of producing an archive
+    /// that never passes its own verification.
     #[test]
     fn backup_rejects_a_save_file_whose_name_contains_a_backslash() {
         let (_tmp, saves, backups) = save_fixture();
@@ -1197,13 +1179,13 @@ mod tests {
 
         let err = backup(&saves, &backups, None).unwrap_err();
         assert!(matches!(err, Error::CorruptBackup(_)), "{err:?}");
-        assert!(list_backups(&backups).unwrap().is_empty(), "es darf kein halbes Archiv zurückbleiben");
+        assert!(list_backups(&backups).unwrap().is_empty(), "no half-written archive may be left behind");
     }
 
-    /// Reiner Rauchtest: unabhängig davon, ob `/proc` existiert oder ein
-    /// Steam-Prozess läuft, darf der Aufruf nicht abstürzen. Das
-    /// tatsächliche Erkennungsverhalten hängt vom laufenden System ab und
-    /// lässt sich ohne Prozess-Mocking nicht deterministisch prüfen.
+    /// Pure smoke test: regardless of whether `/proc` exists or a Steam
+    /// process is running, the call must not crash. The actual detection
+    /// behaviour depends on the running system and cannot be checked
+    /// deterministically without mocking processes.
     #[test]
     fn steam_is_running_does_not_panic() {
         let _ = steam_is_running();
@@ -1221,9 +1203,9 @@ mod tests {
         assert_eq!(list[0].label.as_deref(), Some("Vor dem Bossfight"));
     }
 
-    /// Das Etikett steckt auch im Dateinamen – wer das Backup im
-    /// Dateimanager sucht, soll dort denselben Namen sehen wie in der
-    /// Oberfläche.
+    /// The label is part of the file name too — whoever looks for the
+    /// backup in the file manager should see the same name there as in the
+    /// UI.
     #[test]
     fn rename_moves_archive_and_manifest_to_the_new_name() {
         let (_tmp, saves, backups) = save_fixture();
@@ -1233,19 +1215,18 @@ mod tests {
 
         let renamed = rename(&entry, &backups, Some("Vor dem Bossfight")).unwrap();
 
-        assert!(!old_archive.exists(), "das alte Archiv muss verschwinden");
-        assert!(!old_manifest.exists(), "das alte Manifest muss verschwinden");
+        assert!(!old_archive.exists(), "the old archive must disappear");
+        assert!(!old_manifest.exists(), "the old manifest must disappear");
         assert!(renamed.archive.is_file());
         assert!(renamed.manifest.is_file());
         let stem = renamed.archive.file_stem().unwrap().to_str().unwrap();
         assert!(stem.ends_with("_Vor-dem-Bossfight"), "{stem}");
     }
 
-    /// Der Zeitstempel ist die Identität eines Backups (die Oberfläche
-    /// merkt sich darüber, welche Backups in dieser Sitzung geprüft
-    /// wurden). Umbenennen ist reine Beschriftung und darf ihn nicht
-    /// verschieben – und das Archiv muss die Prüfung danach weiter
-    /// bestehen.
+    /// The timestamp is a backup's identity (the UI uses it to remember
+    /// which backups were verified during this session). Renaming is pure
+    /// labelling and must not shift it — and the archive must still pass
+    /// verification afterwards.
     #[test]
     fn rename_keeps_created_at_and_a_verifiable_archive() {
         let (_tmp, saves, backups) = save_fixture();
@@ -1257,11 +1238,10 @@ mod tests {
         verify(&renamed).unwrap();
     }
 
-    /// „Kapitel-3“ und „Kapitel 3“ ergeben denselben Dateinamen-Stamm
-    /// (`sanitize_label` macht aus beidem `Kapitel-3`). Dann darf gar nicht
-    /// erst umbenannt werden – sonst hängte `unique_backup_name` dem
-    /// Backup grundlos ein `~1` an, weil sein eigener Name schon belegt
-    /// ist.
+    /// "Kapitel-3" and "Kapitel 3" yield the same file name stem
+    /// (`sanitize_label` turns both into `Kapitel-3`). Then no renaming may
+    /// happen at all — otherwise `unique_backup_name` would append a
+    /// pointless `~1` to the backup, because its own name is already taken.
     #[test]
     fn rename_to_a_label_with_the_same_file_stem_keeps_the_file_names() {
         let (_tmp, saves, backups) = save_fixture();
@@ -1271,11 +1251,11 @@ mod tests {
 
         assert_eq!(renamed.archive, entry.archive);
         assert_eq!(renamed.manifest, entry.manifest);
-        assert_eq!(renamed.label.as_deref(), Some("Kapitel 3"), "das Etikett selbst ändert sich trotzdem");
+        assert_eq!(renamed.label.as_deref(), Some("Kapitel 3"), "the label itself changes all the same");
     }
 
-    /// Ein leeres Etikett entfernt die Beschriftung, statt ein Backup
-    /// namens „“ anzulegen.
+    /// An empty label removes the labelling instead of creating a backup
+    /// named "".
     #[test]
     fn rename_with_an_empty_label_removes_the_label() {
         let (_tmp, saves, backups) = save_fixture();
@@ -1285,11 +1265,11 @@ mod tests {
 
         assert_eq!(renamed.label, None);
         let stem = renamed.archive.file_stem().unwrap().to_str().unwrap();
-        assert_eq!(stem, timestamp_for_filename(&entry.created_at), "nur der Zeitstempel darf übrig bleiben");
+        assert_eq!(stem, timestamp_for_filename(&entry.created_at), "only the timestamp may remain");
     }
 
-    /// Zwei Backups derselben Sekunde mit demselben Ziel-Etikett dürfen
-    /// einander nicht überschreiben – dieselbe Regel wie beim Anlegen.
+    /// Two backups from the same second with the same target label must not
+    /// overwrite each other — the same rule as when creating them.
     #[test]
     fn rename_onto_an_occupied_name_appends_a_collision_counter() {
         let (_tmp, saves, backups) = save_fixture();
@@ -1306,9 +1286,9 @@ mod tests {
         manifest.label = entry.label.clone();
         std::fs::write(&entry.manifest, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
 
-        // Beide Backups zielen jetzt auf denselben Stamm, sobald dieses
-        // hier „Ziel“ heißen soll – aber nur, wenn auch der Zeitstempel
-        // übereinstimmt.
+        // Both backups now aim at the same stem as soon as this one is
+        // supposed to be called "Ziel" — but only if the timestamp matches
+        // too.
         let taken = backups.join(format!(
             "{}_Ziel.zip",
             timestamp_for_filename(&entry.created_at)
@@ -1317,19 +1297,18 @@ mod tests {
 
         let renamed = rename(&entry, &backups, Some("Ziel")).unwrap();
 
-        assert_ne!(renamed.archive, taken, "die belegte Datei darf nicht überschrieben werden");
+        assert_ne!(renamed.archive, taken, "the occupied file must not be overwritten");
         assert_eq!(std::fs::read(&taken).unwrap(), b"belegt");
         let stem = renamed.archive.file_stem().unwrap().to_str().unwrap();
         assert!(stem.ends_with("_Ziel~1"), "{stem}");
     }
 
-    /// `rename` schreibt das neue Manifest, bevor es das Archiv verschiebt
-    /// (damit nie ein Zustand ohne vollständiges Paar entsteht). Scheitert
-    /// das Verschieben danach – etwa weil das Archiv nebenher von Hand
-    /// gelöscht wurde –, muss dieses neue Manifest wieder verschwinden.
-    /// Bliebe es liegen, hielte `unique_backup_name` den Namen für dauerhaft
-    /// belegt und hängte jedem künftigen Umbenennen auf dieses Etikett ein
-    /// `~1` an.
+    /// `rename` writes the new manifest before it moves the archive (so
+    /// that no state without a complete pair can arise). If the move then
+    /// fails — for instance because the archive was deleted by hand in the
+    /// meantime — this new manifest has to disappear again. Left behind, it
+    /// would make `unique_backup_name` consider the name permanently taken
+    /// and append a `~1` to every future rename onto this label.
     #[test]
     fn rename_removes_the_new_manifest_when_the_archive_cannot_be_moved() {
         let (_tmp, saves, backups) = save_fixture();
@@ -1342,9 +1321,9 @@ mod tests {
         let new_stem = format!("{}_Blockiert", timestamp_for_filename(&entry.created_at));
         assert!(
             !backups.join(format!("{new_stem}.json")).exists(),
-            "das neue Manifest muss wieder entfernt werden"
+            "the new manifest must be removed again"
         );
-        assert!(entry.manifest.is_file(), "das alte Manifest bleibt unangetastet");
+        assert!(entry.manifest.is_file(), "the old manifest stays untouched");
     }
 
     #[test]
@@ -1359,8 +1338,8 @@ mod tests {
         assert!(list_backups(&backups).unwrap().is_empty());
     }
 
-    /// Wer zweimal auf „Löschen“ kommt – oder das Backup nebenher von Hand
-    /// entfernt hat –, soll keinen Fehler sehen: das Ziel ist erreicht.
+    /// Anyone who hits "Delete" twice — or removed the backup by hand in
+    /// the meantime — should not see an error: the goal has been reached.
     #[test]
     fn delete_is_idempotent() {
         let (_tmp, saves, backups) = save_fixture();

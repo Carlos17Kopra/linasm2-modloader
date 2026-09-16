@@ -1,4 +1,4 @@
-//! Der Bereich „Einstellungen“: erkannte Verzeichnisse und Verhalten.
+//! The "Einstellungen" section: detected directories and behaviour.
 
 use super::theme::{color, medium, metric, mono, sans};
 use super::widgets::{self, ButtonStyle, Icon};
@@ -14,15 +14,15 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     });
 }
 
-/// Eine Zeile der Verzeichnistabelle.
+/// One row of the directory table.
 struct PathRow {
     label: &'static str,
     value: String,
-    /// Zielpfad zum Öffnen im Dateimanager, falls es einen gibt.
+    /// Target path to open in the file manager, if there is one.
     open: Option<PathBuf>,
-    /// Nur das Spielverzeichnis lässt sich ändern.
+    /// Only the game directory can be changed.
     changeable: bool,
-    /// Warnend eingefärbt, wenn der Wert kein echter Pfad ist.
+    /// Coloured as a warning when the value is not a real path.
     unresolved: bool,
 }
 
@@ -182,7 +182,7 @@ fn behaviour(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     super::draw_card(ui, rect);
     card_title(ui, rect, "Verhalten");
 
-    // Automatisches Backup vor dem Start.
+    // Automatic backup before launching.
     let auto = Rect::from_min_size(
         Pos2::new(rect.left(), rect.top() + 44.0),
         Vec2::new(rect.width(), 56.0),
@@ -216,7 +216,7 @@ fn behaviour(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         actions.push(Action::ToggleAutoBackup);
     }
 
-    // Steam-Nutzerprofil.
+    // Steam user profile.
     let user = Rect::from_min_size(
         Pos2::new(rect.left(), auto.bottom()),
         Vec2::new(rect.width(), 56.0),
@@ -277,7 +277,7 @@ fn behaviour(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         actions.push(Action::OpenSteamUserDialog);
     }
 
-    // Verfügbarkeit des Starts ohne EAC.
+    // Availability of the start without EAC.
     let eac = Rect::from_min_size(
         Pos2::new(rect.left(), user.bottom()),
         Vec2::new(rect.width(), 62.0),

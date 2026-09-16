@@ -1,6 +1,6 @@
-//! Gemeinsamer Zustand für alle CLI-Kommandos: Pfade, Einstellungen,
-//! Bibliothek und Pak-Konfiguration in einer Struktur, einmal beim Start
-//! geladen und mit dem Verzeichnisinhalt abgeglichen.
+//! Shared state for all CLI commands: paths, settings, library and pak
+//! configuration in one structure, loaded once at startup and reconciled
+//! with the directory contents.
 
 use anyhow::{Context, Result};
 use sm2_core::library::Library;
@@ -11,25 +11,24 @@ use sm2_core::Error;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Gewicht einer Meldung aus dem Abgleich – bestimmt in der Oberfläche
-/// Farbe und Symbol, auf der Kommandozeile das Präfix.
+/// Severity of a notice from the reconciliation — it determines color and
+/// icon in the GUI, and the prefix on the command line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoticeKind {
-    /// Etwas ist geschehen, das der Nutzer wissen sollte, aber nichts fehlt.
+    /// Something happened that the user should know about, but nothing is
+    /// missing.
     Info,
-    /// Etwas weicht vom erwarteten Zustand ab und braucht womöglich eine
-    /// Entscheidung.
+    /// Something deviates from the expected state and may need a decision.
     Warning,
-    /// Etwas Erwartetes fehlt.
+    /// Something expected is missing.
     Error,
 }
 
-/// Eine Meldung aus dem Abgleich zwischen Konfiguration und Verzeichnis.
+/// A notice from the reconciliation between configuration and directory.
 ///
-/// Struktur statt `eprintln!`: die grafische Oberfläche zeigt dieselben
-/// Meldungen als Hinweisleiste über der Mod-Liste an, und ein bereits auf
-/// stderr geschriebener Text ließe sich dort nicht mehr einfärben, gruppieren
-/// oder wegklicken.
+/// A struct rather than `eprintln!`: the GUI shows the same notices in a
+/// notice bar above the mod list, and text already written to stderr could
+/// no longer be colored, grouped or dismissed there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Notice {
     pub kind: NoticeKind,
@@ -56,37 +55,35 @@ pub struct AppState {
     pub dirs: AppDirs,
     pub library: Library,
     pub config: PakConfig,
-    /// Seit dem letzten Abholen angefallene Meldungen – siehe `Notice`.
+    /// Notices accumulated since they were last taken — see `Notice`.
     pub notices: Vec<Notice>,
 }
 
 impl AppState {
-    /// Erkennt das Spiel, lädt alle Zustände und gleicht die Konfiguration
-    /// mit dem Verzeichnisinhalt ab. Meldet Abweichungen auf stderr.
+    /// Detects the game, loads all state and reconciles the configuration
+    /// with the directory contents. Reports deviations on stderr.
     ///
-    /// Der Abgleich wird bewusst NICHT sofort auf die Platte geschrieben:
-    /// `reconcile` ist deterministisch – bei jedem Aufruf aus demselben
-    /// Verzeichnisinhalt reproduzierbar –, und ein sofortiges Schreiben
-    /// würde rein lesende Kommandos wie `list` oder `paths` an einem
-    /// schreibgeschützten Mods-Verzeichnis unnötig scheitern lassen. Die
-    /// abgeglichene Konfiguration landet erst auf der Platte, wenn ohnehin
-    /// ein verändernder Befehl `persist()` aufruft.
+    /// The reconciliation is deliberately NOT written to disk right away:
+    /// `reconcile` is deterministic — every call reproduces the same result
+    /// from the same directory contents — and writing immediately would make
+    /// read-only commands like `list` or `paths` fail needlessly on a
+    /// write-protected mods directory. The reconciled configuration only
+    /// reaches the disk once a modifying command calls `persist()` anyway.
     pub fn open() -> Result<Self> {
         let (dirs, settings) = load_dirs_and_settings()?;
         Self::open_with(dirs, settings)
     }
 
-    /// Wie `open()`, aber mit bereits geladenen Basisverzeichnissen und
-    /// Einstellungen.
+    /// Like `open()`, but with base directories and settings already loaded.
     ///
-    /// Eigener Einstiegspunkt für die grafische Oberfläche: schlägt die
-    /// Spielerkennung fehl, zeigt sie den Erstlauf-Bildschirm und muss das
-    /// vom Nutzer gewählte Verzeichnis in dieselben Einstellungen schreiben
-    /// können – die also den fehlgeschlagenen Versuch überleben müssen.
+    /// A separate entry point for the GUI: if game detection fails, it shows
+    /// the first-run screen and must be able to write the directory the user
+    /// picks into those same settings — which therefore have to survive the
+    /// failed attempt.
     pub fn open_with(dirs: AppDirs, settings: Settings) -> Result<Self> {
         let paths = match &settings.game_dir {
             Some(dir) => {
-                // Bei manueller Angabe die Bibliothek aus dem Pfad ableiten.
+                // For a manual path, derive the library from it.
                 let library = dir
                     .ancestors()
                     .find(|a| a.join("steamapps/common").is_dir())
@@ -110,62 +107,58 @@ impl AppState {
         Ok(Self { paths, settings, dirs, library, config, notices })
     }
 
-    /// Holt alle seit dem letzten Aufruf angefallenen Meldungen ab und leert
-    /// den Puffer – damit dieselbe Meldung nicht zweimal erscheint.
+    /// Takes all notices accumulated since the last call and empties the
+    /// buffer — so the same notice never appears twice.
     pub fn take_notices(&mut self) -> Vec<Notice> {
         std::mem::take(&mut self.notices)
     }
 
-    /// Ist das Mods-Verzeichnis beschreibbar? Die Oberfläche fragt das beim
-    /// Laden einmal, um Aktivieren, Sortieren und Import zu sperren, statt
-    /// den Nutzer erst beim Speichern scheitern zu lassen.
+    /// Is the mods directory writable? The GUI asks this once while loading
+    /// so it can disable enabling, sorting and import, rather than letting
+    /// the user fail only when saving.
     pub fn mods_dir_is_writable(&self) -> bool {
         check_write_permission(&self.paths.mods_dir()).is_ok()
     }
 
-    /// Schreibt Bibliothek und Konfiguration auf die Platte.
+    /// Writes library and configuration to disk.
     ///
-    /// Reihenfolge ist bewusst gewählt: `library.json` (unsere eigenen
-    /// Aufzeichnungen) zuerst, `pak_config.yaml` (die für die Spiel-Engine
-    /// sichtbare Datei) zuletzt. Schlägt der zweite Schritt fehl, hat die
-    /// Engine den neuen Zustand noch nicht gesehen – nur unsere eigenen,
-    /// noch nicht wirksam gewordenen Aufzeichnungen sind dann voraus. In der
-    /// umgekehrten Reihenfolge würde derselbe Fehlerfall eine für die Engine
-    /// bereits wirksame Änderung mit veralteten eigenen Aufzeichnungen
-    /// hinterlassen.
+    /// The order is deliberate: `library.json` (our own records) first,
+    /// `pak_config.yaml` (the file the game engine sees) last. If the second
+    /// step fails, the engine has not seen the new state yet — only our own
+    /// records, which have not taken effect, are ahead. In the reverse order
+    /// the same failure would leave behind a change that is already in
+    /// effect for the engine, together with stale records of our own.
     ///
-    /// Prüft vorher, ob das Mods-Verzeichnis überhaupt beschreibbar ist –
-    /// hier und nicht beim bloßen `open()`, damit rein lesende Kommandos an
-    /// einem schreibgeschützten Verzeichnis nicht scheitern.
+    /// Checks up front whether the mods directory is writable at all — here
+    /// and not in a plain `open()`, so that read-only commands do not fail
+    /// on a write-protected directory.
     ///
-    /// Aktualisiert außerdem für jedes Pak, das gerade Teil der
-    /// Konfiguration ist, `ModInfo::last_known_disabled`/
-    /// `last_known_position` in der Bibliothek (siehe deren Doc-Kommentare):
-    /// das ist der einzige Ort, an dem diese Werte geschrieben werden, und
-    /// die einzige Quelle, aus der `PakConfig::reconcile` ein später
-    /// wieder auftauchendes Pak an seinen alten Platz zurückstellen kann.
-    /// Ein Pak, das aktuell fehlt, wird hier bewusst nicht angefasst – sein
-    /// zuletzt bekannter Zustand bleibt genau deshalb erhalten.
+    /// Also updates `ModInfo::last_known_disabled`/`last_known_position` in
+    /// the library for every pak that is currently part of the
+    /// configuration (see their doc comments): this is the only place these
+    /// values are written, and the only source from which
+    /// `PakConfig::reconcile` can put a pak that reappears later back in its
+    /// old place. A pak that is currently missing is deliberately left
+    /// untouched here — that is exactly why its last known state survives.
     ///
-    /// Ein Pak in `config.entries` ohne `ModInfo` (von Hand in `mods/`
-    /// kopiert statt über `import_pak` importiert – siehe Review-Punkt 1)
-    /// bekommt hier einen minimalen `ModInfo`-Eintrag verpasst, statt für
-    /// immer historienlos zu bleiben: sonst käme ein solches Pak nach einem
-    /// Verschwinden (z. B. Steam-Update) nie an seine vorherige Position
-    /// zurück, obwohl `reconcile`s Anhänge-Regel eigentlich genau für diese
-    /// Population gedacht ist. Der Hash-Aufwand dafür trifft nur `persist()`
-    /// (einen bewusst schreibenden Aufruf), nicht `AppState::open()` – ein
-    /// rein lesender Befehl wie `list` hasht ein neu entdecktes, von Hand
-    /// kopiertes Pak also nicht (siehe Review-Punkt 2, derselbe Grundsatz).
+    /// A pak in `config.entries` without a `ModInfo` (copied into `mods/` by
+    /// hand instead of imported via `import_pak` — see review point 1) is
+    /// given a minimal `ModInfo` entry here instead of staying without any
+    /// history forever: otherwise such a pak would never return to its
+    /// previous position after disappearing (a Steam update, say), even
+    /// though `reconcile`'s append rule is meant for exactly this
+    /// population. The hashing cost only hits `persist()` (a deliberately
+    /// writing call), not `AppState::open()` — so a read-only command like
+    /// `list` does not hash a newly discovered, hand-copied pak (see review
+    /// point 2, the same principle).
     ///
-    /// Schlägt das Hashen fehl, wird der Eintrag übersprungen (nicht
-    /// `persist()` insgesamt) und – konsistent mit `detect_altered`s eigenem
-    /// Umgang mit Lesefehlern – als deutsche Warnung gemeldet: verschwindet
-    /// die Datei einfach wieder, meldet sie das nächste `reconcile` ohnehin
-    /// unter `removed`, aber ein dauerhafter Leserechte-Fehler bei
-    /// unverändert vorhandener Datei würde sonst still und für immer
-    /// unbemerkt bleiben, statt dass der Nutzer erfährt, warum dieses Pak nie
-    /// eine Historie bekommt.
+    /// If the hashing fails, the entry is skipped (not `persist()` as a
+    /// whole) and reported as a German-language warning, consistent with how
+    /// `detect_altered` handles read errors itself: if the file simply
+    /// disappears again, the next `reconcile` reports it under `removed`
+    /// anyway, but a permanent permission error on a file that is still
+    /// there would otherwise stay silent and unnoticed forever, instead of
+    /// telling the user why this pak never gets a history.
     pub fn persist(&mut self) -> Result<()> {
         check_write_permission(&self.paths.mods_dir())?;
         let mods_dir = self.paths.mods_dir();
@@ -194,11 +187,11 @@ impl AppState {
         Ok(())
     }
 
-    /// Ermittelt das Savegame-Verzeichnis, unter Berücksichtigung einer
-    /// Vorgabe in `settings.steam_user` (siehe `GamePaths::save_dir`s
-    /// Doc-Kommentar für die genaue Auflösungsreihenfolge). Einziger
-    /// Aufrufpunkt in der CLI, damit `steam_user` nicht an jeder einzelnen
-    /// Stelle, die das Save-Verzeichnis braucht, erneut verdrahtet wird.
+    /// Determines the save directory, honoring a value set in
+    /// `settings.steam_user` (see `GamePaths::save_dir`'s doc comment for
+    /// the exact resolution order). The single call site in the CLI, so that
+    /// `steam_user` does not have to be wired up again at every place that
+    /// needs the save directory.
     pub fn save_dir(&self) -> Result<PathBuf> {
         self.paths.save_dir(self.settings.steam_user.as_deref()).map_err(Into::into)
     }
@@ -212,27 +205,26 @@ impl AppState {
     }
 }
 
-/// Gleicht `config` mit dem tatsächlichen Verzeichnisinhalt ab (Spec §6.3)
-/// und meldet jede Abweichung auf stderr. Eigene Funktion statt inline in
-/// `open()`, damit die Logik in Tests unabhängig von einer echten
-/// Spielinstallation (die `open()` über `discover()`/`settings.toml`
-/// verlangt) durchlaufen werden kann.
+/// Reconciles `config` with the actual directory contents (spec §6.3) and
+/// reports every deviation on stderr. A separate function instead of inline
+/// in `open()`, so the logic can be exercised in tests without a real game
+/// installation (which `open()` requires via `discover()`/`settings.toml`).
 ///
-/// Baut den bekannten Zustand aus `library` für `PakConfig::reconcile` auf
-/// (siehe `KnownState`s Doc-Kommentar): `pak_config.rs` kennt die Bibliothek
-/// bewusst nicht selbst, um die Modulschichtung nicht umzukehren – die
-/// App-Schicht baut diese Map explizit und übergibt sie als Parameter. Ein
-/// `ModInfo` ohne `last_known_position` (nie Teil der Konfiguration gewesen,
-/// oder ein `library.json` von vor diesem Feld) wird dabei ausgeschlossen
-/// statt mit einer geratenen Position aufgenommen – siehe Review-Punkt 4 und
-/// `ModInfo::last_known_position`s Doc-Kommentar.
+/// Builds the known state from `library` for `PakConfig::reconcile` (see
+/// `KnownState`'s doc comment): `pak_config.rs` deliberately does not know
+/// the library itself, so the module layering is not inverted — the app
+/// layer builds this map explicitly and passes it in as a parameter. A
+/// `ModInfo` without `last_known_position` (never part of the configuration,
+/// or a `library.json` from before that field existed) is excluded rather
+/// than included with a guessed position — see review point 4 and
+/// `ModInfo::last_known_position`'s doc comment.
 ///
-/// Prüft anschließend den dritten Abgleichsfall aus Spec §6.3 ("außerhalb
-/// verändert") über `Library::detect_altered` und gibt zurück, ob dessen
-/// billiger Vorfilter-Cache aufgefrischt wurde – der Aufrufer (`open()`)
-/// schreibt `library.json` dann sofort neu (siehe Review-Punkt 2), damit ein
-/// veraltetes oder fehlendes `mtime` nicht bei jedem weiteren – auch rein
-/// lesenden – Aufruf erneut zu einem vollständigen Hash führt.
+/// Then checks the third reconciliation case from spec §6.3 ("altered
+/// outside") via `Library::detect_altered` and returns whether its cheap
+/// pre-filter cache was refreshed — the caller (`open()`) then rewrites
+/// `library.json` immediately (see review point 2), so that a stale or
+/// missing `mtime` does not lead to a full hash again on every further
+/// call, including read-only ones.
 fn reconcile_and_collect(
     library: &mut Library,
     config: &mut PakConfig,
@@ -272,9 +264,9 @@ fn reconcile_and_collect(
         )));
     }
 
-    // Nur Größe/Änderungszeit werden hier standardmäßig geprüft (siehe
-    // `Library::detect_altered`s Doc-Kommentar) – ein vollständiger Hash
-    // läuft nur, wenn dieser billige Vorfilter eine Abweichung anzeigt.
+    // Only size and modification time are checked here by default (see
+    // `Library::detect_altered`'s doc comment) — a full hash only runs when
+    // that cheap pre-filter indicates a difference.
     let report = library.detect_altered(&paths.mods_dir(), &present)?;
     for pak in &report.altered {
         notices.push(Notice::warning(format!(
@@ -288,18 +280,17 @@ fn reconcile_and_collect(
     Ok((report.cache_refreshed, notices))
 }
 
-/// Schreibt `library.json` nach einer reinen Cache-Auffrischung (siehe
-/// `Library::detect_altered`s `cache_refreshed`) – und zwar nur bestmöglich:
-/// schlägt das Schreiben fehl (z. B. weil das Anwendungsdatenverzeichnis
-/// zwar existiert, aber nicht beschreibbar ist), wird nur gewarnt, `open()`
-/// selbst schlägt NICHT fehl. Bis zu diesem Punkt sind Laden der Bibliothek
-/// und der Konfiguration bereits gelungen; ein hartes `?` hier würde also
-/// genau die Fehlerklasse wieder einführen ("jeder Befehl, auch
-/// `paths`/`list`, scheitert"), die durch das Einführen von
-/// `cache_refreshed` gerade erst beseitigt wurde – dieses Schreiben ist
-/// reine Cache-Pflege, kein Ergebnis, das der Nutzer mit seinem Aufruf
-/// beabsichtigt hat. Eigene Funktion, damit dieses Verhalten (warnen statt
-/// scheitern) unabhängig von einer echten Spielinstallation testbar ist.
+/// Writes `library.json` after a pure cache refresh (see
+/// `Library::detect_altered`'s `cache_refreshed`) — on a best-effort basis
+/// only: if the write fails (because the application data directory exists
+/// but is not writable, say), it only warns, `open()` itself does NOT fail.
+/// Loading the library and the configuration has already succeeded by this
+/// point; a hard `?` here would reintroduce exactly the class of failure
+/// ("every command, even `paths`/`list`, fails") that introducing
+/// `cache_refreshed` had just removed — this write is pure cache
+/// maintenance, not a result the user intended with their call. A separate
+/// function so this behavior (warn instead of fail) is testable without a
+/// real game installation.
 fn save_library_cache_best_effort(library: &Library, library_path: &Path, notices: &mut Vec<Notice>) {
     if let Err(e) = library.save(library_path) {
         notices.push(Notice::warning(format!(
@@ -308,10 +299,10 @@ fn save_library_cache_best_effort(library: &Library, library_path: &Path, notice
     }
 }
 
-/// Baut für ein Pak, das in `config.entries` steht, aber (weil von Hand in
-/// `mods/` abgelegt statt über `import_pak` importiert) noch keinen
-/// `ModInfo`-Eintrag hat, einen minimalen Eintrag – siehe `persist()`s
-/// Doc-Kommentar (Review-Punkt 1).
+/// Builds a minimal entry for a pak that is listed in `config.entries` but
+/// has no `ModInfo` entry yet (because it was dropped into `mods/` by hand
+/// instead of imported via `import_pak`) — see `persist()`'s doc comment
+/// (review point 1).
 fn register_unknown_pak(
     mods_dir: &Path,
     pak: &str,
@@ -330,13 +321,13 @@ fn register_unknown_pak(
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs());
 
-    // Dieselbe Ableitung wie `import_pak`s `display_name` (Groß-/
-    // Kleinschreibung unabhängige, nicht wiederholte `.pak`-Endung über
-    // `strip_pak_suffix`, dann Trennzeichen durch Leerzeichen) – nicht ein
-    // eigenes `trim_end_matches(".pak")`, das bei `MOD.PAK` gar nicht griffe
-    // und bei `a.pak.pak` mehrfach abschneiden würde, sonst könnten zwei
-    // baugleich abgelegte Paks unterschiedliche Anzeigenamen bekommen, je
-    // nachdem, ob sie importiert oder von Hand kopiert wurden.
+    // The same derivation as `import_pak`'s `display_name` (a
+    // case-insensitive, non-repeated `.pak` suffix via `strip_pak_suffix`,
+    // then separators replaced by spaces) — not a separate
+    // `trim_end_matches(".pak")`, which would not match `MOD.PAK` at all and
+    // would strip `a.pak.pak` more than once. Otherwise two identically
+    // placed paks could end up with different display names depending on
+    // whether they were imported or copied by hand.
     let name = strip_pak_suffix(pak).replace(['_', '-'], " ");
 
     Ok(ModInfo {
@@ -357,12 +348,12 @@ fn register_unknown_pak(
     })
 }
 
-/// Stellt fest, ob wir in `dir` schreiben können – bevor ein verändernder
-/// Befehl Änderungen vornimmt, die dann erst beim Speichern scheitern.
-/// Lädt Basisverzeichnisse und Einstellungen – der Teil von `open()`, der
-/// auch ohne erkanntes Spielverzeichnis gelingt. Getrennt, damit die
-/// grafische Oberfläche nach einer gescheiterten Spielerkennung immer noch
-/// weiß, wohin sie ein vom Nutzer gewähltes Verzeichnis schreiben soll.
+/// Determines whether we can write in `dir` — before a modifying command
+/// makes changes that would then fail only when saving.
+/// Loads base directories and settings — the part of `open()` that succeeds
+/// even without a detected game directory. Split out so the GUI still knows
+/// where to write a directory chosen by the user after game detection has
+/// failed.
 pub fn load_dirs_and_settings() -> Result<(AppDirs, Settings)> {
     let dirs = app_dirs().context("Basisverzeichnisse nicht ermittelbar")?;
     std::fs::create_dir_all(&dirs.config)
@@ -384,11 +375,11 @@ fn check_write_permission(dir: &Path) -> Result<()> {
     }
 }
 
-/// Baut einen `AppState` direkt aus den öffentlichen Feldern, ohne `open()`
-/// (das eine echte Spielinstallation über `discover()` oder
-/// `settings.toml` verlangt). Für Tests reicht ein minimales, gültiges
-/// Spielverzeichnis. `pub(crate)`, damit auch die Tests in `cli.rs` diese
-/// Fixture nutzen können, statt sie zu duplizieren.
+/// Builds an `AppState` directly from the public fields, without `open()`
+/// (which requires a real game installation via `discover()` or
+/// `settings.toml`). A minimal, valid game directory is enough for tests.
+/// `pub(crate)` so the tests in `cli.rs` can use this fixture too instead of
+/// duplicating it.
 #[cfg(test)]
 pub(crate) fn test_fixture(base: &Path) -> AppState {
     let game = base.join("game");
@@ -433,14 +424,13 @@ mod tests {
         }
     }
 
-    /// Der Kernfall aus dem Review (1a): ein Pak verschwindet (z. B. durch
-    /// ein Steam-Update, Spec §9 R3), `persist()` schreibt die dadurch
-    /// verkürzte Konfiguration, das Pak taucht wieder auf – und muss dann
-    /// mit seinem vorherigen Aktivierungszustand UND seiner vorherigen
-    /// Position zurückkehren, nicht enabled-alphabetisch ans Ende. Prüft die
-    /// tatsächliche Verdrahtung (persist() -> library.json -> reconcile),
-    /// nicht nur `PakConfig::reconcile` isoliert (das deckt schon
-    /// `pak_config.rs`s eigener Test ab).
+    /// The core case from the review (1a): a pak disappears (through a Steam
+    /// update, say, spec §9 R3), `persist()` writes the now shortened
+    /// configuration, the pak reappears — and must then come back with its
+    /// previous enabled state AND its previous position, not enabled and
+    /// alphabetically at the end. Checks the actual wiring (persist() ->
+    /// library.json -> reconcile), not just `PakConfig::reconcile` in
+    /// isolation (`pak_config.rs`'s own test already covers that).
     #[test]
     fn a_pak_that_disappears_and_reappears_keeps_its_previous_state_across_persist() {
         let tmp = tempfile::tempdir().unwrap();
@@ -457,71 +447,71 @@ mod tests {
             PakEntry { pak: "c.pak".into(), disabled: false },
         ];
 
-        // Schreibt last_known_disabled/last_known_position für alle drei.
+        // Writes last_known_disabled/last_known_position for all three.
         state.persist().unwrap();
 
-        // b.pak verschwindet (z. B. Steam-Update) und wird abgeglichen.
+        // b.pak disappears (a Steam update, say) and is reconciled.
         std::fs::remove_file(mods_dir.join("b.pak")).unwrap();
         reconcile_and_collect(&mut state.library, &mut state.config, &state.paths).unwrap();
         assert_eq!(
             state.config.entries.iter().map(|e| e.pak.as_str()).collect::<Vec<_>>(),
             vec!["a.pak", "c.pak"],
-            "b.pak muss durch den Abgleich entfernt werden"
+            "b.pak must be removed by the reconcile"
         );
-        // persist() schreibt die verkürzte Konfiguration; b.pak bleibt in der
-        // Bibliothek unangetastet (es ist nicht Teil von config.entries).
+        // persist() writes the shortened configuration; b.pak stays
+        // untouched in the library (it is not part of config.entries).
         state.persist().unwrap();
 
-        // b.pak taucht wieder auf.
+        // b.pak reappears.
         std::fs::write(mods_dir.join("b.pak"), b"INHALT").unwrap();
         reconcile_and_collect(&mut state.library, &mut state.config, &state.paths).unwrap();
 
         let names: Vec<&str> = state.config.entries.iter().map(|e| e.pak.as_str()).collect();
-        assert_eq!(names, vec!["a.pak", "b.pak", "c.pak"], "b.pak muss an seine alte Position zurückkehren");
-        assert!(state.config.entries[1].disabled, "b.pak war deaktiviert und muss es wieder sein");
+        assert_eq!(names, vec!["a.pak", "b.pak", "c.pak"], "b.pak must return to its previous position");
+        assert!(state.config.entries[1].disabled, "b.pak was disabled and must be disabled again");
     }
 
-    /// Review-Punkt 1: dieselbe Garantie wie oben, aber für ein Pak, das nie
-    /// über `import_pak` importiert wurde – von Hand in `mods/` kopiert,
-    /// ohne jeden `ModInfo`-Eintrag. Genau diese Population war zuvor von
-    /// jeder Historie ausgeschlossen (`KnownState` kam ausschließlich aus
-    /// `library.mods`, in das nur `import_pak` je etwas einträgt) und kam
-    /// nach einem Verschwinden/Wiederauftauchen immer enabled-alphabetisch
-    /// zurück statt an ihre vorherige Position.
+    /// Review point 1: the same guarantee as above, but for a pak that was
+    /// never imported via `import_pak` — copied into `mods/` by hand,
+    /// without any `ModInfo` entry at all. This is exactly the population
+    /// that used to be excluded from any history (`KnownState` came solely
+    /// from `library.mods`, which only `import_pak` ever writes to), and
+    /// after disappearing and reappearing it always came back enabled and in
+    /// alphabetical order instead of at its previous position.
     #[test]
     fn a_hand_copied_pak_without_any_prior_modinfo_also_gets_its_history_back() {
         let tmp = tempfile::tempdir().unwrap();
         let mut state = test_fixture(tmp.path());
         let mods_dir = state.paths.mods_dir();
 
-        // Von Hand hineinkopiert: Datei liegt im Mods-Verzeichnis, aber es
-        // gibt (anders als beim Import) keinen library.mods-Eintrag dafür.
+        // Copied in by hand: the file is in the mods directory, but (unlike
+        // with an import) there is no library.mods entry for it.
         std::fs::write(mods_dir.join("hand.pak"), b"VON HAND KOPIERT").unwrap();
-        assert!(state.library.mods.is_empty(), "Ausgangslage: der Bibliothek unbekannt");
+        assert!(state.library.mods.is_empty(), "starting point: unknown to the library");
 
         reconcile_and_collect(&mut state.library, &mut state.config, &state.paths).unwrap();
         assert_eq!(
             state.config.entries.iter().map(|e| e.pak.as_str()).collect::<Vec<_>>(),
             vec!["hand.pak"],
-            "unbekanntes Pak wird zunächst wie gewohnt aktiv angehängt"
+            "an unknown pak is first appended as enabled, as usual"
         );
 
-        // Nutzer deaktiviert es explizit (z. B. `sm2 disable hand.pak`) und
-        // ein verändernder Befehl schreibt die Konfiguration.
+        // The user disables it explicitly (`sm2 disable hand.pak`, say) and
+        // a modifying command writes the configuration.
         state.config.entries[0].disabled = true;
         state.persist().unwrap();
         assert!(
             state.library.mods.contains_key("hand.pak"),
-            "persist() muss dem bislang unbekannten Pak jetzt einen ModInfo-Eintrag geben"
+            "persist() must now give the previously unknown pak a ModInfo entry"
         );
 
-        // Steam-Update räumt den Mods-Ordner leer.
+        // A Steam update wipes the mods folder.
         std::fs::remove_file(mods_dir.join("hand.pak")).unwrap();
         reconcile_and_collect(&mut state.library, &mut state.config, &state.paths).unwrap();
         assert!(state.config.entries.is_empty());
         state.persist().unwrap();
 
-        // Nutzer installiert die exakt gleiche Datei erneut von Hand.
+        // The user installs the exact same file by hand again.
         std::fs::write(mods_dir.join("hand.pak"), b"VON HAND KOPIERT").unwrap();
         reconcile_and_collect(&mut state.library, &mut state.config, &state.paths).unwrap();
 
@@ -529,15 +519,15 @@ mod tests {
         assert_eq!(state.config.entries[0].pak, "hand.pak");
         assert!(
             state.config.entries[0].disabled,
-            "die vorherige Deaktivierung muss zurückkehren, nicht enabled-alphabetisch"
+            "the previous disabled state must come back, not enabled-alphabetical"
         );
     }
 
-    /// Review-Punkt 4 (dritte Runde): der Anzeigename eines von Hand
-    /// kopierten Pakets muss exakt derselben Ableitung folgen wie
-    /// `import_pak`s `display_name` (`strip_pak_suffix` + Trennzeichen durch
-    /// Leerzeichen) – nicht `trim_end_matches(".pak")`, das bei `MOD.PAK`
-    /// gar nicht griffe und bei `a.pak.pak` mehrfach abschneiden würde.
+    /// Review point 4 (third round): the display name of a hand-copied pak
+    /// must follow exactly the same derivation as `import_pak`'s
+    /// `display_name` (`strip_pak_suffix` + separators replaced by spaces) —
+    /// not `trim_end_matches(".pak")`, which would not match `MOD.PAK` at
+    /// all and would strip `a.pak.pak` more than once.
     #[test]
     fn register_unknown_pak_derives_the_display_name_like_import_pak_does() {
         let tmp = tempfile::tempdir().unwrap();
@@ -553,45 +543,43 @@ mod tests {
         assert_eq!(state.library.mods["mein_mod.pak"].name, "mein mod");
         assert_eq!(
             state.library.mods["MOD.PAK"].name, "MOD",
-            "die .pak-Endung muss unabhängig von Groß-/Kleinschreibung erkannt werden"
+            "the .pak suffix must be recognised regardless of letter case"
         );
         assert_eq!(
             state.library.mods["a.pak.pak"].name, "a.pak",
-            "nur die letzte .pak-Endung darf abgeschnitten werden, nicht wiederholt"
+            "only the last .pak suffix may be stripped, not repeatedly"
         );
     }
 
-    /// Review-Punkt 3: schlägt `register_unknown_pak` fehl (hier: die Datei
-    /// verschwindet zwischen `reconcile` und `persist` wieder, aber ebenso
-    /// bei fehlenden Leserechten trotz weiterhin vorhandener Datei), darf das
-    /// nicht stillschweigend passieren – der Nutzer muss erfahren, warum
-    /// dieses Pak nie eine Historie bekommt.
+    /// Review point 3: if `register_unknown_pak` fails (here: the file
+    /// disappears again between `reconcile` and `persist`, but equally on
+    /// missing read permissions with the file still present), that must not
+    /// happen silently — the user has to learn why this pak never gets a
+    /// history.
     #[test]
     fn persist_survives_a_pak_that_cannot_be_registered_without_inventing_history() {
         let tmp = tempfile::tempdir().unwrap();
         let mut state = test_fixture(tmp.path());
-        // In der Konfiguration, aber ohne ModInfo UND ohne Datei im
-        // Mods-Verzeichnis – reproduziert register_unknown_paks Fehlerpfad
-        // (Stat schlägt fehl), ohne auf Dateiberechtigungen angewiesen zu
-        // sein.
+        // In the configuration, but without a ModInfo AND without a file in
+        // the mods directory — reproduces register_unknown_pak's error path
+        // (the stat fails) without depending on file permissions.
         state.config.entries = vec![PakEntry { pak: "weg.pak".into(), disabled: false }];
 
-        // Kein Panic, `persist()` selbst gelingt weiterhin (das Fehlen
-        // dieses einen Eintrags ist kein hartes Erfordernis).
+        // No panic, `persist()` itself still succeeds (the absence of this
+        // one entry is not a hard requirement).
         state.persist().unwrap();
 
         assert!(
             !state.library.mods.contains_key("weg.pak"),
-            "ohne lesbare Datei kann kein ModInfo entstehen"
+            "without a readable file no ModInfo can be created"
         );
     }
 
-    /// Review-Punkt 1: schlägt das Schreiben von `library.json` nach einer
-    /// reinen Cache-Auffrischung fehl (z. B. Anwendungsdatenverzeichnis
-    /// existiert, ist aber nicht beschreibbar), darf das nicht wie zuvor
-    /// (`?`) den gesamten Aufruf scheitern lassen – bis dahin waren sowohl
-    /// das Laden der Bibliothek als auch der Konfiguration bereits
-    /// erfolgreich.
+    /// Review point 1: if writing `library.json` after a pure cache refresh
+    /// fails (the application data directory exists but is not writable,
+    /// say), that must not fail the whole call as it used to (`?`) — up to
+    /// that point both loading the library and loading the configuration had
+    /// already succeeded.
     #[cfg(unix)]
     #[test]
     fn save_library_cache_best_effort_warns_instead_of_failing_on_a_read_only_data_dir() {
@@ -613,37 +601,36 @@ mod tests {
         if bypassed {
             perms.set_mode(0o755);
             std::fs::set_permissions(&data_dir, perms).unwrap();
-            eprintln!("übersprungen: Prozess kann den Schreibschutz offenbar übergehen (root?)");
+            eprintln!("skipped: this process can apparently bypass write protection (root?)");
             return;
         }
 
-        // Darf nicht abstürzen – die Funktion hat keinen Rückgabewert, über
-        // den ein Aufrufer den Fehlschlag zum Abbruch machen könnte (siehe
-        // deren Doc-Kommentar); das ist hier bewusst Teil des Vertrags. Der
-        // Fehlschlag verschwindet aber nicht, sondern landet als Meldung im
-        // Puffer.
+        // Must not crash — the function has no return value through which a
+        // caller could turn the failure into an abort (see its doc comment);
+        // that is deliberately part of the contract here. The failure does
+        // not vanish, though: it lands in the buffer as a notice.
         let mut notices = Vec::new();
         save_library_cache_best_effort(&Library::default(), &library_path, &mut notices);
 
         perms.set_mode(0o755);
         std::fs::set_permissions(&data_dir, perms).unwrap();
 
-        assert!(!library_path.exists(), "das Schreiben muss tatsächlich gescheitert sein");
-        assert_eq!(notices.len(), 1, "der Fehlschlag muss als genau eine Meldung erscheinen");
-        assert_eq!(notices[0].kind, NoticeKind::Warning, "eine Cache-Pflege ist kein Fehler");
+        assert!(!library_path.exists(), "the write must actually have failed");
+        assert_eq!(notices.len(), 1, "the failure must appear as exactly one notice");
+        assert_eq!(notices[0].kind, NoticeKind::Warning, "cache maintenance is not an error");
         assert!(
             notices[0].text.contains("library.json"),
-            "die Meldung muss die betroffene Datei nennen: {}",
+            "the notice must name the affected file: {}",
             notices[0].text
         );
     }
 
-    /// Review-Punkt 4: ein `library.json` von vor `last_known_position`
-    /// deserialisiert das Feld als `None` (siehe `ModInfo`s
-    /// `#[serde(default)]`). Mehrere solche Alt-Einträge dürfen beim
-    /// Wiederauftauchen nicht alle an Position 0 kollidieren (und dabei in
-    /// umgekehrter Reihenfolge relativ zueinander landen) – sie müssen wie
-    /// nie zuvor gesehene Paks behandelt werden: alphabetisch ans Ende.
+    /// Review point 4: a `library.json` from before `last_known_position`
+    /// deserializes that field as `None` (see `ModInfo`'s
+    /// `#[serde(default)]`). Several such legacy entries must not all
+    /// collide at position 0 when they reappear (ending up in reverse order
+    /// relative to each other) — they have to be treated like paks never
+    /// seen before: alphabetically at the end.
     #[test]
     fn legacy_entries_without_a_known_position_do_not_collide_at_the_front() {
         let tmp = tempfile::tempdir().unwrap();
@@ -653,7 +640,7 @@ mod tests {
         for name in ["b.pak", "a.pak"] {
             std::fs::write(mods_dir.join(name), b"x").unwrap();
             let mut info = minimal_mod_info(name);
-            info.last_known_position = None; // wie ein Alt-Eintrag ohne dieses Feld
+            info.last_known_position = None; // like a legacy entry without it
             state.library.mods.insert(name.to_string(), info);
         }
 
@@ -663,16 +650,16 @@ mod tests {
         assert_eq!(
             names,
             vec!["a.pak", "b.pak"],
-            "ohne bekannte Position muss alphabetisch angehängt werden, nicht an Position 0 kollidiert"
+            "without a known position it must be appended alphabetically, not collide at position 0"
         );
     }
 
-    /// Review-Punkt 2: ein `library.json` von vor `ModInfo::mtime` liefert
-    /// `None`, während die echte Datei ein tatsächliches `mtime` hat – der
-    /// billige Vorfilter schlägt also beim ersten Lauf fehl und hasht
-    /// einmal. Ohne das sofortige Neuschreiben von `library.json` in
-    /// `reconcile_and_report`s Aufrufer würde das bei jedem weiteren, auch
-    /// rein lesenden Aufruf erneut passieren.
+    /// Review point 2: a `library.json` from before `ModInfo::mtime` yields
+    /// `None` while the real file has an actual `mtime` — so the cheap
+    /// pre-filter misses on the first run and hashes once. Without
+    /// `reconcile_and_report`'s caller rewriting `library.json` right away,
+    /// that would happen again on every further call, including read-only
+    /// ones.
     #[test]
     fn reconcile_and_report_reports_cache_refresh_so_open_can_persist_it_once() {
         let tmp = tempfile::tempdir().unwrap();
@@ -684,22 +671,22 @@ mod tests {
         let mut legacy = minimal_mod_info("a.pak");
         legacy.hash = hash;
         legacy.size = std::fs::metadata(mods_dir.join("a.pak")).unwrap().len();
-        legacy.mtime = None; // wie ein Alt-Eintrag ohne dieses Feld
+        legacy.mtime = None; // like a legacy entry without this field
         state.library.mods.insert("a.pak".to_string(), legacy);
         state.config.entries = vec![PakEntry { pak: "a.pak".into(), disabled: false }];
 
         let (first_run, _) =
             reconcile_and_collect(&mut state.library, &mut state.config, &state.paths).unwrap();
-        assert!(first_run, "fehlendes mtime muss beim ersten Lauf als Auffrischung gemeldet werden");
+        assert!(first_run, "a missing mtime must be reported as a refresh on the first run");
 
         let (second_run, _) =
             reconcile_and_collect(&mut state.library, &mut state.config, &state.paths).unwrap();
-        assert!(!second_run, "der aufgefrischte Cache muss beim zweiten Lauf bereits greifen");
+        assert!(!second_run, "the refreshed cache must already take effect on the second run");
     }
 
-    /// Baut unter `base` (derselben Wurzel, die `test_fixture` als
-    /// `library_dir` verwendet) zwei Proton-Save-Nutzerverzeichnisse auf, wie
-    /// sie bei mehreren Steam-Profilen im selben Prefix entstehen.
+    /// Creates two Proton save user directories under `base` (the same root
+    /// that `test_fixture` uses as `library_dir`), the way they appear when
+    /// several Steam profiles share the same prefix.
     fn write_two_save_users(base: &Path) -> (String, String) {
         let user_root = base
             .join("steamapps/compatdata/2183900/pfx/drive_c/users/steamuser")
@@ -711,9 +698,9 @@ mod tests {
         (a, b)
     }
 
-    /// 2b: `settings.steam_user` ist keine Schmuck-Einstellung mehr, sondern
-    /// wird tatsächlich gelesen und löst die sonst tödliche Mehrdeutigkeit
-    /// mehrerer Save-Nutzerprofile auf.
+    /// 2b: `settings.steam_user` is no longer a decorative setting — it is
+    /// actually read and resolves the otherwise fatal ambiguity of several
+    /// save user profiles.
     #[test]
     fn save_dir_uses_the_configured_steam_user_to_resolve_ambiguity() {
         let tmp = tempfile::tempdir().unwrap();
@@ -726,9 +713,9 @@ mod tests {
         assert!(saves.ends_with(format!("{a}/Main")));
     }
 
-    /// Ein `steam_user`, der zu keinem gefundenen Profil passt (z. B. ein
-    /// Tippfehler in `settings.toml`), muss einen klaren, die vorhandenen
-    /// Profile nennenden Fehler ergeben.
+    /// A `steam_user` that matches none of the profiles found (a typo in
+    /// `settings.toml`, say) must produce a clear error that names the
+    /// profiles that do exist.
     #[test]
     fn save_dir_reports_a_clear_error_when_the_configured_steam_user_matches_nothing() {
         let tmp = tempfile::tempdir().unwrap();
@@ -740,7 +727,7 @@ mod tests {
 
         assert!(
             err.to_string().contains("00000000000000000"),
-            "Fehler muss die (nicht gefundene) Vorgabe nennen: {err}"
+            "the error must name the (not found) setting: {err}"
         );
     }
 
@@ -781,14 +768,14 @@ mod tests {
 
         let result = check_write_permission(&dir);
 
-        // Aufräumen, damit tempfile das Verzeichnis wieder löschen kann.
+        // Clean up so tempfile can delete the directory again.
         perms.set_mode(0o755);
         std::fs::set_permissions(&dir, perms).unwrap();
 
         if result.is_ok() {
-            // Läuft der Test als root, übergeht der Kernel den
-            // Schreibschutz-Modus vollständig – kein Fehlschlag dieses Tests.
-            eprintln!("übersprungen: Prozess kann den Schreibschutz offenbar übergehen (root?)");
+            // If the test runs as root, the kernel bypasses the write
+            // protection mode entirely — not a failure of this test.
+            eprintln!("skipped: this process can apparently bypass write protection (root?)");
             return;
         }
         assert!(result.is_err());

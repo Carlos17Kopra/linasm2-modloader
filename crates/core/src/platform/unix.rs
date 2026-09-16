@@ -10,8 +10,8 @@ impl Unix {
         std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
     }
 
-    /// Sucht `umu-run` im PATH. Nötig, um die Windows-Executable im
-    /// vorhandenen Proton-Prefix ohne Steam zu starten.
+    /// Looks for `umu-run` in the PATH. Needed to launch the Windows
+    /// executable in the existing Proton prefix without Steam.
     pub fn umu_launcher() -> Option<PathBuf> {
         which_in_path("umu-run")
     }
@@ -37,13 +37,13 @@ impl Platform for Unix {
 
     fn launch_via_steam(app_id: u32) -> Result<()> {
         let url = format!("steam://rungameid/{app_id}");
-        // Der Spawn-Fehler betrifft immer `xdg-open`, nicht die
-        // `steam://`-URL: das Betriebssystem versucht an dieser Stelle nur,
-        // den Opener selbst zu starten, die URL wird ihm lediglich als
-        // Argument übergeben. `Error::io` erwartet einen Pfad, der die
-        // eigentlich betroffene Ressource benennt – das ist hier `xdg-open`,
-        // nicht die URL (die als "Pfad" gerendert eine unsinnige Meldung wie
-        // "E/A-Fehler bei steam://…" ergäbe).
+        // A spawn error here always concerns `xdg-open`, never the
+        // `steam://` URL: at this point the operating system only tries to
+        // start the opener itself, and the URL is merely handed to it as an
+        // argument. `Error::io` expects a path that names the resource
+        // actually affected — that is `xdg-open` here, not the URL, which
+        // rendered as a "path" would produce a nonsensical message like
+        // "E/A-Fehler bei steam://…".
         std::process::Command::new("xdg-open")
             .arg(&url)
             .spawn()
@@ -69,9 +69,9 @@ impl Platform for Unix {
         for (k, v) in env {
             cmd.env(k, v);
         }
-        // Der Spawn-Fehler betrifft immer `umu`, nicht `exe`: das
-        // Betriebssystem prüft `exe` zu diesem Zeitpunkt noch gar nicht, es
-        // versucht nur, den Launcher selbst zu starten.
+        // A spawn error here always concerns `umu`, never `exe`: at this
+        // point the operating system does not even look at `exe`, it only
+        // tries to start the launcher itself.
         cmd.spawn().map_err(|e| Error::io(&umu, e))?;
         Ok(())
     }
@@ -92,15 +92,14 @@ impl Platform for Unix {
         Self::umu_launcher().is_some()
     }
 
-    /// Erkannt wird ausschließlich ein Prozess, dessen `/proc/<pid>/comm`
-    /// exakt `steam` lautet. Hilfsprozesse wie `steamwebhelper` zählen
-    /// bewusst nicht: sie sind Browser-Unterprozesse ohne eigene
-    /// Cloud-Synchronisation, und ein Treffer allein auf "enthält steam"
-    /// würde bei jedem `steamwebhelper` oder `steamerrorreporter`
-    /// anschlagen und die Warnung wertlos machen. Fehlt `/proc` (z. B. auf
-    /// einem System ohne procfs), wird `false` zurückgegeben statt eines
-    /// Fehlers – die Prüfung ist eine Vorsichtsmaßnahme, kein hartes
-    /// Erfordernis.
+    /// Only a process whose `/proc/<pid>/comm` reads exactly `steam` counts
+    /// as detected. Helper processes such as `steamwebhelper` deliberately
+    /// do not: they are browser subprocesses without cloud synchronisation
+    /// of their own, and matching on "contains steam" alone would fire for
+    /// every `steamwebhelper` or `steamerrorreporter` and make the warning
+    /// worthless. If `/proc` is missing (on a system without procfs, for
+    /// instance), `false` is returned instead of an error — the
+    /// verification is a precaution, not a hard requirement.
     fn steam_is_running() -> bool {
         let Ok(entries) = std::fs::read_dir("/proc") else {
             return false;
@@ -117,26 +116,25 @@ impl Platform for Unix {
     }
 }
 
-/// Prüft, ob unter `path` eine reguläre Datei mit gesetztem Ausführungsbit
-/// liegt. Ohne diese Prüfung würde eine gleichnamige, aber nicht
-/// ausführbare Datei im PATH als Treffer zählen und `launch_direct` schlägt
-/// dann mit einem rohen Spawn-Fehler fehl statt mit der hilfreichen
-/// "umu-launcher fehlt"-Meldung.
+/// Checks whether `path` holds a regular file with the execute bit set.
+/// Without this verification a file of the same name in the PATH that is
+/// not executable would count as a hit, and `launch_direct` would then fail
+/// with a raw spawn error instead of the helpful "umu-launcher is missing"
+/// message.
 fn is_executable(path: &Path) -> bool {
     std::fs::metadata(path)
         .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
         .unwrap_or(false)
 }
 
-/// Minimaler PATH-Lookup – vermeidet eine Abhängigkeit für zwanzig Zeilen.
+/// Minimal PATH lookup — avoids a dependency for twenty lines.
 pub(crate) fn which_in_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     which_in(name, &path)
 }
 
-/// PATH-Lookup über einen expliziten PATH-Wert statt über die echte
-/// Prozessumgebung, damit sich die Logik ohne Eingriff in `$PATH` testen
-/// lässt.
+/// PATH lookup over an explicit PATH value rather than the real process
+/// environment, so the logic can be tested without touching `$PATH`.
 fn which_in(name: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
     std::env::split_paths(path)
         .map(|dir| dir.join(name))
@@ -170,23 +168,23 @@ mod tests {
         assert!(as_text.iter().any(|p| p.ends_with(".steam/steam")));
         assert!(
             as_text.iter().any(|p| p.contains("com.valvesoftware.Steam")),
-            "Flatpak-Steam muss berücksichtigt werden"
+            "Flatpak Steam has to be taken into account"
         );
     }
 
-    /// `Platform::find_tool` ist eine reine Weiterleitung an
-    /// `which_in_path`/`which_in` – deren PATH-Lookup-Logik selbst ist unten
-    /// (`which_in_finds_executable_candidate` etc.) hermetisch gegen einen
-    /// expliziten PATH-Wert getestet. Ein Test von `find_tool` gegen den
-    /// echten `$PATH` würde diesen Prozessweiten Zustand global verändern
-    /// müssen und wäre damit parallel zu anderen Tests unsicher – deshalb
-    /// hier bewusst kein eigener Test, nur die Weiterleitung selbst (eine
-    /// Zeile, siehe `impl Platform for Unix`).
+    /// `Platform::find_tool` is a pure forward to
+    /// `which_in_path`/`which_in`, and their PATH lookup logic itself is
+    /// tested hermetically against an explicit PATH value below
+    /// (`which_in_finds_executable_candidate` and friends). Testing
+    /// `find_tool` against the real `$PATH` would mean changing that
+    /// process-wide state globally, which would be unsafe in parallel with
+    /// other tests — hence deliberately no test of its own here, only the
+    /// forward itself (one line, see `impl Platform for Unix`).
     ///
-    /// Reiner Rauchtest: unabhängig davon, ob `/proc` existiert oder ein
-    /// Steam-Prozess läuft, darf der Aufruf nicht abstürzen. Das
-    /// tatsächliche Erkennungsverhalten hängt vom laufenden System ab und
-    /// lässt sich ohne Prozess-Mocking nicht deterministisch prüfen.
+    /// Pure smoke test: whether or not `/proc` exists and a Steam process
+    /// is running, the call must not crash. The actual detection behaviour
+    /// depends on the running system and cannot be checked
+    /// deterministically without mocking processes.
     #[test]
     fn steam_is_running_does_not_panic() {
         let _ = Unix::steam_is_running();
@@ -210,15 +208,15 @@ mod tests {
     fn which_in_skips_non_executable_candidate() {
         let dir = tempfile::tempdir().unwrap();
         let candidate = dir.path().join("umu-run");
-        // Standard-Berechtigungen von `fs::write` sind nicht ausführbar (0o644) –
-        // genau der Fall, den `is_executable` abfangen muss.
+        // The default permissions of `fs::write` are not executable
+        // (0o644) — exactly the case `is_executable` has to catch.
         std::fs::write(&candidate, "#!/bin/sh\n").unwrap();
 
         let found = which_in("umu-run", dir.path().as_os_str());
 
         assert!(
             found.is_none(),
-            "eine nicht ausführbare Datei darf nicht als Treffer zählen"
+            "a non-executable file must not count as a hit"
         );
     }
 }

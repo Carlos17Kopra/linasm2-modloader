@@ -1,4 +1,4 @@
-//! Die Seitenleiste: Navigation oben, Zustandskarte unten.
+//! The sidebar: navigation at the top, status card at the bottom.
 
 use super::theme::{color, medium, mono, sans};
 use super::widgets::Icon;
@@ -13,10 +13,10 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         (Section::Settings, Icon::NavSettings, "Einstellungen", String::new()),
     ];
 
-    // Die Zustandskarte sitzt am unteren Rand und bekommt ihren Platz
-    // zuerst: ihre Höhe hängt davon ab, wie oft der Text umbricht, und eine
-    // nachträglich eingeschobene Lücke würde sie bei drei umbrechenden
-    // Zeilen unten aus dem Fenster schieben.
+    // The status card sits at the bottom edge and is given its space
+    // first: its height depends on how often the text wraps, and a gap
+    // inserted afterwards would push it out of the window as soon as three
+    // rows wrap.
     ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
         status_card(app, ui);
         ui.add_space(12.0);
@@ -39,8 +39,8 @@ fn mods_count(app: &App) -> String {
     }
 }
 
-/// Bei gesperrten Savegame-Funktionen steht im Zähler ein Warnzeichen statt
-/// einer Zahl – gezeichnet, nicht gesetzt (siehe `icons`).
+/// When the savegame functions are locked, the counter shows a warning
+/// sign instead of a number — drawn, not set as text (see `icons`).
 fn saves_count(app: &App) -> String {
     if app.saves_blocked.is_some() {
         String::new()
@@ -95,7 +95,7 @@ fn nav_item(
         text_color,
     );
 
-    // Zählerpille am rechten Rand.
+    // Counter pill at the right edge.
     let blocked = section == Section::Saves && app.saves_blocked.is_some();
     if blocked || !count.is_empty() {
         let (pill_fg, pill_bg) = if active {
@@ -123,7 +123,7 @@ fn nav_item(
     response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
-/// Die drei Zustandszeilen am unteren Rand: Spiel, Schreibrecht, EAC.
+/// The three status rows at the bottom: game, write access, EAC.
 fn status_card(app: &App, ui: &mut Ui) {
     let rows = [
         game_row(app),

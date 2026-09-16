@@ -4,40 +4,40 @@ use std::path::{Path, PathBuf};
 #[cfg(unix)]
 pub mod unix;
 
-/// Die gesamte plattformabhängige Fläche des Projekts.
+/// The project's entire platform-dependent surface.
 ///
-/// Windows und Linux unterscheiden sich nicht in der Pfadlogik, sondern nur
-/// in deren Wurzel: der Proton-Prefix ist ein alternatives `C:\`.
+/// Windows and Linux do not differ in the path logic, only in its root: the
+/// Proton prefix is an alternative `C:\`.
 pub trait Platform {
-    /// Orte, an denen eine Steam-Installation liegen kann.
+    /// Places where a Steam installation can live.
     fn steam_roots() -> Vec<PathBuf>;
 
-    /// Wurzel, unterhalb derer `AppData/Local/...` liegt.
+    /// The root below which `AppData/Local/...` lives.
     ///
     /// Linux: `<library>/steamapps/compatdata/<app_id>/pfx/drive_c/users/steamuser`
     /// Windows: `%USERPROFILE%`
     fn user_profile_root(app_id: u32, library: &Path) -> PathBuf;
 
-    /// Startet das Spiel regulär über Steam.
+    /// Launches the game the regular way, through Steam.
     fn launch_via_steam(app_id: u32) -> Result<()>;
 
-    /// Startet die Executable unter Umgehung von Steam (EAC-Bypass).
+    /// Launches the executable bypassing Steam (EAC bypass).
     fn launch_direct(exe: &Path, env: &[(&str, &str)]) -> Result<()>;
 
-    /// Öffnet ein Verzeichnis im Dateimanager.
+    /// Opens a directory in the file manager.
     fn open_folder(path: &Path) -> Result<()>;
 
-    /// Sucht ein Kommandozeilenwerkzeug (z. B. `unar`, `7z`) im PATH.
+    /// Looks for a command line tool (`unar`, `7z`, say) in the PATH.
     fn find_tool(name: &str) -> Option<PathBuf>;
 
-    /// Ist ein Direktstart unter Umgehung von Steam (EAC-Bypass) auf diesem
-    /// System grundsätzlich möglich – unabhängig davon, ob er im konkreten
-    /// Aufruf tatsächlich gewünscht ist?
+    /// Is a direct launch bypassing Steam (EAC bypass) possible on this
+    /// system at all — regardless of whether it is actually wanted in a
+    /// given call?
     fn direct_launch_available() -> bool;
 
-    /// Läuft der Steam-Client gerade? Relevant für Spec §6.5/§9 R2:
-    /// Cloud-Synchronisation kann eine Save-Wiederherstellung im
-    /// Hintergrund überschreiben.
+    /// Is the Steam client running right now? Relevant for spec §6.5/§9 R2:
+    /// cloud synchronisation can overwrite a restored save in the
+    /// background.
     fn steam_is_running() -> bool;
 }
 

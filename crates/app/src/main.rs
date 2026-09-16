@@ -11,8 +11,8 @@ fn main() {
         .with_writer(std::io::stderr)
         .init();
 
-    // Ohne Argumente die grafische Oberfläche, mit Argumenten die
-    // Kommandozeile – eine einzige Binary für beides.
+    // Without arguments the graphical interface, with arguments the command
+    // line — a single binary for both.
     if std::env::args().len() == 1 {
         if let Err(e) = gui::run() {
             eprintln!("Fehler: die Oberfläche konnte nicht gestartet werden – {e}");

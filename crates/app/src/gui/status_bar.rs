@@ -1,5 +1,5 @@
-//! Die Statusleiste: Fortschritt eines laufenden Auftrags links, letzte
-//! Meldung in der Mitte, Kennzahl rechts.
+//! The status bar: the progress of a running job on the left, the last
+//! message in the middle, a metric on the right.
 
 use super::theme::{color, mono, sans};
 use super::widgets::{self, ButtonStyle};
@@ -27,8 +27,8 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
             }
         }
 
-        // Kennzahl rechts zuerst reservieren, damit die Meldung in der Mitte
-        // den Rest bekommt und bei Bedarf gekürzt wird.
+        // Reserve the metric on the right first, so that the message in
+        // the middle gets the rest and is shortened when it has to be.
         let right = right_label(app);
         let right_width = ui.painter().layout_no_wrap(right.clone(), mono(11.0), color::TEXT_FAINT).size().x;
 
@@ -66,7 +66,7 @@ fn right_label(app: &App) -> String {
     }
 }
 
-/// Der Fortschrittsbalken: 180 × 6 px, vollständig gerundet.
+/// The progress bar: 180 × 6 px, fully rounded.
 fn progress_bar(ui: &mut Ui, fraction: f32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(180.0, 6.0), Sense::hover());
     let radius = CornerRadius::same(3);

@@ -1,7 +1,7 @@
-//! Integrationstest über den gesamten Ablauf: Import, Aktivierung, Profile,
-//! Abgleich mit dem Verzeichnis und Savegame-Sicherung greifen hier
-//! zusammen, wie ein Nutzer sie tatsächlich durchläuft. Die Modultests in
-//! `sm2-core` selbst prüfen jeden Baustein einzeln.
+//! Integration test over the whole flow: import, activation, profiles,
+//! reconciliation with the directory and savegame backup all come together
+//! here the way a user actually goes through them. The unit tests in
+//! `sm2-core` itself check each building block on its own.
 
 use std::io::Write;
 use std::path::Path;
@@ -12,12 +12,12 @@ use sm2_core::paths::GamePaths;
 use sm2_core::profile::Profile;
 use sm2_core::{import, saves};
 
-/// Baut ein Spielverzeichnis samt Proton-Prefix und Savegames, wie es einer
-/// echten Installation entspricht.
+/// Builds a game directory with Proton prefix and savegames, matching a
+/// real installation.
 ///
-/// Die SteamID ist frei erfunden (17 Ziffern, aber an keine echte ID
-/// angelehnt) – `GamePaths::save_dir` wählt ohnehin das einzige vorhandene
-/// Nutzerverzeichnis aus, unabhängig von dessen konkretem Namen.
+/// The SteamID is made up (17 digits, but modelled on no real ID) —
+/// `GamePaths::save_dir` picks the only user directory present anyway,
+/// whatever its concrete name.
 fn world() -> (tempfile::TempDir, GamePaths) {
     let tmp = tempfile::tempdir().unwrap();
     let library = tmp.path().join("SteamLibrary");
@@ -34,9 +34,9 @@ fn world() -> (tempfile::TempDir, GamePaths) {
     (tmp, paths)
 }
 
-/// Baut ein Zip-Archiv mit den gegebenen Einträgen – dieselbe Hilfsfunktion
-/// wie in den Modultests von `import.rs`, hier gebraucht, um den Weg über ein
-/// echtes Archiv statt einer bloßen `.pak`-Datei zu prüfen.
+/// Builds a zip archive with the given entries — the same helper as in the
+/// unit tests of `import.rs`, needed here to check the path through a real
+/// archive rather than a bare `.pak` file.
 fn zip_with(files: &[(&str, &[u8])], to: &Path) {
     let file = std::fs::File::create(to).unwrap();
     let mut zip = zip::ZipWriter::new(file);
@@ -59,7 +59,7 @@ fn from_import_through_profile_to_restoration() {
     let mut lib = Library::default();
     let mut cfg = PakConfig::default();
 
-    // Zwei Mods importieren – beide landen deaktiviert.
+    // Import two mods — both end up disabled.
     let downloads = tmp.path().join("downloads");
     std::fs::create_dir_all(&downloads).unwrap();
     for (name, content) in [("astartes.pak", &b"ASTARTES"[..]), ("chaplain.pak", &b"CHAPLAIN"[..])] {
@@ -68,19 +68,19 @@ fn from_import_through_profile_to_restoration() {
         import::import_pak(&paths, &mut lib, &mut cfg, &source, None).unwrap();
     }
     assert_eq!(cfg.entries.len(), 2);
-    assert!(cfg.entries.iter().all(|e| e.disabled), "Import darf nichts aktivieren");
+    assert!(cfg.entries.iter().all(|e| e.disabled), "an import must not enable anything");
 
-    // Einen aktivieren, Reihenfolge festlegen, in die Engine-Datei schreiben.
+    // Enable one, fix the order, write it to the engine file.
     cfg.entries.iter_mut().find(|e| e.pak == "astartes.pak").unwrap().disabled = false;
     cfg.entries.reverse();
     cfg.save(&paths.pak_config_path()).unwrap();
 
-    // Die Engine würde exakt das lesen.
+    // The engine would read exactly this.
     let loaded = PakConfig::load(&paths.pak_config_path()).unwrap();
     assert_eq!(loaded, cfg);
     assert_eq!(loaded.enabled().count(), 1);
 
-    // Zustand als Profil sichern, dann alles abschalten (Vanilla).
+    // Save the state as a profile, then switch everything off (vanilla).
     let profile = Profile::from_config("Astartes", &cfg);
     profile.save(&profile_dir).unwrap();
 
@@ -91,10 +91,10 @@ fn from_import_through_profile_to_restoration() {
     assert_eq!(
         PakConfig::load(&paths.pak_config_path()).unwrap().enabled().count(),
         0,
-        "Vanilla-Zustand: keine Mods aktiv"
+        "vanilla state: no mods active"
     );
 
-    // Profil wiederherstellen.
+    // Restore the profile.
     let (restored, missing) = profile.apply(&paths.list_paks().unwrap());
     assert!(missing.is_empty());
     restored.save(&paths.pak_config_path()).unwrap();
@@ -105,10 +105,10 @@ fn from_import_through_profile_to_restoration() {
     );
     assert_eq!(
         after_apply, restored,
-        "die Engine-Datei muss exakt dem wiederhergestellten Profil-Zustand entsprechen"
+        "the engine file has to match the restored profile state exactly"
     );
 
-    // Savegame sichern, kaputtmachen, wiederherstellen.
+    // Back up the save, break it, restore it.
     let save_dir = paths.save_dir(None).unwrap();
     let backup_entry = saves::backup(&save_dir, &backup_root, Some("vor Modded-Start")).unwrap();
     saves::verify(&backup_entry).unwrap();
@@ -117,8 +117,9 @@ fn from_import_through_profile_to_restoration() {
     let safety_backup = saves::restore(&backup_entry, &save_dir, &backup_root).unwrap();
 
     assert_eq!(std::fs::read(save_dir.join("profile.sav")).unwrap(), b"FORTSCHRITT");
-    // Auch der zerstörte Stand ist noch da, falls die Wiederherstellung falsch gewesen wäre –
-    // genau die Garantie, um derentwillen `restore` seine eigene Sicherung anlegt und verifiziert.
+    // The destroyed state is still there too, in case the restore had been
+    // the wrong one — exactly the guarantee for whose sake `restore`
+    // creates and verifies a backup of its own.
     saves::verify(&safety_backup).unwrap();
 }
 
@@ -127,19 +128,20 @@ fn reconcile_catches_manual_interventions() {
     let (_tmp, paths) = world();
     let mut cfg = PakConfig::default();
 
-    // Jemand kopiert ein Pak von Hand hinein – die Engine würde es ungesteuert laden.
+    // Someone copies a pak in by hand — the engine would load it
+    // uncontrolled.
     std::fs::write(paths.mods_dir().join("vonhand.pak"), b"X").unwrap();
 
     let result = cfg.reconcile(&paths.list_paks().unwrap(), &std::collections::HashMap::new());
 
     assert_eq!(result.added, vec!["vonhand.pak"]);
     assert_eq!(cfg.entries.len(), 1);
-    assert!(!cfg.entries[0].disabled, "es lädt ohnehin – also steuerbar machen");
+    assert!(!cfg.entries[0].disabled, "it loads anyway – so make it controllable");
 }
 
-/// Die meisten Nutzer importieren nicht eine nackte `.pak`-Datei, sondern ein
-/// heruntergeladenes Archiv. Dieser Test prüft den vollständigen Weg über
-/// `extract_paks` und `import_pak` gemeinsam.
+/// Most users do not import a bare `.pak` file but a downloaded archive.
+/// This test checks the complete path through `extract_paks` and
+/// `import_pak` together.
 #[test]
 fn importing_from_a_real_archive_extracts_and_registers_disabled() {
     let (tmp, paths) = world();
@@ -152,7 +154,7 @@ fn importing_from_a_real_archive_extracts_and_registers_disabled() {
     let extracted_dir = tmp.path().join("extracted");
     std::fs::create_dir_all(&extracted_dir).unwrap();
     let extracted = import::extract_paks(&archive, &extracted_dir).unwrap();
-    assert_eq!(extracted.len(), 1, "nur die .pak-Datei zählt, readme.txt wird ignoriert");
+    assert_eq!(extracted.len(), 1, "only the .pak file counts, readme.txt is ignored");
 
     let mut lib = Library::default();
     let mut cfg = PakConfig::default();
@@ -165,7 +167,7 @@ fn importing_from_a_real_archive_extracts_and_registers_disabled() {
     assert_eq!(std::fs::read(paths.mods_dir().join("gunner.pak")).unwrap(), b"GUNNER");
     assert!(
         cfg.entries.last().unwrap().disabled,
-        "Import aus einem Archiv darf ebenso wenig aktivieren wie der Import einer bloßen .pak-Datei"
+        "an import from an archive must enable just as little as the import of a bare .pak file"
     );
     assert_eq!(lib.mods["gunner.pak"].source.as_deref(), Some("mod_pack.zip"));
 }

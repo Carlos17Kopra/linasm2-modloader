@@ -1,4 +1,4 @@
-//! Der Bereich „Profile“.
+//! The "Profile" section.
 
 use super::format::human_time;
 use super::theme::{color, medium, metric, mono, sans};
@@ -94,7 +94,7 @@ fn row(app: &App, ui: &mut Ui, profile: &sm2_core::profile::Profile, actions: &m
         metric::COLUMN_GAP,
     );
 
-    // Name, dahinter der Merker für automatisch angelegte Sicherungen.
+    // The name, followed by the marker for automatically made snapshots.
     let automatic = profile.name.starts_with(VANILLA_SNAPSHOT_PREFIX);
     let name_galley = widgets::truncated(
         ui,
@@ -141,7 +141,7 @@ fn row(app: &App, ui: &mut Ui, profile: &sm2_core::profile::Profile, actions: &m
         color::TEXT_DIM2,
     );
 
-    // Schaltflächen rechtsbündig.
+    // Buttons aligned to the right.
     let mut buttons = ui.new_child(
         UiBuilder::new()
             .max_rect(cells[3])
@@ -165,8 +165,8 @@ fn row(app: &App, ui: &mut Ui, profile: &sm2_core::profile::Profile, actions: &m
     }
 }
 
-/// Wann das Profil zuletzt geschrieben wurde. Ein Profil trägt selbst keinen
-/// Zeitstempel – die Datei tut es, und genau die ist gemeint.
+/// When the profile was last written. A profile carries no timestamp of its
+/// own — the file does, and that is exactly what is meant here.
 fn saved_at(app: &App, profile: &sm2_core::profile::Profile) -> String {
     let Some(dir) = app.profiles_dir() else { return String::from("—") };
     let path = profile.path_in(&dir);

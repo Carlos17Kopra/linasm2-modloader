@@ -1,5 +1,5 @@
-//! Der Bereich „Mods“: Hinweisleiste, Liste mit Ladereihenfolge,
-//! Detailkarte – und der Erstlauf-Bildschirm, wenn das Spiel fehlt.
+//! The "Mods" section: the notice bar, the list with its load order, the
+//! detail card — and the first-run screen when the game is missing.
 
 use super::theme::{color, medium, metric, mono, sans};
 use super::widgets::{self, ButtonStyle, Column, Icon};
@@ -10,11 +10,11 @@ use egui::{
     Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2,
 };
 
-/// Höhe der Detailkarte: Innenabstände, Titelzeile und drei Rasterzeilen –
-/// fest, weil der Inhalt immer aus denselben Feldern besteht.
+/// Height of the detail card: padding, title row and three grid rows —
+/// fixed, because the content always consists of the same fields.
 const DETAILS_HEIGHT: f32 = 163.0;
 
-/// Spalten der Mod-Liste, wie im Entwurf notiert:
+/// Columns of the mod list, as noted in the design:
 /// `22px 44px 1fr 72px 124px 56px`.
 const MOD_COLUMNS: [Column; 6] = [
     Column::Fixed(22.0),
@@ -54,9 +54,9 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     }
 }
 
-/// Die Hinweisleiste über der Liste: eine Zeile je Meldung, links ein
-/// farbiger Strich, rechts wahlweise eine Schaltfläche und immer ein Kreuz
-/// zum Wegklicken.
+/// The notice bar above the list: one row per message, a coloured stripe on
+/// the left, optionally a button on the right, and always a cross to
+/// dismiss it.
 fn notices(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     if app.notices.is_empty() {
         return;
@@ -104,7 +104,7 @@ fn notices(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
             color::TEXT,
         );
 
-        // Kreuz zum Wegklicken, ganz rechts.
+        // The dismiss cross, furthest right.
         let dismiss = Rect::from_center_size(
             Pos2::new(rect.right() - 12.0 - 5.5, rect.center().y),
             Vec2::splat(18.0),
@@ -170,7 +170,7 @@ fn notice_action_label(action: &NoticeAction) -> &'static str {
     }
 }
 
-/// Die Karte mit der Mod-Liste: Werkzeugleiste, Spaltenkopf, Zeilen.
+/// The card holding the mod list: toolbar, column head, rows.
 fn mod_list(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     let outer = ui.available_rect_before_wrap();
     let painter = ui.painter();
@@ -209,15 +209,15 @@ fn mod_list(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
 
     ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            // Die Zeilen stoßen aneinander; ihre Trennung ist die 1-px-Linie,
-            // nicht ein Abstand.
+            // The rows butt up against each other; what separates them is
+            // the 1 px line, not a gap.
             ui.spacing_mut().item_spacing.y = 0.0;
             rows(app, ui, actions);
         });
     });
 }
 
-/// Import, Filter, Zieh-Hinweis, Zähler.
+/// Import, filter, drag notice, counter.
 fn toolbar_row(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
@@ -293,7 +293,7 @@ fn column_head(ui: &Ui, rect: Rect) {
     );
 }
 
-/// Die Zeilen der Liste, samt Ziehen zum Sortieren.
+/// The rows of the list, including dragging to reorder.
 fn rows(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     let filter = app.filter.trim().to_lowercase();
     let can_drag = app.can_modify() && filter.is_empty();
@@ -355,8 +355,8 @@ fn rows(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     }
 
     if app.drag.is_some() && app.drag.as_ref().is_none_or(|d| d.drop_index.is_none()) {
-        // Ohne Zielangabe keine Marke – sonst stünde sie irreführend an der
-        // zuletzt bekannten Stelle.
+        // No target, no marker — otherwise it would sit misleadingly at
+        // the last place it was known to be.
     }
     if let Some(y) = drop_marker {
         ui.painter().hline(
@@ -405,7 +405,7 @@ fn row_content(
     let missing = info.is_none();
     let altered = info.is_some_and(|i| i.known_altered);
 
-    // Anfasser.
+    // Drag handle.
     Icon::Grip.paint(
         ui.painter(),
         cells[0].center(),
@@ -413,7 +413,7 @@ fn row_content(
         if can_drag { color::TEXT_FAINT } else { color::BORDER_STRONG },
     );
 
-    // Schalter.
+    // The toggle.
     let toggle_rect = Rect::from_min_size(
         Pos2::new(cells[1].left(), cells[1].center().y - 8.5),
         Vec2::new(30.0, 17.0),
@@ -423,7 +423,7 @@ fn row_content(
         actions.push(Action::ToggleMod(pak.to_string()));
     }
 
-    // Name und Dateiname.
+    // Name and file name.
     let name = app.display_name(pak);
     let name_color = if missing {
         color::TEXT_MUTED
@@ -432,9 +432,9 @@ fn row_content(
     } else {
         color::TEXT_STRONG
     };
-    // Der Name bekommt höchstens zwei Drittel der Spalte, damit der
-    // Dateiname daneben nicht grundsätzlich verschwindet; braucht er
-    // weniger, fällt der Rest an den Dateinamen.
+    // The name gets at most two thirds of the column, so that the file
+    // name beside it does not simply disappear every time; if it needs
+    // less, the rest falls to the file name.
     let name_galley =
         widgets::truncated(ui, &name, medium(13.0), name_color, cells[2].width() * 0.66);
     let name_width = name_galley.size().x;
@@ -453,7 +453,7 @@ fn row_content(
     let version = info.and_then(|i| i.version.clone()).unwrap_or_else(|| String::from("—"));
     widgets::column_text(ui, cells[3], &version, mono(11.5), color::TEXT_DIM2);
 
-    // Statusmerker.
+    // Status marker.
     if let Some((icon, label, foreground, background)) = badge_for(missing, altered) {
         let mut badge_ui = ui.new_child(
             UiBuilder::new()
@@ -463,7 +463,7 @@ fn row_content(
         widgets::badge(&mut badge_ui, Some(icon), label, foreground, background);
     }
 
-    // Rang: hoch und runter.
+    // Rank: up and down.
     let button_size = Vec2::new(22.0, 20.0);
     let up = Rect::from_min_size(
         Pos2::new(cells[5].center().x - 22.5, cells[5].center().y - 10.0),
@@ -482,14 +482,13 @@ fn row_content(
     let _ = rank;
 }
 
-/// Welchen Merker eine Zeile trägt.
+/// Which marker a row carries.
 ///
-/// Der Entwurf kennt fünf; drei davon („ÜBERNOMMEN“, „NEU“, „ZURÜCK“)
-/// beschreiben, was der letzte Abgleich getan hat, und stehen deshalb als
-/// Meldung in der Hinweisleiste statt dauerhaft in der Zeile – nach einem
-/// Neustart wären sie sonst nicht mehr wahr. In der Zeile bleiben die
-/// beiden Zustände, die sich jederzeit aus Bibliothek und Verzeichnis
-/// ablesen lassen.
+/// The design knows five; three of them ("ÜBERNOMMEN", "NEU", "ZURÜCK")
+/// describe what the last reconciliation did, and therefore appear as a
+/// message in the notice bar instead of permanently in the row — after a
+/// restart they would no longer be true. What stays in the row are the two
+/// states that can be read off the library and the directory at any time.
 fn badge_for(missing: bool, altered: bool) -> Option<(Icon, &'static str, Color32, Color32)> {
     if missing {
         Some((Icon::Warning, "ÜBERNOMMEN", color::WARN, color::WARN_BG))
@@ -515,7 +514,7 @@ fn rank_button(ui: &mut Ui, rect: Rect, icon: Icon, salt: (&str, &str)) -> bool 
     response.clicked()
 }
 
-/// „Noch keine Mods installiert“.
+/// "Noch keine Mods installiert".
 fn empty_state(ui: &mut Ui, actions: &mut Vec<Action>) {
     let rect = ui.available_rect_before_wrap();
     ui.scope_builder(
@@ -571,12 +570,12 @@ fn empty_state(ui: &mut Ui, actions: &mut Vec<Action>) {
     );
 }
 
-/// Die Detailkarte unter der Liste.
+/// The detail card below the list.
 ///
-/// Auch ein von Hand ins Mods-Verzeichnis gelegtes Pak bekommt sie: es hat
-/// keinen Bibliothekseintrag, aber genau das ist die Auskunft, die der
-/// Nutzer an dieser Stelle braucht – sonst bliebe ausgerechnet die Zeile
-/// ohne Erklärung, die als Einzige einen Warnmerker trägt.
+/// A pak dropped into the mods directory by hand gets one too: it has no
+/// library entry, but that is exactly the information the user needs at
+/// this point — otherwise the one row that carries a warning marker would
+/// be the one left without an explanation.
 fn details(app: &App, ui: &mut Ui, pak: &str, actions: &mut Vec<Action>) {
     let info = app.mod_info(pak);
     let rect = Rect::from_min_size(
@@ -592,7 +591,7 @@ fn details(app: &App, ui: &mut Ui, pak: &str, actions: &mut Vec<Action>) {
 
     let inner = rect.shrink2(Vec2::new(14.0, 0.0));
 
-    // Titelzeile.
+    // Title row.
     let title_y = rect.top() + 12.0 + 9.0;
     let display_name = app.display_name(pak);
     let name_galley = painter.layout_no_wrap(display_name, medium(13.5), color::TEXT_STRONG);
@@ -619,7 +618,7 @@ fn details(app: &App, ui: &mut Ui, pak: &str, actions: &mut Vec<Action>) {
         actions.push(Action::ClearSelection);
     }
 
-    // Raster: vier Spalten, drei Zeilen.
+    // Grid: four columns, three rows.
     let grid_top = rect.top() + 12.0 + 18.0 + 9.0;
     let column_width = (inner.width() - 3.0 * 18.0) / 4.0;
     let cell = |column: usize, row: usize, span: usize| {
@@ -688,12 +687,12 @@ fn details(app: &App, ui: &mut Ui, pak: &str, actions: &mut Vec<Action>) {
     field(ui, cell(0, 2, 4), "NOTIZEN", &notes, false);
 }
 
-/// Der Erstlauf-Bildschirm, wenn keine Installation gefunden wurde.
+/// The first-run screen, shown when no installation was found.
 ///
-/// Die Karte wächst mit ihrem Inhalt, statt eine feste Höhe zu haben: wie
-/// viele Suchorte aufgezählt werden, hängt vom System ab (Flatpak-Steam,
-/// zusätzliche Bibliotheken), und eine zu kleine Karte schöbe ausgerechnet
-/// die beiden Schaltflächen über ihren eigenen Rand hinaus.
+/// The card grows with its content instead of having a fixed height: how
+/// many search locations are listed depends on the system (Flatpak Steam,
+/// extra libraries), and a card that is too small would push the two
+/// buttons, of all things, out past its own edge.
 fn game_not_found(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         let card_width = 600.0_f32.min(ui.available_width());
@@ -783,7 +782,7 @@ fn game_not_found_content(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
 
     ui.add_space(14.0);
     ui.horizontal(|ui| {
-        // Die beiden Schaltflächen als Block in der Mitte der Karte.
+        // The two buttons as one block in the middle of the card.
         let width = ui.available_width();
         ui.add_space(((width - 330.0) / 2.0).max(0.0));
         ui.spacing_mut().item_spacing.x = 10.0;

@@ -3,15 +3,15 @@ use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// Anwendungsweite Einstellungen, unabhängig von einem einzelnen Profil.
+/// Application-wide settings, independent of any single profile.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// Überschreibt die automatische Erkennung.
+    /// Overrides the automatic detection.
     pub game_dir: Option<PathBuf>,
-    /// Vor jedem Modded-Start ein Save-Backup anlegen.
+    /// Create a save backup before every modded launch.
     pub auto_backup: bool,
-    /// SteamID64, falls mehrere Profile im Prefix liegen.
+    /// SteamID64, in case several profiles live in the prefix.
     pub steam_user: Option<String>,
 }
 
@@ -22,8 +22,8 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// Lädt die Einstellungen von `path`. Eine fehlende Datei ergibt die
-    /// Standardwerte (frische Installation).
+    /// Loads the settings from `path`. A missing file yields the default
+    /// values (fresh installation).
     pub fn load(path: &Path) -> Result<Self> {
         match std::fs::read_to_string(path) {
             Ok(text) => toml::from_str(&text).map_err(|e| {
@@ -35,8 +35,8 @@ impl Settings {
         }
     }
 
-    /// Schreibt die Einstellungen atomar nach `path` und legt dabei das
-    /// Elternverzeichnis an, falls es noch nicht existiert.
+    /// Writes the settings atomically to `path`, creating the parent
+    /// directory if it does not exist yet.
     pub fn save(&self, path: &Path) -> Result<()> {
         let text = toml::to_string_pretty(self).map_err(|e| {
             Error::io(path, std::io::Error::new(std::io::ErrorKind::InvalidData, e))
@@ -65,9 +65,9 @@ mod tests {
 
     #[test]
     fn empty_file_yields_default_values() {
-        // Eine leere Datei ist gültiges (leeres) TOML; #[serde(default)]
-        // muss dafür sorgen, dass daraus die Standardwerte werden statt
-        // eines Fehlers wegen fehlender Felder.
+        // An empty file is valid (empty) TOML; #[serde(default)] has to
+        // make sure that turns into the default values instead of an error
+        // about missing fields.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.toml");
         std::fs::write(&path, b"").unwrap();
@@ -86,7 +86,7 @@ mod tests {
         let settings = Settings {
             game_dir: Some(PathBuf::from("/spiele/SM2")),
             auto_backup: false,
-            // Offensichtlich erfundene SteamID64, keine echte.
+            // Obviously made-up SteamID64, not a real one.
             steam_user: Some("11111111111111111".into()),
         };
         settings.save(&path).unwrap();
@@ -117,11 +117,11 @@ mod tests {
         let message = err.to_string();
         assert!(
             message.contains(path.to_str().unwrap()),
-            "Fehlermeldung muss den Pfad enthalten: {message}"
+            "the error message must contain the path: {message}"
         );
         assert!(
             !message.contains("expected") && !message.contains("invalid"),
-            "Fehlermeldung soll auf Deutsch sein, nicht die rohe toml-Meldung enthalten: {message}"
+            "the error message should be in German, not carry the raw toml message: {message}"
         );
     }
 }

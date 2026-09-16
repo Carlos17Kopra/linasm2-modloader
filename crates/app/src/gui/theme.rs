@@ -1,9 +1,9 @@
-//! Farben, Schriften und Abstände des Entwurfs, eins zu eins übernommen.
+//! The design's colours, fonts and spacing, taken over one to one.
 //!
-//! Alle Werte stammen aus `SM2 Mod Loader GUI v2 modern.dc.html`. Der Entwurf
-//! ist bewusst nur dunkel gehalten; es gibt keine helle Variante, deshalb
-//! setzt `install` `Visuals::dark()` als Ausgangspunkt und überschreibt
-//! anschließend jede Fläche, die im Entwurf vorkommt.
+//! Every value comes from `SM2 Mod Loader GUI v2 modern.dc.html`. The design
+//! is deliberately dark only; there is no light variant. That is why
+//! `install` starts out from `Visuals::dark()` and then overrides every
+//! surface the design uses.
 
 use egui::{
     Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Stroke, Style,
@@ -11,194 +11,194 @@ use egui::{
 };
 use std::sync::Arc;
 
-/// Wandelt einen Hex-Literal wie `0x3ba6a0` in eine Farbe – damit die Werte
-/// im Quelltext genauso dastehen wie im Entwurf.
+/// Turns a hex literal such as `0x3ba6a0` into a colour, so that the values
+/// read the same in the source as they do in the design.
 const fn hex(value: u32) -> Color32 {
     Color32::from_rgb((value >> 16) as u8, ((value >> 8) & 0xff) as u8, (value & 0xff) as u8)
 }
 
-/// Sämtliche Farben des Entwurfs. Die Namen beschreiben die Rolle, nicht den
-/// Farbton – der Entwurf benutzt dieselbe Fläche an mehreren Stellen.
+/// Every colour of the design. The names describe the role, not the hue —
+/// the design reuses the same fill in several places.
 pub mod color {
     use super::hex;
     use egui::Color32;
 
-    /// Fläche des Anwendungsfensters (CentralPanel).
+    /// Fill of the application window (CentralPanel).
     pub const WINDOW: Color32 = hex(0x12141a);
-    /// Seitenleiste und Statusleiste.
+    /// Sidebar and status bar.
     pub const PANEL: Color32 = hex(0x101218);
-    /// Kopfleiste über dem Inhalt.
+    /// Top bar above the content.
     pub const TOP_BAR: Color32 = hex(0x14161d);
-    /// Karten (Mod-Liste, Profile, Backups, Einstellungen).
+    /// Cards (mod list, profiles, backups, settings).
     pub const CARD: Color32 = hex(0x161921);
-    /// Aufklappmenü der Startauswahl.
+    /// Drop-down menu of the launch choice.
     pub const MENU: Color32 = hex(0x191c24);
-    /// Titelzeile eines modalen Fensters.
+    /// Title row of a modal window.
     pub const DIALOG_HEAD: Color32 = hex(0x1a1d25);
-    /// Kopfzeile einer Tabelle.
+    /// Header row of a table.
     pub const TABLE_HEAD: Color32 = hex(0x13161d);
-    /// Schaltflächen, Schalterspur im Aus-Zustand.
+    /// Buttons, and the toggle track in its off state.
     pub const CONTROL: Color32 = hex(0x1b1f27);
-    /// Eingabefelder und eingelassene Flächen.
+    /// Input fields and inset surfaces.
     pub const INPUT: Color32 = hex(0x12141a);
-    /// Zeile unter dem Zeiger.
+    /// Row under the pointer.
     pub const HOVER: Color32 = hex(0x1a1e26);
-    /// Ausgewählte Zeile beziehungsweise aktiver Navigationspunkt.
+    /// Selected row, and the active navigation item.
     pub const SELECTED: Color32 = hex(0x18262a);
-    /// Ausgewählte Zeile unter dem Zeiger.
+    /// Selected row under the pointer.
     pub const SELECTED_HOVER: Color32 = hex(0x1c2d32);
-    /// Gesperrte Schaltfläche (Import bei schreibgeschütztem Verzeichnis).
+    /// Disabled button (import while the directory is read-only).
     pub const CONTROL_DISABLED: Color32 = hex(0x171a20);
 
-    /// Rahmen von Eingaben und Schaltflächen.
+    /// Border of inputs and buttons.
     pub const BORDER: Color32 = hex(0x262b36);
-    /// Trennlinien zwischen Panels und Kartenabschnitten.
+    /// Dividers between panels and card sections.
     pub const BORDER_SOFT: Color32 = hex(0x1e222b);
-    /// Trennlinien zwischen Tabellenzeilen.
+    /// Dividers between table rows.
     pub const BORDER_ROW: Color32 = hex(0x1b1f27);
-    /// Rahmen, der sich vom Untergrund abhebt (Schalterspur, Abbrechen).
+    /// Border that stands out from its ground (toggle track, cancel).
     pub const BORDER_STRONG: Color32 = hex(0x2b313d);
-    /// Rahmen unter dem Zeiger, wenn nicht der Akzent verwendet wird.
+    /// Border under the pointer wherever the accent is not used.
     pub const BORDER_HOVER: Color32 = hex(0x3a4250);
-    /// Rahmen einer gesperrten Schaltfläche.
+    /// Border of a disabled button.
     pub const BORDER_DISABLED: Color32 = hex(0x20242c);
 
-    /// Überschriften und hervorgehobener Text.
+    /// Headings and emphasised text.
     pub const TEXT_STRONG: Color32 = hex(0xe6e9ef);
-    /// Fließtext.
+    /// Body text.
     pub const TEXT: Color32 = hex(0xc8cedb);
-    /// Text zweiter Ordnung.
+    /// Secondary text.
     pub const TEXT_DIM: Color32 = hex(0x9aa3b2);
-    /// Tabelleninhalt zweiter Ordnung.
+    /// Secondary text inside tables.
     pub const TEXT_DIM2: Color32 = hex(0x8d96a5);
-    /// Beschriftungen und Erläuterungen.
+    /// Labels and explanatory text.
     pub const TEXT_MUTED: Color32 = hex(0x8a94a6);
-    /// Spaltenköpfe, Platzhalter, Symbole ohne Zustand.
+    /// Column headers, placeholders, icons without a state.
     pub const TEXT_FAINT: Color32 = hex(0x7c8698);
 
-    /// Akzent: Auswahl, Fokus, Fortschritt.
+    /// Accent: selection, focus, progress.
     pub const ACCENT: Color32 = hex(0x3ba6a0);
-    /// Ruhezustand der Hauptschaltfläche.
+    /// Resting state of the primary button.
     pub const ACCENT_DEEP: Color32 = hex(0x23706c);
-    /// Schalterspur im Ein-Zustand.
+    /// Toggle track in its on state.
     pub const ACCENT_MID: Color32 = hex(0x2f8c87);
-    /// Schrift auf Akzentflächen.
+    /// Text on accent surfaces.
     pub const ACCENT_FG: Color32 = hex(0xe9fbf9);
-    /// Hinterlegung einer Zählerpille im aktiven Navigationspunkt.
+    /// Backing of a counter pill in the active navigation item.
     pub const ACCENT_SOFT: Color32 = hex(0x13262a);
 
-    /// Warnung (übernommen, geändert, schreibgeschützt, Wiederherstellen).
+    /// Warning (adopted, changed, read-only, restore).
     pub const WARN: Color32 = hex(0xe0a341);
-    /// Fläche hinter einer Warnung.
+    /// Fill behind a warning.
     pub const WARN_BG: Color32 = hex(0x231d14);
-    /// Rahmen einer Warnung.
+    /// Border of a warning.
     pub const WARN_BORDER: Color32 = hex(0x4a3a1c);
-    /// Warnung unter dem Zeiger.
+    /// Warning under the pointer.
     pub const WARN_BRIGHT: Color32 = hex(0xf0c579);
 
-    /// Fehler (fehlende Datei, Löschen).
+    /// Error (missing file, delete).
     pub const DANGER: Color32 = hex(0xe0645c);
-    /// Fläche einer zerstörenden Schaltfläche.
+    /// Fill of a destructive button.
     pub const DANGER_BG: Color32 = hex(0x2a1a19);
-    /// Rahmen einer zerstörenden Schaltfläche.
+    /// Border of a destructive button.
     pub const DANGER_BORDER: Color32 = hex(0x7a3a36);
-    /// Zerstörende Schaltfläche unter dem Zeiger.
+    /// Destructive button under the pointer.
     pub const DANGER_HOVER_BG: Color32 = hex(0x3a201e);
-    /// Schrift einer zerstörenden Schaltfläche unter dem Zeiger.
+    /// Text of a destructive button under the pointer.
     pub const DANGER_BRIGHT: Color32 = hex(0xf08a83);
-    /// Knopf des Bestätigungsschalters im Wiederherstellen-Dialog.
+    /// Knob of the confirmation toggle in the restore dialog.
     pub const DANGER_KNOB: Color32 = hex(0xffd9d6);
 
-    /// Hinweis (neu importiert, zurückgestellt).
+    /// Notice (newly imported, deferred).
     pub const INFO: Color32 = hex(0x6ea8fe);
-    /// Fläche hinter einem Hinweismerker.
+    /// Fill behind a notice marker.
     pub const INFO_BG: Color32 = hex(0x1c2530);
 
-    /// Bestätigung (Spiel erkannt, Backup geprüft).
+    /// Confirmation (game detected, backup verified).
     pub const OK: Color32 = hex(0x5fb98a);
-    /// Fläche hinter einer Bestätigung.
+    /// Fill behind a confirmation.
     pub const OK_BG: Color32 = hex(0x16251f);
 
-    /// Abdunklung hinter einem modalen Fenster.
+    /// Dimming behind a modal window.
     pub const OVERLAY: Color32 = Color32::from_rgba_premultiplied(4, 5, 7, 174);
 }
 
-/// Höhen und Abstände, die der Entwurf mehrfach verwendet.
+/// Heights and spacings the design uses more than once.
 pub mod metric {
-    /// Kopfleiste über dem Inhalt.
+    /// Top bar above the content.
     pub const TOP_BAR_HEIGHT: f32 = 58.0;
-    /// Statusleiste am unteren Rand.
+    /// Status bar along the bottom edge.
     pub const STATUS_BAR_HEIGHT: f32 = 30.0;
-    /// Breite der Seitenleiste.
+    /// Width of the sidebar.
     pub const SIDE_BAR_WIDTH: f32 = 208.0;
-    /// Innenabstand des Inhaltsbereichs.
+    /// Inner padding of the content area.
     pub const CONTENT_PADDING: f32 = 14.0;
-    /// Abstand zwischen den Karten im Inhaltsbereich.
+    /// Gap between the cards in the content area.
     pub const CONTENT_GAP: f32 = 12.0;
-    /// Innenabstand einer Karte, waagerecht.
+    /// Inner padding of a card, horizontally.
     pub const CARD_PADDING: f32 = 14.0;
-    /// Werkzeugleiste am Kopf einer Karte.
+    /// Toolbar at the head of a card.
     pub const CARD_TOOLBAR_HEIGHT: f32 = 52.0;
-    /// Spaltenkopf einer Tabelle.
+    /// Column header of a table.
     pub const TABLE_HEAD_HEIGHT: f32 = 30.0;
-    /// Zeilenhöhe einer Tabelle.
+    /// Row height of a table.
     pub const ROW_HEIGHT: f32 = 36.0;
-    /// Zeilenhöhe in Profil- und Backup-Tabellen.
+    /// Row height in the profile and backup tables.
     pub const LIST_ROW_HEIGHT: f32 = 38.0;
-    /// Abstand zwischen zwei Spalten einer Tabellenzeile.
+    /// Gap between two columns of a table row.
     pub const COLUMN_GAP: f32 = 10.0;
-    /// Höhe einer Schaltfläche in einer Werkzeugleiste.
+    /// Height of a button in a toolbar.
     pub const BUTTON_HEIGHT: f32 = 30.0;
-    /// Höhe einer Schaltfläche in Kopfleiste und Dialogfuß.
+    /// Height of a button in the top bar and in a dialog footer.
     pub const BUTTON_HEIGHT_LARGE: f32 = 32.0;
-    /// Höhe einer Schaltfläche in einer Tabellenzeile.
+    /// Height of a button in a table row.
     pub const BUTTON_HEIGHT_SMALL: f32 = 26.0;
 }
 
-/// Schriftgrad in der Proportionalschrift (IBM Plex Sans Regular).
+/// A font size in the proportional font (IBM Plex Sans Regular).
 pub fn sans(size: f32) -> FontId {
     FontId::new(size, FontFamily::Proportional)
 }
 
-/// Schriftgrad in der halbfetten Proportionalschrift (IBM Plex Sans Medium).
+/// A font size in the semi-bold proportional font (IBM Plex Sans Medium).
 ///
-/// Eigene Familie statt eines Fettschnitts: `egui` kennt kein
-/// `font-weight`, jede Strichstärke ist eine eigene Schriftdatei.
+/// Its own family rather than a bold style: `egui` knows no `font-weight`,
+/// so every stroke weight is a font file of its own.
 pub fn medium(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(MEDIUM_FAMILY.into()))
 }
 
-/// Schriftgrad in der dicktengleichen Schrift (IBM Plex Mono).
+/// A font size in the monospaced font (IBM Plex Mono).
 pub fn mono(size: f32) -> FontId {
     FontId::new(size, FontFamily::Monospace)
 }
 
-/// Name der halbfetten Familie, wie er in `FontDefinitions` eingetragen wird.
+/// Name of the semi-bold family as it is entered into `FontDefinitions`.
 const MEDIUM_FAMILY: &str = "medium";
 
 const SANS_REGULAR: &[u8] = include_bytes!("../../assets/fonts/IBMPlexSans-Regular.ttf");
 const SANS_MEDIUM: &[u8] = include_bytes!("../../assets/fonts/IBMPlexSans-Medium.ttf");
 const MONO_REGULAR: &[u8] = include_bytes!("../../assets/fonts/IBMPlexMono-Regular.ttf");
 
-/// Trägt IBM Plex ein und setzt den Stil des Entwurfs.
+/// Registers IBM Plex and installs the design's style.
 pub fn install(ctx: &egui::Context) {
     install_fonts(ctx);
-    // `egui` hält je Erscheinungsbild einen eigenen Stil. Der Entwurf ist
-    // nur dunkel gedacht, deshalb bekommen beide denselben – sonst hinge das
-    // Aussehen davon ab, was der Desktop gerade meldet.
+    // `egui` keeps a separate style per appearance. The design is meant to
+    // be dark only, so both get the same one — otherwise the look would
+    // depend on whatever the desktop happens to report.
     let style = style();
     ctx.all_styles_mut(|target| *target = style.clone());
 }
 
-/// IBM Plex in drei Schnitten, jeweils mit den mitgelieferten Schriften von
-/// `egui` als Rückfall – IBM Plex deckt die Zeichensätze nicht ab, die
-/// `egui` intern für Menü- und Fehlerdarstellung benutzt.
+/// IBM Plex in three styles, each with the fonts `egui` ships as a
+/// fallback — IBM Plex does not cover the character sets `egui` uses
+/// internally to draw menus and error messages.
 fn install_fonts(ctx: &egui::Context) {
     ctx.set_fonts(font_definitions());
 }
 
-/// Die Schriftdefinitionen als reiner Wert – so lässt sich prüfen, was
-/// eingetragen wird, ohne einen Zeichenkontext aufzubauen.
+/// The font definitions as a plain value, so what gets registered can be
+/// checked without building up a drawing context.
 fn font_definitions() -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
 
@@ -209,9 +209,9 @@ fn font_definitions() -> FontDefinitions {
     fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "plex_sans".into());
     fonts.families.entry(FontFamily::Monospace).or_default().insert(0, "plex_mono".into());
 
-    // Die halbfette Familie erbt dieselben Rückfallschriften wie die
-    // Proportionalschrift, damit ein in IBM Plex fehlendes Zeichen auch in
-    // einer Überschrift nicht als leeres Kästchen erscheint.
+    // The semi-bold family inherits the same fallback fonts as the
+    // proportional one, so that a character missing from IBM Plex does not
+    // show up as an empty box in a heading either.
     let mut medium_family = vec![String::from("plex_sans_medium")];
     medium_family.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
     fonts.families.insert(FontFamily::Name(MEDIUM_FAMILY.into()), medium_family);
@@ -219,9 +219,9 @@ fn font_definitions() -> FontDefinitions {
     fonts
 }
 
-/// Der Stil des Entwurfs: dunkle Flächen, 10-px-Rundungen, kein
-/// Standardrahmen um Schaltflächen – alle Flächen zeichnen die Widgets in
-/// `super::widgets` selbst.
+/// The design's style: dark fills, 10 px corner radii, no default border
+/// around buttons — the widgets in `super::widgets` paint every surface
+/// themselves.
 fn style() -> Style {
     let mut visuals = Visuals::dark();
 
@@ -295,31 +295,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hex_wandelt_wie_im_entwurf_notiert() {
-        assert_eq!(hex(0x3ba6a0), Color32::from_rgb(0x3b, 0xa6, 0xa0), "Akzentfarbe des Entwurfs");
-        assert_eq!(hex(0x000000), Color32::BLACK, "Nullwert ergibt Schwarz");
-        assert_eq!(hex(0xffffff), Color32::WHITE, "Höchstwert ergibt Weiß");
+    fn hex_converts_as_noted_in_the_design() {
+        assert_eq!(hex(0x3ba6a0), Color32::from_rgb(0x3b, 0xa6, 0xa0), "the design's accent color");
+        assert_eq!(hex(0x000000), Color32::BLACK, "the zero value yields black");
+        assert_eq!(hex(0xffffff), Color32::WHITE, "the maximum value yields white");
     }
 
     #[test]
-    fn ibm_plex_steht_in_jeder_familie_an_erster_stelle() {
+    fn ibm_plex_comes_first_in_every_font_family() {
         let fonts = font_definitions();
         assert_eq!(
             fonts.families[&FontFamily::Proportional].first().map(String::as_str),
             Some("plex_sans"),
-            "die Proportionalschrift muss IBM Plex Sans sein"
+            "the proportional font must be IBM Plex Sans"
         );
         assert_eq!(
             fonts.families[&FontFamily::Monospace].first().map(String::as_str),
             Some("plex_mono"),
-            "die dicktengleiche Schrift muss IBM Plex Mono sein"
+            "the monospaced font must be IBM Plex Mono"
         );
     }
 
     #[test]
-    fn die_halbfette_familie_faellt_auf_dieselben_schriften_zurueck_wie_die_proportionale() {
-        // Ein in IBM Plex fehlendes Zeichen darf auch halbfett nicht als
-        // leeres Kästchen enden – die Rückfallkette muss dieselbe sein.
+    fn the_medium_family_falls_back_to_the_same_fonts_as_the_proportional_one() {
+        // A character missing from IBM Plex must not end up as an empty box
+        // in semi-bold either — the fallback chain has to be the same.
         let fonts = font_definitions();
         let medium = &fonts.families[&FontFamily::Name(MEDIUM_FAMILY.into())];
         let proportional = &fonts.families[&FontFamily::Proportional];
@@ -328,7 +328,7 @@ mod tests {
         assert_eq!(
             &medium[1..],
             proportional.as_slice(),
-            "hinter dem halbfetten Schnitt muss dieselbe Rückfallkette stehen"
+            "the same fallback chain must sit behind the semi-bold cut"
         );
     }
 }

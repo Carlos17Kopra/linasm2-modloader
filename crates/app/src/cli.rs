@@ -1,4 +1,4 @@
-//! Kommandozeilenoberfläche: Definition und Ausführung aller Unterbefehle.
+//! Command line interface: definition and execution of all subcommands.
 
 use crate::app_state::{AppState, NoticeKind};
 use crate::vanilla;
@@ -93,17 +93,17 @@ enum SaveCommand {
         /// 1-basierter Index aus `save list` (Standard: 1, das neueste)
         #[arg(long)]
         index: Option<usize>,
-        // `--index` verschiebt sich mit jeder Wiederherstellung, weil
-        // `restore` selbst ein neues "vor Wiederherstellung"-Backup anlegt
-        // (siehe `run_save_command`s Doc-Kommentar) – `--at` bleibt dagegen
-        // unabhängig davon eindeutig.
+        // `--index` shifts with every restore because `restore` itself
+        // creates a new "before restore" backup (see `run_save_command`'s
+        // doc comment). `--at`, by contrast, stays unambiguous no matter
+        // how often you restore.
         /// Exakter Zeitstempel aus `save list` – eindeutig, verschiebt sich
         /// anders als `--index` nicht durch spätere Wiederherstellungen
         #[arg(long, conflicts_with = "index")]
         at: Option<String>,
-        // Spec §6.5/§9 R2: Cloud-Synchronisation kann den zurückgespielten
-        // Stand im Hintergrund überschreiben – der Normalfall ist deshalb
-        // die Ablehnung, `--force` ist die bewusste Ausnahme.
+        // Spec §6.5/§9 R2: cloud synchronization can overwrite the restored
+        // state in the background. Refusing is therefore the default,
+        // `--force` is the deliberate exception.
         /// Erzwingt die Wiederherstellung trotz laufendem Steam (Risiko:
         /// Cloud-Synchronisation kann den Stand überschreiben)
         #[arg(long)]
@@ -129,10 +129,9 @@ enum SaveCommand {
         /// Exakter Zeitstempel aus `save list`
         #[arg(long, conflicts_with = "index")]
         at: Option<String>,
-        // Ein gelöschtes Backup ist unwiederbringlich weg – anders als bei
-        // `restore` gibt es hier keine Sicherung, die den Schritt
-        // zurücknehmen könnte. Deshalb verlangt auch der nicht-interaktive
-        // Weg eine ausdrückliche Zusage.
+        // A deleted backup is gone for good. Unlike `restore`, there is no
+        // backup here that could undo the step. That is why even the
+        // non-interactive path requires an explicit confirmation.
         /// Bestätigt das endgültige Löschen (erforderlich)
         #[arg(long)]
         yes: bool,
@@ -142,19 +141,19 @@ enum SaveCommand {
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
     let mut state = AppState::open()?;
-    // Meldungen aus dem Abgleich zuerst, damit sie vor der Ausgabe des
-    // eigentlichen Befehls stehen – wie zuvor, als `AppState::open()` sie
-    // noch selbst auf stderr schrieb.
+    // Notices from the reconciliation first, so they come before the actual
+    // command's own output — just as before, when `AppState::open()` still
+    // wrote them to stderr itself.
     print_notices(&mut state);
 
     let result = run_command(&mut state, cli.command);
-    // Und noch einmal danach: `persist()` kann unterwegs weitere Meldungen
-    // angehängt haben, die sonst niemand zu sehen bekäme.
+    // And once more afterwards: `persist()` may have appended more notices
+    // along the way that nobody would otherwise get to see.
     print_notices(&mut state);
     result
 }
 
-/// Schreibt alle aufgelaufenen Meldungen nach stderr und leert den Puffer.
+/// Writes all accumulated notices to stderr and clears the buffer.
 fn print_notices(state: &mut AppState) {
     for notice in state.take_notices() {
         let prefix = match notice.kind {
@@ -246,9 +245,9 @@ fn set_disabled(state: &mut AppState, pak: &str, disabled: bool) -> Result<()> {
     Ok(())
 }
 
-/// Setzt die Ladereihenfolge neu. Genannte Paks müssen installiert sein und
-/// dürfen nicht doppelt genannt werden; nicht genannte Paks behalten ihre
-/// relative Reihenfolge und werden ans Ende gehängt.
+/// Sets a new load order. Named paks must be installed and must not be
+/// named twice; paks that are not named keep their relative order and
+/// are appended at the end.
 fn run_order(state: &mut AppState, requested: Vec<String>) -> Result<()> {
     if requested.is_empty() {
         println!("Keine Paks angegeben.");
@@ -276,21 +275,20 @@ fn run_order(state: &mut AppState, requested: Vec<String>) -> Result<()> {
     Ok(())
 }
 
-/// Importiert alle angegebenen Dateien. Jedes erfolgreich importierte Pak
-/// wird sofort gespeichert (nicht erst am Ende aller Dateien): scheitert ein
-/// späteres Pak – in derselben oder einer weiteren Datei –, bleiben bereits
-/// erfolgreich importierte Mods dauerhaft in `library.json` und
-/// `pak_config.yaml` eingetragen, statt nur als Datei im Mods-Verzeichnis zu
-/// liegen, aber nirgends vermerkt zu sein.
+/// Imports every file given. Each successfully imported pak is saved
+/// right away, not only after all files are done: if a later pak fails
+/// — in the same file or in another one — the mods already imported stay
+/// recorded permanently in `library.json` and `pak_config.yaml`,
+/// instead of merely sitting in the mods directory without being noted
+/// anywhere.
 fn run_install(state: &mut AppState, files: &[PathBuf]) -> Result<()> {
     if files.is_empty() {
         println!("Keine Dateien angegeben.");
         return Ok(());
     }
 
-    // Muss so lange leben wie die Import-Aufrufe, die aus ihm lesen: für
-    // Archive liegen die entpackten Paks bis zu ihrem Import unterhalb dieses
-    // Verzeichnisses.
+    // Must live as long as the import calls that read from it: for archives
+    // the extracted paks sit below this directory until they are imported.
     let tmp = tempfile::tempdir().context("temporäres Verzeichnis konnte nicht angelegt werden")?;
 
     for file in files {
@@ -298,14 +296,13 @@ fn run_install(state: &mut AppState, files: &[PathBuf]) -> Result<()> {
             .with_context(|| format!("{} konnte nicht gelesen werden", file.display()))?;
 
         for pak in &extracted {
-            // Für ein einzelnes `.pak` als Eingabe liefert `extract_paks` den
-            // Originalpfad unverändert zurück (nichts wurde nach `tmp`
-            // kopiert) – ein direkter Import würde dann über `import_pak`s
-            // rename-Schritt genau diese Datei aus dem Ordner verschwinden
-            // lassen, in den der Nutzer sie gelegt hat (z. B. sein
-            // Download-Verzeichnis). Für Archive gilt das nicht: deren
-            // entpackte Paks liegen bereits unterhalb von `tmp`, das
-            // Archiv selbst bleibt unangetastet.
+            // For a single `.pak` as input, `extract_paks` returns the
+            // original path unchanged (nothing was copied into `tmp`). A
+            // direct import would then make exactly that file disappear
+            // from the folder the user put it in (their download directory,
+            // say), via `import_pak`'s rename step. For archives this does
+            // not apply: their extracted paks already sit under `tmp`, and
+            // the archive itself is left untouched.
             let working_copy = if pak.starts_with(tmp.path()) {
                 pak.clone()
             } else {
@@ -339,12 +336,12 @@ fn run_install(state: &mut AppState, files: &[PathBuf]) -> Result<()> {
     Ok(())
 }
 
-/// Findet in `tmp` einen noch freien Namen für eine Arbeitskopie von
-/// `source`. Kollidiert der ursprüngliche Dateiname bereits (z. B. weil zwei
-/// angegebene Dateien denselben Basisnamen tragen), wird vor die Endung eine
-/// laufende Nummer gehängt – dieselbe Grundidee wie `sm2_core::import`s
-/// interne `unique_target_in`, hier lokal nachgebildet, da jene Funktion
-/// crate-intern bleibt.
+/// Finds a name in `tmp` that is still free for a working copy of
+/// `source`. If the original file name already collides — for example
+/// because two of the given files share the same base name — a running
+/// number is inserted before the extension. Same basic idea as
+/// `sm2_core::import`'s internal `unique_target_in`, reproduced locally
+/// here because that function stays crate-private.
 fn unique_copy_target(tmp: &std::path::Path, source: &std::path::Path) -> PathBuf {
     let name = source.file_name().unwrap_or_default();
     let candidate = tmp.join(name);
@@ -407,16 +404,16 @@ fn run_profile_command(state: &mut AppState, cmd: ProfileCommand) -> Result<()> 
     Ok(())
 }
 
-/// Findet genau ein Profil zu `name` unter `dir`, groß-/kleinschreibungs-
-/// unabhängig (Bequemlichkeit: der Nutzer muss den Namen nicht exakt
-/// treffen). `Profile::file_stem` hasht dagegen den exakten Namen – zwei
-/// Profile wie "Test" und "test" landen also in zwei verschiedenen Dateien.
-/// Ohne diese Prüfung würde ein mehrdeutiger Name klaglos das erste (nach
-/// `list_profiles`s alphabetischer Sortierung) Treffer-Profil wählen und das
-/// andere wäre über `apply`/`delete` faktisch unerreichbar, ohne dass der
-/// Nutzer je davon erführe. Ein mehrdeutiger Treffer wird stattdessen mit
-/// allen betroffenen Namen gemeldet, damit der Nutzer den exakten Namen
-/// nachreichen kann.
+/// Finds exactly one profile named `name` under `dir`, case-insensitively
+/// (a convenience: the user does not have to type the name exactly).
+/// `Profile::file_stem`, by contrast, hashes the exact name — two
+/// profiles like "Test" and "test" therefore end up in two different
+/// files. Without this check, an ambiguous name would silently pick the
+/// first matching profile (by `list_profiles`'s alphabetical order), and
+/// the other one would be effectively unreachable through `apply`/`delete`,
+/// without the user ever finding out. An ambiguous match is reported
+/// instead, listing all affected names so the user can supply the exact
+/// one.
 fn find_profile_by_name(dir: &std::path::Path, name: &str) -> Result<Profile> {
     let mut matches: Vec<Profile> =
         list_profiles(dir)?.into_iter().filter(|p| p.name.eq_ignore_ascii_case(name)).collect();
@@ -439,13 +436,13 @@ fn run_save_command(state: &AppState, cmd: SaveCommand) -> Result<()> {
     run_save_command_with(state, cmd, saves::steam_is_running)
 }
 
-/// Kern von `run_save_command`, mit der Steam-Erkennung als Parameter statt
-/// fest verdrahtet – genau dieselbe Seam-Idee wie `run_play`/`run_play_with`
-/// weiter unten. `--force` ist der einzige Zweig hier, der tatsächlich
-/// Save-Daten überschreiben kann (Steam läuft, Cloud-Sync könnte den
-/// zurückgespielten Stand überschreiben); ohne diese Injektion ließe sich
-/// weder die Ablehnung noch die Umgehung deterministisch testen, weil
-/// `saves::steam_is_running()` den echten `/proc` dieses Systems liest.
+/// Core of `run_save_command`, with Steam detection as a parameter
+/// instead of hard-wired — exactly the same seam idea as
+/// `run_play`/`run_play_with` further below. `--force` is the only branch
+/// here that can actually overwrite save data (Steam is running, cloud
+/// sync could overwrite the restored state); without this injection
+/// neither the refusal nor the bypass could be tested deterministically,
+/// because `saves::steam_is_running()` reads this system's real `/proc`.
 fn run_save_command_with(state: &AppState, cmd: SaveCommand, steam_running: impl Fn() -> bool) -> Result<()> {
     let backups = state.backups_dir();
 
@@ -472,13 +469,12 @@ fn run_save_command_with(state: &AppState, cmd: SaveCommand, steam_running: impl
             }
             let entry = resolve_backup_selection(&list, index, at.as_deref())?;
 
-            // Echo, was tatsächlich ausgewählt wurde, BEVOR etwas verändert
-            // wird: `restore` legt vor der Wiederherstellung selbst ein "vor
-            // Wiederherstellung"-Backup an, und `list_backups` ist
-            // neueste-zuerst – jede Wiederherstellung verschiebt also jeden
-            // späteren `--index`. Der Nutzer sieht hier, was `--index`/`--at`
-            // tatsächlich getroffen hat, bevor der Vorgang unumkehrbar wird
-            // (siehe `resolve_backup_selection`s Doc-Kommentar).
+            // Echo what was actually selected BEFORE anything changes:
+            // `restore` takes a "before restore" backup of its own before
+            // restoring, and `list_backups` is newest-first — so every
+            // restore shifts every later `--index`. The user sees here what
+            // `--index`/`--at` actually hit, before the operation becomes
+            // irreversible (see `resolve_backup_selection`'s doc comment).
             let label = entry.label.clone().unwrap_or_default();
             println!("Ausgewähltes Backup: {}  {label}", entry.created_at);
 
@@ -532,12 +528,12 @@ fn run_save_command_with(state: &AppState, cmd: SaveCommand, steam_running: impl
     Ok(())
 }
 
-/// Löst den 1-basierten, vom Nutzer angegebenen Backup-Index (ohne Angabe:
-/// das neueste Backup, also 1) zu einem 0-basierten Vektorindex auf.
+/// Resolves the 1-based backup index supplied by the user (omitted: the
+/// newest backup, i.e. 1) to a 0-based vector index.
 ///
-/// 0 ist kein gültiger Index (der Nutzer zählt ab 1) – ohne diese Prüfung
-/// würde `index.unwrap_or(1) - 1` bei einer expliziten 0 als `usize`
-/// unterlaufen (Panic im Debug-Build, Wraparound im Release-Build).
+/// 0 is not a valid index (the user counts from 1). Without this check,
+/// an explicit 0 would make `index.unwrap_or(1) - 1` underflow as a
+/// `usize` (panic in a debug build, wraparound in a release build).
 fn resolve_backup_index(requested: Option<usize>, count: usize) -> Result<usize> {
     let requested = requested.unwrap_or(1);
     if requested == 0 {
@@ -549,14 +545,13 @@ fn resolve_backup_index(requested: Option<usize>, count: usize) -> Result<usize>
     Ok(requested - 1)
 }
 
-/// Wählt ein Backup aus `list` entweder über den exakten Zeitstempel (`at`,
-/// wie ihn `save list` anzeigt) oder über den 1-basierten Index (`index`,
-/// Standard: das neueste). `--at` ist die unzweideutige Wahl: `restore`
-/// legt vor jeder Wiederherstellung selbst ein neues Backup an, und
-/// `list_backups` sortiert neueste zuerst – ein per `--index` gewähltes
-/// Backup verschiebt sich also mit jeder Wiederherstellung um eins. `clap`s
-/// `conflicts_with` verhindert bereits, dass beide zugleich angegeben
-/// werden.
+/// Selects a backup from `list` either by its exact timestamp (`at`, as
+/// `save list` shows it) or by its 1-based index (`index`, default: the
+/// newest). `--at` is the unambiguous choice: `restore` takes a new
+/// backup of its own before every restore, and `list_backups` sorts
+/// newest first — so a backup chosen by `--index` shifts by one with
+/// every restore. `clap`'s `conflicts_with` already prevents both from
+/// being given at once.
 fn resolve_backup_selection<'a>(
     list: &'a [BackupEntry],
     index: Option<usize>,
@@ -574,9 +569,9 @@ fn resolve_backup_selection<'a>(
     }
 }
 
-/// Sichert bei `play --vanilla` den bisherigen Zustand und meldet das
-/// Ergebnis auf der Kommandozeile. Die Regel selbst steht in
-/// `crate::vanilla` – sie gilt für die Oberfläche genauso.
+/// On `play --vanilla`, backs up the previous state and reports the
+/// result on the command line. The rule itself lives in `crate::vanilla`
+/// — it applies to the UI just the same.
 fn snapshot_and_disable_all_for_vanilla_start(state: &mut AppState) -> Result<()> {
     match vanilla::snapshot_and_disable_all(state)? {
         Some(snapshot) => {
@@ -592,46 +587,46 @@ fn snapshot_and_disable_all_for_vanilla_start(state: &mut AppState) -> Result<()
     Ok(())
 }
 
-/// Startet das Spiel.
+/// Starts the game.
 fn run_play(state: &mut AppState, vanilla: bool, no_eac: bool) -> Result<()> {
     run_play_with(state, vanilla, no_eac, launch)
 }
 
-/// Kern von `run_play`, mit dem eigentlichen Spielstart als Parameter statt
-/// fest verdrahtet: `run_play` selbst startet immer den echten Prozess über
-/// `sm2_core::launch::launch`, aber jede Verzweigung davor (Vanilla-Wipe,
-/// Auto-Backup, `persist()`-Fehlerverhalten, No-EAC-Gating) lässt sich so
-/// testen, ohne je einen echten Prozess zu starten – die Tests unten
-/// übergeben stattdessen eine Closure, die nur festhält, ob und mit welchem
-/// `LaunchMode` sie aufgerufen wurde.
+/// Core of `run_play`, with the actual game launch as a parameter instead
+/// of hard-wired: `run_play` itself always starts the real process via
+/// `sm2_core::launch::launch`, but every branch before that (vanilla
+/// wipe, auto backup, `persist()` error behavior, no-EAC gating) can be
+/// tested this way without ever starting a real process. The tests below
+/// pass a closure instead that only records whether it was called, and
+/// with which `LaunchMode`.
 ///
-/// Ausfallverhalten für das Save-Backup (bewusst einheitlich für beide
-/// Fehlerquellen): weder ein fehlendes Save-Verzeichnis noch ein
-/// fehlschlagendes `saves::backup` brechen den Start ab – beides wird nur als
-/// Warnung gemeldet. Das automatische Backup ist eine Komfortfunktion
-/// (abschaltbar über `settings.toml`), kein hartes Erfordernis. Der
-/// Backup-Versuch geschieht außerdem vor `state.persist()` und vor dem Start
-/// selbst – damit hinterlässt ein Fehlschlag nie eine bereits geschriebene
-/// Konfiguration bei einem nie gestarteten Spiel. Anders als zuvor gilt das
-/// jetzt auch für `--vanilla`: Spec §6.4 beschreibt den Vanilla-Start
-/// ausdrücklich als identisch zum Modded-Start, Backup eingeschlossen – ein
-/// Nutzer greift zu `--vanilla` oft gerade *nachdem* schon etwas schiefging,
-/// und genau dann ist das Backup am wichtigsten.
+/// Failure behavior for the save backup (deliberately the same for both
+/// error sources): neither a missing save directory nor a failing
+/// `saves::backup` aborts the launch — both are only reported as a
+/// warning. The automatic backup is a convenience feature (it can be
+/// turned off via `settings.toml`), not a hard requirement. The backup
+/// attempt also happens before `state.persist()` and before the launch
+/// itself, so a failure never leaves a written configuration behind for
+/// a game that was never started. Unlike before, this now applies to
+/// `--vanilla` as well: Spec §6.4 explicitly describes the vanilla launch
+/// as identical to the modded one, backup included — and a user often
+/// reaches for `--vanilla` right *after* something has already gone
+/// wrong, which is exactly when the backup matters most.
 ///
-/// Ausfallverhalten für `persist()` selbst: bei einem gewöhnlichen (nicht
-/// Vanilla-)Start ändert `persist()` höchstens das Ergebnis des Abgleichs aus
-/// `AppState::open()` – nichts, was der Nutzer mit diesem Aufruf beabsichtigt
-/// hat. Schlägt es fehl (z. B. schreibgeschütztes Mods-Verzeichnis), wird das
-/// nur gewarnt; das Spiel startet trotzdem, mit der auf der Platte bereits
-/// vorhandenen (von der Engine ohnehin so gelesenen) Konfiguration. Bei
-/// `--vanilla` bleibt `persist()` dagegen fatal: das Deaktivieren aller Mods
-/// ist der ganze Zweck des Aufrufs, ein Start mit unverändert aktiven Mods
-/// wäre das Gegenteil dessen, was der Nutzer wollte.
+/// Failure behavior for `persist()` itself: on an ordinary (non-vanilla)
+/// launch, `persist()` at most changes the result of the reconciliation
+/// from `AppState::open()` — nothing the user intended with this call.
+/// If it fails (a read-only mods directory, say), that is only warned
+/// about; the game starts anyway, with the configuration already on
+/// disk, which is what the engine reads regardless. For `--vanilla`, by
+/// contrast, `persist()` stays fatal: disabling all mods is the entire
+/// point of the call, and a launch with mods still active would be the
+/// opposite of what the user wanted.
 ///
-/// Die Vanilla-Sicherung selbst (siehe
-/// `snapshot_and_disable_all_for_vanilla_start`) ist immer ein hartes
-/// Erfordernis: schlägt sie fehl, wird nichts verändert und nichts
-/// gestartet – ohne sie gäbe es keinen Weg zurück zum bisherigen Setup.
+/// The vanilla backup itself (see
+/// `snapshot_and_disable_all_for_vanilla_start`) is always a hard
+/// requirement: if it fails, nothing is changed and nothing is started —
+/// without it there would be no way back to the previous setup.
 fn run_play_with(
     state: &mut AppState,
     vanilla: bool,
@@ -683,8 +678,8 @@ mod tests {
 
     #[test]
     fn cli_command_structure_is_valid() {
-        // Prüft die clap-Struktur selbst (Namenskollisionen, ungültige
-        // Attribute etc.), ohne echte Argumente zu parsen.
+        // Checks the clap structure itself (name collisions, invalid
+        // attributes and so on) without parsing any real arguments.
         Cli::command().debug_assert();
     }
 
@@ -721,7 +716,7 @@ mod tests {
         run_order(&mut state, vec![]).unwrap();
 
         assert_eq!(state.config.entries.len(), 1);
-        assert!(!state.paths.pak_config_path().exists(), "ein No-Op darf nichts schreiben");
+        assert!(!state.paths.pak_config_path().exists(), "a no-op must not write anything");
     }
 
     #[test]
@@ -760,7 +755,7 @@ mod tests {
         run_order(&mut state, vec!["c.pak".into(), "a.pak".into()]).unwrap();
 
         let names: Vec<&str> = state.config.entries.iter().map(|e| e.pak.as_str()).collect();
-        assert_eq!(names, vec!["c.pak", "a.pak", "b.pak"], "jedes vorhandene Pak muss erhalten bleiben");
+        assert_eq!(names, vec!["c.pak", "a.pak", "b.pak"], "every present pak must be preserved");
     }
 
     // --- vanilla snapshot ------------------------------------------------
@@ -776,13 +771,13 @@ mod tests {
 
         snapshot_and_disable_all_for_vanilla_start(&mut state).unwrap();
 
-        assert!(state.config.entries.iter().all(|e| e.disabled), "danach muss alles deaktiviert sein");
+        assert!(state.config.entries.iter().all(|e| e.disabled), "afterwards everything must be disabled");
 
         let profiles = list_profiles(&state.profiles_dir()).unwrap();
         assert_eq!(profiles.len(), 1);
         assert!(profiles[0].name.starts_with(vanilla::VANILLA_SNAPSHOT_PREFIX));
         let a = profiles[0].entries.iter().find(|e| e.pak == "a.pak").unwrap();
-        assert!(!a.disabled, "die Sicherung muss den Zustand VOR dem Deaktivieren zeigen");
+        assert!(!a.disabled, "the snapshot must show the state BEFORE the disabling");
     }
 
     #[test]
@@ -792,18 +787,18 @@ mod tests {
         state.config.entries = vec![PakEntry { pak: "a.pak".into(), disabled: false }];
 
         snapshot_and_disable_all_for_vanilla_start(&mut state).unwrap();
-        // Zweiter Lauf: jetzt ist bereits alles deaktiviert.
+        // Second run: everything is already disabled by now.
         snapshot_and_disable_all_for_vanilla_start(&mut state).unwrap();
 
         let profiles = list_profiles(&state.profiles_dir()).unwrap();
         assert_eq!(
             profiles.len(),
             1,
-            "der zweite Vanilla-Start darf die erste Sicherung nicht überschreiben oder verdoppeln"
+            "the second vanilla start must not overwrite or duplicate the first snapshot"
         );
         assert!(
             profiles[0].entries.iter().any(|e| !e.disabled),
-            "die einzige Sicherung muss weiterhin den ursprünglichen, aktiven Zustand zeigen"
+            "the one snapshot must still show the original, enabled state"
         );
     }
 
@@ -816,7 +811,7 @@ mod tests {
         snapshot_and_disable_all_for_vanilla_start(&mut state).unwrap();
 
         let profiles = list_profiles(&state.profiles_dir()).unwrap();
-        assert!(profiles.is_empty(), "ohne aktive Mods gibt es nichts zu sichern");
+        assert!(profiles.is_empty(), "with no enabled mods there is nothing to back up");
     }
 
     // --- run_install -----------------------------------------------------
@@ -832,7 +827,7 @@ mod tests {
 
         run_install(&mut state, std::slice::from_ref(&source_pak)).unwrap();
 
-        assert!(source_pak.is_file(), "die Quelldatei des Nutzers darf nicht verschwinden");
+        assert!(source_pak.is_file(), "the user's source file must not disappear");
         assert_eq!(std::fs::read(&source_pak).unwrap(), b"INHALT");
         assert!(state.library.mods.contains_key("mein_mod.pak"));
     }
@@ -847,7 +842,7 @@ mod tests {
         let second = source_dir.path().join("zweites.pak");
         std::fs::write(&first, b"EINS").unwrap();
         std::fs::write(&second, b"ZWEI").unwrap();
-        // Existiert absichtlich nicht: simuliert die dritte, fehlschlagende Datei.
+        // Deliberately does not exist: simulates the third file failing.
         let third = source_dir.path().join("drittes.pak");
         let fourth = source_dir.path().join("viertes.pak");
         std::fs::write(&fourth, b"VIER").unwrap();
@@ -856,12 +851,12 @@ mod tests {
         let err = run_install(&mut state, &files).unwrap_err();
         assert!(err.to_string().contains("drittes.pak"), "{err}");
 
-        // Die ersten beiden Dateien liegen bereits im Mods-Verzeichnis...
+        // The first two files are already in the mods directory...
         assert!(state.paths.mods_dir().join("erstes.pak").is_file());
         assert!(state.paths.mods_dir().join("zweites.pak").is_file());
 
-        // ...und sind sowohl in library.json als auch in pak_config.yaml
-        // dauerhaft vermerkt, nicht nur im (in-memory) AppState.
+        // ...and are recorded permanently in both library.json and
+        // pak_config.yaml, not only in the (in-memory) AppState.
         let saved_library = sm2_core::library::Library::load(&state.dirs.data.join("library.json")).unwrap();
         assert!(saved_library.mods.contains_key("erstes.pak"));
         assert!(saved_library.mods.contains_key("zweites.pak"));
@@ -872,11 +867,11 @@ mod tests {
         assert!(names.contains(&"zweites.pak"));
         assert!(
             !names.contains(&"viertes.pak"),
-            "nach dem Fehlschlag darf die vierte Datei nicht mehr verarbeitet worden sein"
+            "after the failure the fourth file must no longer have been processed"
         );
     }
 
-    // --- resolve_backup_selection (2a: --at neben --index) ---------------
+    // --- resolve_backup_selection (2a: --at alongside --index) ---------
 
     fn backup_entry(created_at: &str, label: Option<&str>) -> BackupEntry {
         BackupEntry {
@@ -899,10 +894,9 @@ mod tests {
         assert_eq!(entry.created_at, "2026-01-02T00:00:00Z");
     }
 
-    /// Der eigentliche Grund für `--at`: ein per `--index` gewähltes Backup
-    /// verschiebt sich mit jeder Wiederherstellung. Ein exakter Zeitstempel
-    /// bleibt dagegen eindeutig, unabhängig davon, wie oft zwischenzeitlich
-    /// wiederhergestellt wurde.
+    /// The actual reason for `--at`: a backup chosen by `--index` shifts
+    /// with every restore. An exact timestamp, by contrast, stays
+    /// unambiguous no matter how many restores happened in between.
     #[test]
     fn resolve_backup_selection_by_at_finds_the_exact_timestamp() {
         let list = vec![
@@ -936,13 +930,13 @@ mod tests {
         assert_eq!(entry.created_at, "2026-01-01T00:00:00Z");
     }
 
-    // --- run_save_command_with / --force (Review-Punkt 6) -----------------
+    // --- run_save_command_with / --force (review point 6) -----------------
 
-    /// Baut eine Fixture mit genau einem Save-Nutzerverzeichnis (analog zu
-    /// `run_play`s Vanilla-Backup-Test) und legt darin ein Backup des
-    /// Originalinhalts an, bevor der Inhalt überschrieben wird – so lässt
-    /// sich anschließend prüfen, ob `run_save_command_with` tatsächlich
-    /// wiederhergestellt hat oder nicht.
+    /// Builds a fixture with exactly one save user directory (analogous to
+    /// `run_play`'s vanilla backup test) and takes a backup of the original
+    /// content in it before that content is overwritten. That makes it
+    /// possible to check afterwards whether `run_save_command_with` actually
+    /// restored or not.
     fn fixture_with_one_backup(tmp: &std::path::Path) -> (AppState, PathBuf) {
         let state = test_fixture(tmp);
         let save_dir = tmp
@@ -972,13 +966,12 @@ mod tests {
         assert_eq!(
             std::fs::read(save_dir.join("profile.sav")).unwrap(),
             b"GEAENDERT",
-            "ohne --force darf nichts wiederhergestellt werden"
+            "without --force nothing may be restored"
         );
     }
 
-    /// Beweist zugleich, dass `--force` nicht invertiert ist: `force: true`
-    /// zusammen mit einem laufenden Steam muss tatsächlich wiederherstellen,
-    /// nicht ablehnen.
+    /// Also proves that `--force` is not inverted: `force: true` together
+    /// with a running Steam must actually restore, not refuse.
     #[test]
     fn save_restore_force_overrides_the_steam_running_refusal() {
         let tmp = tempfile::tempdir().unwrap();
@@ -994,9 +987,9 @@ mod tests {
         assert_eq!(std::fs::read(save_dir.join("profile.sav")).unwrap(), b"ORIGINAL");
     }
 
-    /// Kontrolltest: ohne laufendes Steam wird ganz normal wiederhergestellt,
-    /// unabhängig von `force` – die Ablehnung hängt ausschließlich an
-    /// `steam_running()`, nicht an einer vertauschten Bedingung.
+    /// Control test: without a running Steam the restore happens as normal,
+    /// regardless of `force` — the refusal depends solely on
+    /// `steam_running()`, not on a swapped condition.
     #[test]
     fn save_restore_without_force_still_restores_when_steam_is_not_running() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1007,8 +1000,8 @@ mod tests {
         assert_eq!(std::fs::read(save_dir.join("profile.sav")).unwrap(), b"ORIGINAL");
     }
 
-    // --- find_profile_by_name (2e: mehrdeutiger groß-/kleinschreibungs- --
-    // --- unabhängiger Treffer wird gemeldet statt still gewählt) ---------
+    // --- find_profile_by_name (2e: an ambiguous case-insensitive ---------
+    // --- match is reported instead of being silently picked) -------------
 
     fn empty_profile(name: &str) -> Profile {
         Profile::from_config(name, &sm2_core::pak_config::PakConfig::default())
@@ -1071,17 +1064,17 @@ mod tests {
         assert!(err.to_string().contains("nicht gefunden"), "{err}");
     }
 
-    // --- run_play_with (2c/2f: Auto-Backup für --vanilla, injizierbarer --
-    // --- Spielstart) -------------------------------------------------------
+    // --- run_play_with (2c/2f: auto backup for --vanilla, injectable -----
+    // --- game launch) ------------------------------------------------------
 
-    /// `no_eac_available()` liest den echten `$PATH` dieses Systems – auf
-    /// den Testrechnern hier ist `umu-run` nicht installiert, aber dieser
-    /// Test darf trotzdem nicht auf einem System scheitern, auf dem es (z. B.
-    /// versehentlich) doch vorhanden ist.
+    /// `no_eac_available()` reads this system's real `$PATH`. On the test
+    /// machines here `umu-run` is not installed, but this test still must
+    /// not fail on a system where it does exist anyway (installed by
+    /// accident, say).
     #[test]
     fn run_play_rejects_no_eac_when_direct_launch_is_unavailable_and_never_launches() {
         if no_eac_available() {
-            eprintln!("übersprungen: umu-launcher ist auf diesem System installiert");
+            eprintln!("skipped: umu-launcher is installed on this system");
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -1094,14 +1087,13 @@ mod tests {
             Ok(())
         });
 
-        assert!(result.is_err(), "ohne verfügbaren Direktstart muss --no-eac abgelehnt werden");
-        assert!(!called.get(), "der Spielstart darf dabei nie aufgerufen werden");
+        assert!(result.is_err(), "without an available direct launch --no-eac must be rejected");
+        assert!(!called.get(), "the game launch must never be invoked in that case");
     }
 
-    /// Ein fehlendes Save-Verzeichnis (hier: `test_fixture` hat keinen
-    /// Proton-Prefix) darf den Start nicht verhindern – das Auto-Backup ist
-    /// eine Komfortfunktion, kein hartes Erfordernis (siehe Doc-Kommentar von
-    /// `run_play_with`).
+    /// A missing save directory (here: `test_fixture` has no Proton prefix)
+    /// must not prevent the launch — the auto backup is a convenience
+    /// feature, not a hard requirement (see `run_play_with`'s doc comment).
     #[test]
     fn run_play_warns_but_still_launches_when_auto_backup_has_no_save_dir() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1115,17 +1107,17 @@ mod tests {
             Ok(())
         });
 
-        assert!(result.is_ok(), "fehlendes Save-Verzeichnis darf den Start nicht verhindern: {result:?}");
+        assert!(result.is_ok(), "a missing save directory must not prevent the launch: {result:?}");
         assert_eq!(called.get(), Some(LaunchMode::Steam));
     }
 
-    /// 2c: Spec §6.4 beschreibt den Vanilla-Start als identisch zum Modded-
-    /// Start, Backup eingeschlossen – zuvor lief das Auto-Backup nur ohne
-    /// `--vanilla`. Die Fixture bekommt hier absichtlich einen echten
-    /// Save-Nutzerordner: mit dem ursprünglichen `test_fixture` (kein
-    /// Proton-Prefix) hätte der Auto-Backup-Versuch ohnehin nur gewarnt statt
-    /// tatsächlich zu sichern – ein wieder eingeführtes `if !vanilla` bliebe
-    /// dann unentdeckt grün (Review-Punkt 5).
+    /// 2c: Spec §6.4 describes the vanilla launch as identical to the modded
+    /// one, backup included — previously the auto backup ran only without
+    /// `--vanilla`. The fixture deliberately gets a real save user folder
+    /// here: with the original `test_fixture` (no Proton prefix) the auto
+    /// backup attempt would only have warned instead of actually backing up,
+    /// so a reintroduced `if !vanilla` would stay green and undetected
+    /// (review point 5).
     #[test]
     fn run_play_vanilla_disables_everything_persists_and_still_launches() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1149,25 +1141,25 @@ mod tests {
         })
         .unwrap();
 
-        assert!(state.config.entries.iter().all(|e| e.disabled), "Vanilla-Start muss alles deaktivieren");
+        assert!(state.config.entries.iter().all(|e| e.disabled), "a vanilla start must disable everything");
         assert_eq!(called.get(), Some(LaunchMode::Steam));
         let saved = sm2_core::pak_config::PakConfig::load(&state.paths.pak_config_path()).unwrap();
         assert!(
             saved.entries.iter().all(|e| e.disabled),
-            "die deaktivierte Konfiguration muss tatsächlich auf der Platte gelandet sein"
+            "the disabled configuration must actually have landed on disk"
         );
 
         let backups = saves::list_backups(&state.backups_dir()).unwrap();
-        assert_eq!(backups.len(), 1, "ein Vanilla-Start muss ebenfalls ein Auto-Backup anlegen (Spec §6.4)");
+        assert_eq!(backups.len(), 1, "a vanilla start must create an auto backup as well (spec §6.4)");
         assert_eq!(backups[0].label.as_deref(), Some("vor Vanilla-Start"));
     }
 
-    /// Prüft per Schreibversuch, ob eine `0o555`-Berechtigung auf `dir`
-    /// tatsächlich vor Schreibzugriff schützt, und stellt die ursprüngliche
-    /// Berechtigung danach wieder her. Läuft der Testprozess als root, hebt
-    /// der Kernel jeden Dateimodus auf – ein Test, der das nicht erkennt,
-    /// würde dort grundlos fehlschlagen (dasselbe Muster wie in
-    /// `app_state.rs`s `check_write_permission_fails_for_a_read_only_dir`).
+    /// Uses a write attempt to check whether a `0o555` permission on `dir`
+    /// really protects against write access, and restores the original
+    /// permission afterwards. If the test process runs as root, the kernel
+    /// overrides every file mode — a test that does not notice this would
+    /// fail there for no reason (the same pattern as in `app_state.rs`'s
+    /// `check_write_permission_fails_for_a_read_only_dir`).
     #[cfg(unix)]
     fn write_protection_is_effective(dir: &std::path::Path) -> bool {
         use std::os::unix::fs::PermissionsExt;
@@ -1194,7 +1186,7 @@ mod tests {
         state.config.entries = vec![PakEntry { pak: "a.pak".into(), disabled: false }];
 
         if !write_protection_is_effective(&state.paths.mods_dir()) {
-            eprintln!("übersprungen: Prozess kann den Schreibschutz offenbar übergehen (root?)");
+            eprintln!("skipped: this process can apparently bypass write protection (root?)");
             return;
         }
 
@@ -1214,8 +1206,8 @@ mod tests {
         perms.set_mode(0o755);
         std::fs::set_permissions(&mods_dir, perms).unwrap();
 
-        assert!(result.is_err(), "ein persist()-Fehlschlag muss bei --vanilla fatal sein");
-        assert!(!called.get(), "das Spiel darf nach fehlgeschlagenem persist() bei --vanilla nicht starten");
+        assert!(result.is_err(), "a failing persist() must be fatal with --vanilla");
+        assert!(!called.get(), "the game must not start after a failed persist() with --vanilla");
     }
 
     #[cfg(unix)]
@@ -1225,7 +1217,7 @@ mod tests {
         let mut state = test_fixture(tmp.path());
 
         if !write_protection_is_effective(&state.paths.mods_dir()) {
-            eprintln!("übersprungen: Prozess kann den Schreibschutz offenbar übergehen (root?)");
+            eprintln!("skipped: this process can apparently bypass write protection (root?)");
             return;
         }
 
@@ -1245,7 +1237,7 @@ mod tests {
         perms.set_mode(0o755);
         std::fs::set_permissions(&mods_dir, perms).unwrap();
 
-        assert!(result.is_ok(), "ein persist()-Fehlschlag darf ohne --vanilla nur warnen: {result:?}");
-        assert!(called.get(), "das Spiel muss trotz gescheitertem persist() gestartet werden");
+        assert!(result.is_ok(), "a failing persist() may only warn without --vanilla: {result:?}");
+        assert!(called.get(), "the game must be launched despite the failed persist()");
     }
 }

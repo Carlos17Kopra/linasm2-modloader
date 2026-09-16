@@ -1,19 +1,18 @@
-//! Die Symbole des Entwurfs, selbst gezeichnet statt als Schriftzeichen.
+//! The icons from the design, drawn by hand instead of set as glyphs.
 //!
-//! Der Entwurf benutzt Zeichen wie `⠿`, `⏷`, `▣` oder `⚙`. Keines davon
-//! steht in IBM Plex, und die Rückfallschriften von `egui` decken sie nur
-//! lückenhaft ab – auf einem fremden System entschiede also der Zufall der
-//! installierten Schriften darüber, ob an diesen Stellen ein Symbol oder ein
-//! leeres Kästchen erscheint. Alle Symbole werden deshalb über
-//! `ui.painter()` gezeichnet; das ist zugleich der Weg, den der Entwurf in
-//! seinen eigenen Anmerkungen vorschlägt.
+//! The design uses characters such as `⠿`, `⏷`, `▣` and `⚙`. None of them
+//! is in IBM Plex, and `egui`'s fallback fonts cover them only patchily —
+//! so on someone else's machine the fonts that happen to be installed
+//! would decide whether an icon or an empty box appears in those places.
+//! Every icon is therefore drawn through `ui.painter()`, which is also the
+//! route the design suggests in its own notes.
 //!
-//! `size` ist jeweils die Kantenlänge des gedachten Schriftkegels, damit die
-//! Aufrufe dieselben Zahlen tragen wie die `font-size`-Angaben im Entwurf.
+//! `size` is always the edge length of the notional em box, so that the
+//! calls carry the same numbers as the `font-size` values in the design.
 
 use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, Vec2};
 
-/// Strichstärke, die zu einem Symbol dieser Größe passt.
+/// The stroke width that suits an icon of this size.
 fn line_width(size: f32) -> f32 {
     (size * 0.11).clamp(1.0, 1.8)
 }
@@ -22,7 +21,7 @@ fn stroke(size: f32, color: Color32) -> Stroke {
     Stroke::new(line_width(size), color)
 }
 
-/// `⠿` – Anfasser zum Ziehen einer Zeile: zwei Spalten zu je drei Punkten.
+/// `⠿` – drag handle for a row: two columns of three dots each.
 pub fn grip(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     let radius = size * 0.085;
     let dx = size * 0.19;
@@ -36,7 +35,7 @@ pub fn grip(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     }
 }
 
-/// `⏷` – Pfeil nach unten an einem Aufklappfeld.
+/// `⏷` – downward arrow on a drop-down field.
 pub fn chevron_down(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     let half = size * 0.38;
     let depth = size * 0.24;
@@ -50,7 +49,7 @@ pub fn chevron_down(painter: &Painter, center: Pos2, size: f32, color: Color32) 
     ));
 }
 
-/// `▶` – Wiedergabedreieck auf der Schaltfläche „Starten“.
+/// `▶` – play triangle on the "Starten" button.
 pub fn play(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     let half_height = size * 0.44;
     let half_width = size * 0.38;
@@ -65,7 +64,7 @@ pub fn play(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     ));
 }
 
-/// `▲` und `▼` – gefüllte Dreiecke der Rang-Schaltflächen.
+/// `▲` and `▼` – the filled triangles of the rank buttons.
 pub fn triangle(painter: &Painter, center: Pos2, size: f32, color: Color32, up: bool) {
     let half_width = size * 0.5;
     let half_height = size * 0.34;
@@ -82,7 +81,7 @@ pub fn triangle(painter: &Painter, center: Pos2, size: f32, color: Color32, up: 
     ));
 }
 
-/// `＋` – Pluszeichen der Import-Schaltfläche.
+/// `＋` – the plus sign on the import button.
 pub fn plus(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     let half = size * 0.42;
     let line = stroke(size, color);
@@ -96,7 +95,7 @@ pub fn plus(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     );
 }
 
-/// `⌕` – Lupe im Filterfeld.
+/// `⌕` – magnifier in the filter field.
 pub fn search(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     let radius = size * 0.31;
     let lens = Pos2::new(center.x - size * 0.08, center.y - size * 0.08);
@@ -109,7 +108,7 @@ pub fn search(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     );
 }
 
-/// `✓` – Haken.
+/// `✓` – check mark.
 pub fn check(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     painter.add(Shape::line(
         vec![
@@ -121,7 +120,7 @@ pub fn check(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     ));
 }
 
-/// `✕` – Kreuz zum Schließen und als Fehlermerker.
+/// `✕` – cross for closing, and as an error marker.
 pub fn cross(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     let half = size * 0.36;
     let line = stroke(size, color);
@@ -141,7 +140,7 @@ pub fn cross(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     );
 }
 
-/// `⚠` – Warndreieck mit Ausrufezeichen.
+/// `⚠` – warning triangle with an exclamation mark.
 pub fn warning(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     let half_width = size * 0.48;
     let half_height = size * 0.42;
@@ -165,23 +164,23 @@ pub fn warning(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     );
 }
 
-/// `●` – gefüllter Punkt.
+/// `●` – filled dot.
 pub fn dot(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     painter.circle_filled(center, size * 0.27, color);
 }
 
-/// `○` – leerer Kreis (Merkmal nicht verfügbar).
+/// `○` – empty circle (feature not available).
 pub fn ring(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     painter.circle_stroke(center, size * 0.27, stroke(size, color));
 }
 
-/// `▮` – Navigationssymbol „Mods“: ein stehender Balken.
+/// `▮` – navigation icon for "Mods": an upright bar.
 pub fn nav_mods(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     let rect = Rect::from_center_size(center, Vec2::new(size * 0.42, size * 0.78));
     painter.rect_filled(rect, 1.0, color);
 }
 
-/// `▤` – Navigationssymbol „Profile“: ein Kasten mit Zeilen.
+/// `▤` – navigation icon for "Profile": a box with rows in it.
 pub fn nav_profiles(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     let rect = Rect::from_center_size(center, Vec2::new(size * 0.82, size * 0.72));
     let line = stroke(size, color);
@@ -195,7 +194,7 @@ pub fn nav_profiles(painter: &Painter, center: Pos2, size: f32, color: Color32) 
     }
 }
 
-/// `▣` – Navigationssymbol „Savegames“: Kasten im Kasten.
+/// `▣` – navigation icon for "Savegames": a box inside a box.
 pub fn nav_saves(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     let outer = Rect::from_center_size(center, Vec2::new(size * 0.82, size * 0.78));
     painter.rect_stroke(outer, 1.0, stroke(size, color), egui::StrokeKind::Inside);
@@ -203,8 +202,8 @@ pub fn nav_saves(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     painter.rect_filled(inner, 0.0, color);
 }
 
-/// `✎` – Umbenennen: ein Stift, schräg von links unten nach rechts oben,
-/// mit abgesetzter Spitze.
+/// `✎` – rename: a pencil running diagonally from bottom left to top
+/// right, with a set-off tip.
 pub fn pencil(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     let line = stroke(size, color);
     let tip = Pos2::new(center.x - size * 0.40, center.y + size * 0.40);
@@ -212,8 +211,8 @@ pub fn pencil(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     let end = Pos2::new(center.x + size * 0.40, center.y - size * 0.40);
     painter.line_segment([neck, end], line);
     painter.line_segment([tip, neck], line);
-    // Der Querstrich trennt Spitze und Schaft – ohne ihn bliebe eine bloße
-    // Diagonale übrig, die sich vom Schrägstrich nicht unterscheidet.
+    // The cross stroke separates tip from shaft — without it all that is
+    // left is a plain diagonal, indistinguishable from a slash.
     painter.line_segment(
         [
             Pos2::new(neck.x - size * 0.11, neck.y - size * 0.11),
@@ -223,7 +222,7 @@ pub fn pencil(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     );
 }
 
-/// `🗀` – Verzeichnis: Mappe mit angedeutetem Reiter.
+/// `🗀` – directory: a folder with a hinted-at tab.
 pub fn folder(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     let line = stroke(size, color);
     let body = Rect::from_center_size(
@@ -254,7 +253,7 @@ pub fn folder(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     );
 }
 
-/// `🗑` – Löschen: Behälter mit Deckel und Griff.
+/// `🗑` – delete: a bin with a lid and a handle.
 pub fn trash(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     let line = stroke(size, color);
     let body = Rect::from_center_size(
@@ -276,7 +275,7 @@ pub fn trash(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     );
 }
 
-/// `⚙` – Navigationssymbol „Einstellungen“: Zahnrad mit acht Zähnen.
+/// `⚙` – navigation icon for "Einstellungen": a cog with eight teeth.
 pub fn nav_settings(painter: &Painter, center: Pos2, size: f32, color: Color32) {
     let line = stroke(size, color);
     let radius = size * 0.30;
@@ -294,8 +293,8 @@ pub fn nav_settings(painter: &Painter, center: Pos2, size: f32, color: Color32) 
     }
 }
 
-/// Auswahlring mit Punkt, wie ihn der Dialog „Steam-Nutzerprofil wählen“
-/// zeigt: 14 px Ring, 7 px Punkt.
+/// Selection ring with a dot, as the "Steam-Nutzerprofil wählen" dialog
+/// shows it: a 14 px ring, a 7 px dot.
 pub fn radio(painter: &Painter, center: Pos2, ring_color: Color32, dot_color: Color32) {
     painter.circle_stroke(center, 7.0, Stroke::new(1.0, ring_color));
     if dot_color != Color32::TRANSPARENT {
@@ -308,9 +307,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn die_strichstaerke_bleibt_in_den_groessen_des_entwurfs_sichtbar() {
-        // Die kleinsten Symbole des Entwurfs sind 9 px, die größten 15 px.
-        assert!(line_width(9.0) >= 1.0, "9-px-Symbol wäre unsichtbar dünn");
-        assert!(line_width(15.0) <= 1.8, "15-px-Symbol wäre zu fett für den Entwurf");
+    fn the_stroke_width_stays_visible_at_the_sizes_of_the_design() {
+        // The design's smallest icons are 9 px, its largest 15 px.
+        assert!(line_width(9.0) >= 1.0, "a 9 px icon would be invisibly thin");
+        assert!(line_width(15.0) <= 1.8, "a 15 px icon would be too heavy for the design");
     }
 }

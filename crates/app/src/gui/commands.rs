@@ -1,7 +1,7 @@
-//! Die kurzen, sofort ausführbaren Befehle der Oberfläche: Starten,
-//! Profile, Einstellungen, Wiederherstellen-Entscheidung.
+//! The short commands the interface can carry out right away: launching,
+//! profiles, settings, the decision to restore.
 //!
-//! Alles, was spürbar dauert, steht stattdessen in `tasks`.
+//! Anything that takes noticeable time lives in `tasks` instead.
 
 use super::{App, Dialog, LaunchChoice, Notice, NoticeAction, Section};
 use crate::app_state::AppState;
@@ -13,8 +13,8 @@ use sm2_core::saves;
 use std::path::PathBuf;
 
 impl App {
-    /// Wertet die Startauswahl aus. Ein Start ohne Mods geht zuerst durch
-    /// den Bestätigungsdialog – er verwirft die aktuelle Auswahl.
+    /// Evaluates the launch choice. A start without mods goes through the
+    /// confirmation dialog first — it discards the current selection.
     pub(super) fn launch(&mut self) {
         if self.state.is_none() {
             self.set_warning("Start nicht möglich – Spielverzeichnis unbekannt.");
@@ -27,15 +27,15 @@ impl App {
         }
     }
 
-    /// Der eigentliche Start, in derselben Reihenfolge wie `play` auf der
-    /// Kommandozeile: Sicherung, Save-Backup, Speichern, Start.
+    /// The launch itself, in the same order as `play` on the command line:
+    /// snapshot, save backup, write the configuration, start.
     ///
-    /// Die Reihenfolge ist keine Geschmacksfrage. Das Save-Backup läuft vor
-    /// dem Speichern der Konfiguration, damit ein Fehlschlag nie eine
-    /// bereits geschriebene Konfiguration bei einem nie gestarteten Spiel
-    /// hinterlässt. Und `persist()` ist nur beim Vanilla-Start hart: dort
-    /// ist das Deaktivieren der ganze Zweck des Aufrufs, sonst ändert es
-    /// höchstens das Ergebnis des Abgleichs.
+    /// That order is not a matter of taste. The save backup runs before
+    /// the configuration is written, so that a failure never leaves a
+    /// written configuration behind for a game that was never started. And
+    /// `persist()` is only fatal on a vanilla start: there, disabling
+    /// everything is the whole point of the call, otherwise it changes at
+    /// most the outcome of the reconciliation.
     pub(super) fn perform_launch(&mut self, vanilla_start: bool, no_eac: bool) {
         if no_eac && !self.no_eac_available {
             self.set_warning(
@@ -76,9 +76,9 @@ impl App {
         self.run_auto_backup(vanilla_start);
 
         if !self.persist() && vanilla_start {
-            // Die Warnung steht bereits in der Statusleiste. Ein Start mit
-            // unverändert aktiven Mods wäre das Gegenteil dessen, was der
-            // Nutzer wollte.
+            // The warning is already in the status bar. Starting with the
+            // mods still active would be the opposite of what the user
+            // asked for.
             return;
         }
 
@@ -99,9 +99,9 @@ impl App {
         }
     }
 
-    /// Legt vor dem Start ein Savegame-Backup an, wenn die Einstellung das
-    /// vorsieht. Ein Fehlschlag warnt nur: das automatische Backup ist eine
-    /// Komfortfunktion, kein hartes Erfordernis.
+    /// Makes a savegame backup before the start if the setting calls for
+    /// one. A failure only warns: the automatic backup is a convenience,
+    /// not a hard requirement.
     fn run_auto_backup(&mut self, vanilla_start: bool) {
         if !self.settings().auto_backup {
             return;
@@ -151,9 +151,9 @@ impl App {
         }
     }
 
-    /// Wendet ein Profil an: Aktivierung und Reihenfolge werden ersetzt.
-    /// Paks, die das Profil kennt, die aber fehlen, werden übersprungen und
-    /// gemeldet – so steht es auch über der Tabelle.
+    /// Applies a profile: activation and load order are replaced. Paks the
+    /// profile knows about but that are missing are skipped and reported —
+    /// which is what the text above the table promises.
     pub(super) fn apply_profile(&mut self, name: &str) {
         if !self.can_modify() {
             self.set_warning(self.blocked_reason("Anwenden"));
@@ -199,9 +199,9 @@ impl App {
         }
     }
 
-    /// Fragt nach dem Spielverzeichnis und prüft es, bevor es in den
-    /// Einstellungen landet – ein ungeprüfter Pfad dort führte sonst bei
-    /// jedem weiteren Start zu derselben Fehlermeldung.
+    /// Asks for the game directory and checks it before it lands in the
+    /// settings — an unchecked path there would otherwise produce the same
+    /// error message on every further start.
     pub(super) fn pick_game_dir(&mut self) {
         let Some(dir) = rfd::FileDialog::new()
             .set_title("Verzeichnis von Space Marine 2 wählen")
@@ -255,14 +255,14 @@ impl App {
         self.set_status(format!("Automatisches Backup vor dem Start {word}."));
     }
 
-    /// Entscheidet, ob eine Wiederherstellung sofort läuft oder erst durch
-    /// den Warndialog muss.
+    /// Decides whether a restore runs right away or has to pass through
+    /// the warning dialog first.
     ///
-    /// Läuft Steam, kann dessen Cloud-Synchronisation den zurückgespielten
-    /// Stand wieder überschreiben – dann und nur dann fragt der Loader nach
-    /// (dieselbe Grenze wie `--force` auf der Kommandozeile). Ohne
-    /// laufendes Steam genügt die Zusage über der Tabelle: der Loader
-    /// sichert den aktuellen Stand vorher immer automatisch.
+    /// If Steam is running, its cloud sync can overwrite the restored save
+    /// again — then and only then does the loader ask (the same line
+    /// `--force` draws on the command line). Without Steam running, the
+    /// promise above the table is enough: the loader always backs up the
+    /// current save beforehand.
     pub(super) fn ask_restore(&mut self, index: usize) {
         if self.saves_blocked.is_some() {
             self.set_warning("Wiederherstellen nicht möglich – Steam-Nutzerprofil nicht gewählt.");
@@ -278,17 +278,17 @@ impl App {
         }
     }
 
-    /// Öffnet „Backup umbenennen“ mit dem aktuellen Etikett vorbelegt.
+    /// Opens "Backup umbenennen" prefilled with the current label.
     pub(super) fn ask_rename_backup(&mut self, index: usize) {
         let Some(entry) = self.backups.get(index) else { return };
         self.dialog =
             Some(Dialog::RenameBackup { index, label: entry.label.clone().unwrap_or_default() });
     }
 
-    /// Schreibt das neue Etikett. Das rührt nur an das Backup-Verzeichnis
-    /// des Loaders, nicht an die Spielstände – deshalb ist das, anders als
-    /// Sichern und Wiederherstellen, auch bei ungeklärtem Steam-Nutzerprofil
-    /// erlaubt und braucht keinen Hintergrundthread.
+    /// Writes the new label. This only touches the loader's own backup
+    /// directory, never the saves — which is why, unlike backing up and
+    /// restoring, it is allowed even while the Steam user profile is still
+    /// unresolved, and needs no background thread.
     pub(super) fn confirm_rename_backup(&mut self) {
         let Some(Dialog::RenameBackup { index, label }) = self.dialog.clone() else { return };
         self.dialog = None;
@@ -318,9 +318,9 @@ impl App {
 
         match saves::delete(&entry) {
             Ok(()) => {
-                // Das „geprüft“-Abzeichen hängt am Zeitstempel. Bliebe der
-                // Eintrag stehen, trüge ein später in derselben Sekunde
-                // angelegtes Backup eine Prüfung, die nie stattgefunden hat.
+                // The "verified" badge hangs off the timestamp. If the
+                // entry stayed, a backup created later in the same second
+                // would carry a check that never happened.
                 self.verified.remove(&entry.created_at);
                 self.refresh_backups();
                 self.set_status(format!("Backup {} gelöscht.", entry.created_at));
@@ -349,9 +349,8 @@ impl App {
     }
 }
 
-/// Leitet aus einem Spielverzeichnis die Steam-Bibliothek darüber ab –
-/// dieselbe Regel, nach der `AppState::open_with` einen von Hand gesetzten
-/// `game_dir` auflöst.
+/// Derives the Steam library above a game directory — the same rule
+/// `AppState::open_with` uses to resolve a `game_dir` set by hand.
 fn library_root_of(game_dir: &std::path::Path) -> PathBuf {
     game_dir
         .ancestors()
@@ -360,8 +359,8 @@ fn library_root_of(game_dir: &std::path::Path) -> PathBuf {
         .unwrap_or_else(|| game_dir.to_path_buf())
 }
 
-/// Ein `AppState` wird hier nur zum Anfassen der Felder gebraucht; der
-/// Import hält die Datei sonst für ungenutzt.
+/// An `AppState` is only needed here to touch the fields; without this the
+/// import would count as unused.
 const _: Option<fn(&AppState)> = None;
 const _: Option<fn(Section)> = None;
 
@@ -370,17 +369,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn die_bibliothek_wird_aus_dem_spielverzeichnis_abgeleitet() {
+    fn the_library_is_derived_from_the_game_directory() {
         let tmp = tempfile::tempdir().unwrap();
         let library = tmp.path().join("SteamLibrary");
         let game = library.join("steamapps/common/Space Marine 2");
         std::fs::create_dir_all(&game).unwrap();
 
-        assert_eq!(library_root_of(&game), library, "erwartet wird die Wurzel über steamapps");
+        assert_eq!(library_root_of(&game), library, "the root above steamapps is expected");
     }
 
     #[test]
-    fn ohne_steamapps_darueber_bleibt_das_verzeichnis_selbst_die_wurzel() {
+    fn without_a_steamapps_above_it_the_directory_itself_is_the_root() {
         let tmp = tempfile::tempdir().unwrap();
         let game = tmp.path().join("Spiele/Space Marine 2");
         std::fs::create_dir_all(&game).unwrap();
@@ -388,7 +387,7 @@ mod tests {
         assert_eq!(
             library_root_of(&game),
             game,
-            "ein von Hand irgendwohin entpacktes Spiel darf nicht scheitern"
+            "a game unpacked by hand into some other place must not fail"
         );
     }
 }

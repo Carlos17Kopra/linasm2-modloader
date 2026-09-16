@@ -1,11 +1,11 @@
-//! Die Bausteine des Entwurfs: Schalter, Statuspillen, Schaltflächen,
-//! Eingabefelder, Karten und Tabellenspalten.
+//! The building blocks of the design: toggles, status pills, buttons, input
+//! fields, cards and table columns.
 //!
-//! `egui` bringt für all das eigene Widgets mit, deren Aussehen sich aber
-//! nur über `Visuals` global steuern lässt – der Entwurf benutzt pro Rolle
-//! andere Flächen, Rahmen und Höhen. Deshalb zeichnet dieses Modul die
-//! Flächen selbst und benutzt von `egui` nur die Flächenvergabe
-//! (`allocate_exact_size`) und die Ereignisbehandlung (`Response`).
+//! `egui` ships widgets for all of this, but their look can only be steered
+//! globally through `Visuals` — and the design uses different fills, borders
+//! and heights for each role. So this module paints the surfaces itself and
+//! takes only the space allocation (`allocate_exact_size`) and the event
+//! handling (`Response`) from `egui`.
 
 use super::icons;
 use super::theme::{color, medium, metric, sans};
@@ -14,8 +14,8 @@ use egui::{
     Stroke, StrokeKind, TextFormat, Ui, Vec2,
 };
 
-/// Ein Symbol des Entwurfs, damit Schaltflächen und Zeilen dasselbe
-/// Symbol über einen Wert statt über einen Funktionszeiger benennen können.
+/// One of the design's icons, so that buttons and rows can name the same
+/// icon through a value instead of through a function pointer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
     Plus,
@@ -65,9 +65,9 @@ impl Icon {
     }
 }
 
-/// Aussehen einer Schaltfläche. Der Entwurf kennt fünf Ausprägungen, die
-/// sich nur in Fläche, Rahmen und Schriftfarbe unterscheiden – Höhe,
-/// Innenabstand und Schriftgrad kommen je Einsatzort dazu.
+/// The look of a button. The design has five variants that differ only in
+/// fill, border and text colour — height, padding and font size are added
+/// per place of use.
 #[derive(Debug, Clone)]
 pub struct ButtonStyle {
     pub background: Color32,
@@ -83,7 +83,7 @@ pub struct ButtonStyle {
 }
 
 impl ButtonStyle {
-    /// Hauptschaltfläche („Starten“, „Dateien wählen“, „Übernehmen“).
+    /// The primary button ("Starten", "Dateien wählen", "Übernehmen").
     pub fn primary() -> Self {
         Self {
             background: color::ACCENT_DEEP,
@@ -99,7 +99,8 @@ impl ButtonStyle {
         }
     }
 
-    /// Nebenschaltfläche mit Rahmen, die unter dem Zeiger den Akzent annimmt.
+    /// A secondary button with a border, which takes on the accent colour
+    /// under the pointer.
     pub fn ghost() -> Self {
         Self {
             background: color::CONTROL,
@@ -115,7 +116,7 @@ impl ButtonStyle {
         }
     }
 
-    /// „Abbrechen“ in einem modalen Fenster: hellerer Rahmen, heller Text.
+    /// "Abbrechen" in a modal window: lighter border, lighter text.
     pub fn neutral() -> Self {
         Self {
             background: color::CONTROL,
@@ -131,7 +132,7 @@ impl ButtonStyle {
         }
     }
 
-    /// Zerstörende Schaltfläche („Löschen“, „Trotzdem wiederherstellen“).
+    /// A destructive button ("Löschen", "Trotzdem wiederherstellen").
     pub fn danger() -> Self {
         Self {
             background: color::DANGER_BG,
@@ -147,7 +148,7 @@ impl ButtonStyle {
         }
     }
 
-    /// Warnende Schaltfläche („⚠ Wiederherstellen“ in der Backup-Liste).
+    /// A warning button ("⚠ Wiederherstellen" in the backup list).
     pub fn warning() -> Self {
         Self {
             background: color::WARN_BG,
@@ -183,17 +184,18 @@ impl ButtonStyle {
         self
     }
 
-    /// Kleine Schaltfläche in einer Tabellenzeile (26 px, Radius 6).
+    /// A small button in a table row (26 px, radius 6).
     pub fn small(self) -> Self {
         self.height(metric::BUTTON_HEIGHT_SMALL).padding_x(11.0).font(sans(11.5)).corner_radius(6)
     }
 }
 
-/// Zeichnet eine Schaltfläche des Entwurfs und meldet den Klick zurück.
+/// Draws one of the design's buttons and reports back whether it was
+/// clicked.
 ///
-/// Eine gesperrte Schaltfläche bleibt sichtbar (der Entwurf blendet sie nicht
-/// aus, sondern nimmt ihr Fläche, Rahmen und Schriftfarbe) und zeigt unter
-/// dem Zeiger „nicht erlaubt“ statt der Hand.
+/// A disabled button stays visible — the design does not hide it, it drains
+/// its fill, border and text colour — and shows a "not allowed" cursor
+/// instead of the pointing hand.
 pub fn button(
     ui: &mut Ui,
     style: &ButtonStyle,
@@ -252,17 +254,18 @@ pub fn button(
     }
 }
 
-/// Der Schalter, mit dem der Entwurf Haken ersetzt: 30 × 17 px, Knopf 12 px.
+/// The toggle the design uses in place of check marks: 30 × 17 px, with a
+/// 12 px knob.
 ///
-/// Die Bewegung des Knopfes läuft über `animate_bool_with_time` – laut
-/// Anmerkung des Entwurfs ausdrücklich erlaubt, weil es nur eine Interpolation
-/// zwischen zwei Positionen ist.
+/// The knob's movement runs through `animate_bool_with_time`. The design's
+/// own notes explicitly allow this, because it is nothing more than an
+/// interpolation between two positions.
 pub fn toggle(ui: &mut Ui, on: bool, enabled: bool) -> Response {
     toggle_colored(ui, on, enabled, color::ACCENT_MID, color::ACCENT, color::ACCENT_FG)
 }
 
-/// Schalter in abweichenden Farben – der Wiederherstellen-Dialog benutzt für
-/// die Risikobestätigung Rot statt des Akzents.
+/// A toggle in different colours — the restore dialog uses red instead of
+/// the accent for its risk confirmation.
 pub fn toggle_colored(
     ui: &mut Ui,
     on: bool,
@@ -303,7 +306,7 @@ pub fn toggle_colored(
     }
 }
 
-/// Eine Statuspille wie „⚠ GEÄNDERT“ oder „✓ geprüft, 41 Dateien“.
+/// A status pill such as "⚠ GEÄNDERT" or "✓ geprüft, 41 Dateien".
 pub fn badge(ui: &mut Ui, icon: Option<Icon>, label: &str, foreground: Color32, background: Color32) {
     let font = medium(10.0);
     let galley = ui.painter().layout_job(tracked_text(label, font.clone(), foreground, 0.6));
@@ -331,9 +334,10 @@ pub fn badge(ui: &mut Ui, icon: Option<Icon>, label: &str, foreground: Color32, 
     );
 }
 
-/// Text mit Sperrung, wie ihn der Entwurf für Spaltenköpfe und Pillen
-/// benutzt (`letter-spacing`). `egui` kennt keine Sperrung als Stilangabe,
-/// wohl aber `TextFormat::extra_letter_spacing` in einem `LayoutJob`.
+/// Letter-spaced text, the way the design uses it for column headers and
+/// pills (`letter-spacing`). `egui` has no letter spacing as a style
+/// setting, but it does have `TextFormat::extra_letter_spacing` inside a
+/// `LayoutJob`.
 pub fn tracked_text(
     text: &str,
     font: FontId,
@@ -349,8 +353,9 @@ pub fn tracked_text(
     job
 }
 
-/// Rahmen einer Karte: Fläche, 1-px-Rahmen, 12-px-Rundung – als `Frame`,
-/// wenn die Höhe aus dem Inhalt folgen soll statt vorab festzustehen.
+/// The frame of a card: fill, 1 px border, 12 px corner radius — as a
+/// `Frame`, for when the height should follow from the content instead of
+/// standing fixed up front.
 pub fn card() -> Frame {
     Frame::new()
         .fill(color::CARD)
@@ -358,8 +363,8 @@ pub fn card() -> Frame {
         .corner_radius(CornerRadius::same(12))
 }
 
-/// Rahmen eines eingelassenen Kastens (Pfadlisten in Dialogen und im
-/// Erstlauf-Bildschirm): dunklere Fläche, 9-px-Rundung.
+/// The frame of an inset box (path lists in dialogs and on the first-run
+/// screen): darker fill, 9 px corner radius.
 pub fn inset() -> Frame {
     Frame::new()
         .fill(color::INPUT)
@@ -368,8 +373,8 @@ pub fn inset() -> Frame {
         .inner_margin(Margin { left: 13, right: 13, top: 11, bottom: 11 })
 }
 
-/// Ein einzeiliges Eingabefeld in der Form des Entwurfs: 30 px hoch,
-/// eingelassene Fläche, 7-px-Rundung, optionales Symbol davor.
+/// A single-line input field in the shape of the design: 30 px tall, inset
+/// fill, 7 px corner radius, optional icon in front of it.
 pub fn text_field(
     ui: &mut Ui,
     value: &mut String,
@@ -406,21 +411,21 @@ pub fn text_field(
     )
 }
 
-/// Breitenangabe einer Tabellenspalte.
+/// The width specification of a table column.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Column {
-    /// Feste Breite in Punkten.
+    /// A fixed width in points.
     Fixed(f32),
-    /// Nimmt den Rest der Zeile ein (`1fr` im Entwurf).
+    /// Takes up the rest of the row (`1fr` in the design).
     Flexible,
 }
 
-/// Rechnet die Spaltenangaben einer Zeile in Rechtecke um – das Gegenstück
-/// zu `grid-template-columns` samt `gap` aus dem Entwurf.
+/// Turns a row's column specification into rectangles — the counterpart to
+/// `grid-template-columns` and its `gap` from the design.
 ///
-/// Mehrere flexible Spalten teilen sich den Rest zu gleichen Teilen. Bleibt
-/// nichts übrig (sehr schmales Fenster), bekommen sie Breite 0 statt einer
-/// negativen Breite, damit die Zeile nicht über ihren Rand hinauswächst.
+/// Several flexible columns share what is left in equal parts. If nothing
+/// is left over (a very narrow window) they get width 0 rather than a
+/// negative width, so the row does not grow past its own edge.
 pub fn columns(row: Rect, spec: &[Column], gap: f32) -> Vec<Rect> {
     let fixed: f32 = spec
         .iter()
@@ -447,13 +452,13 @@ pub fn columns(row: Rect, spec: &[Column], gap: f32) -> Vec<Rect> {
     rects
 }
 
-/// Setzt Text einzeilig und kürzt ihn mit einem Auslassungszeichen, wenn er
-/// nicht passt – das Gegenstück zu `white-space: nowrap` plus
-/// `text-overflow: ellipsis` aus dem Entwurf.
+/// Lays text out on a single line and shortens it with an ellipsis when it
+/// does not fit — the counterpart to `white-space: nowrap` plus
+/// `text-overflow: ellipsis` from the design.
 ///
-/// Der Unterschied zu einem gewöhnlichen Umbruch ist in einer Tabelle nicht
-/// kosmetisch: bricht ein langer Dateiname um, wächst die Zeile und schiebt
-/// ihren Inhalt in die Nachbarspalte.
+/// In a table the difference from ordinary wrapping is not cosmetic: if a
+/// long file name wraps, the row grows and pushes its content into the
+/// neighbouring column.
 pub fn truncated(
     ui: &Ui,
     text: &str,
@@ -474,18 +479,18 @@ pub fn truncated(
     ui.painter().layout_job(job)
 }
 
-/// Breite eines Kontextmenüs. Fest, damit alle Einträge dieselbe
-/// Trefferfläche bekommen – bei einer aus dem längsten Eintrag
-/// abgeleiteten Breite änderte sich die Klickfläche je nach Beschriftung.
+/// Width of a context menu. Fixed, so that every entry gets the same hit
+/// area — with a width derived from the longest entry, the clickable area
+/// would change with the labels.
 pub const MENU_WIDTH: f32 = 204.0;
 
-/// Ein Eintrag in einem Kontextmenü; gibt zurück, ob er angeklickt wurde.
+/// One entry of a context menu; returns whether it was clicked.
 ///
-/// Das Gehäuse (Fläche, Rahmen, Schatten, Öffnen und Schließen) stellt
-/// `egui` über `Response::context_menu`; Zeile, Schrift und Farben zeichnet
-/// diese Funktion selbst – aus demselben Grund wie bei `button`: `egui`s
-/// eigene Menüeinträge lassen sich nur global über `Visuals` gestalten und
-/// träfen den Entwurf nicht.
+/// `egui` provides the shell — fill, border, shadow, opening and closing —
+/// through `Response::context_menu`; the row, the text and the colours this
+/// function paints itself, for the same reason as in `button`: `egui`'s own
+/// menu entries can only be styled globally through `Visuals`, and would
+/// not match the design.
 pub fn menu_item(ui: &mut Ui, icon: Option<Icon>, label: &str, enabled: bool, danger: bool) -> bool {
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
@@ -515,8 +520,8 @@ pub fn menu_item(ui: &mut Ui, icon: Option<Icon>, label: &str, enabled: bool, da
         if highlight && !danger { color::TEXT_STRONG } else { foreground },
     );
 
-    // Ein gesperrter Eintrag schließt das Menü nicht: der Klick soll
-    // folgenlos bleiben, nicht das Menü wegnehmen, ohne etwas zu tun.
+    // A disabled entry does not close the menu: the click should stay
+    // without consequence, not take the menu away and do nothing else.
     let clicked = enabled && response.clicked();
     if clicked {
         ui.close();
@@ -524,15 +529,15 @@ pub fn menu_item(ui: &mut Ui, icon: Option<Icon>, label: &str, enabled: bool, da
     clicked
 }
 
-/// Die Trennlinie zwischen zwei Gruppen von Menüeinträgen.
+/// The divider between two groups of menu entries.
 pub fn menu_separator(ui: &mut Ui) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 7.0), Sense::hover());
     ui.painter().hline(rect.x_range(), rect.center().y, Stroke::new(1.0, color::BORDER_SOFT));
 }
 
-/// Schreibt gekürzten Text linksbündig und senkrecht zentriert in eine
-/// Spalte. Eine Spalte ohne nutzbare Breite bleibt leer, statt ihren Text
-/// über den Nachbarn zu legen.
+/// Writes shortened text into a column, left-aligned and vertically
+/// centred. A column without usable width stays empty instead of laying its
+/// text over its neighbour.
 pub fn column_text(ui: &Ui, rect: Rect, text: &str, font: FontId, color: Color32) {
     if rect.width() < 8.0 {
         return;
@@ -554,8 +559,8 @@ mod tests {
     }
 
     #[test]
-    fn eine_flexible_spalte_bekommt_den_rest_der_zeile() {
-        // Der Kopf der Mod-Liste: 22 44 1fr 72 124 56 bei 10 px Abstand.
+    fn a_flexible_column_gets_the_rest_of_the_row() {
+        // The header of the mod list: 22 44 1fr 72 124 56 with a 10 px gap.
         let spec = [
             Column::Fixed(22.0),
             Column::Fixed(44.0),
@@ -565,28 +570,32 @@ mod tests {
             Column::Fixed(56.0),
         ];
         let rects = columns(row(800.0), &spec, 10.0);
-        assert_eq!(rects.len(), 6, "jede Spalte bekommt ein Rechteck");
-        assert_eq!(rects[2].width(), 800.0 - 318.0 - 50.0, "die flexible Spalte nimmt den Rest");
-        assert_eq!(rects[0].left(), 0.0, "die erste Spalte beginnt am linken Rand");
+        assert_eq!(rects.len(), 6, "every column gets a rectangle");
+        assert_eq!(rects[2].width(), 800.0 - 318.0 - 50.0, "the flexible column takes the rest");
+        assert_eq!(rects[0].left(), 0.0, "the first column starts at the left edge");
         assert_eq!(
             rects[5].right(),
             800.0,
-            "die letzte Spalte endet genau am rechten Rand der Zeile"
+            "the last column ends exactly at the right edge of the row"
         );
     }
 
     #[test]
-    fn eine_zu_schmale_zeile_erzeugt_keine_negative_breite() {
+    fn a_row_that_is_too_narrow_produces_no_negative_width() {
         let spec = [Column::Fixed(200.0), Column::Flexible, Column::Fixed(200.0)];
         let rects = columns(row(120.0), &spec, 10.0);
-        assert_eq!(rects[1].width(), 0.0, "die flexible Spalte schrumpft auf null statt ins Minus");
+        assert_eq!(
+            rects[1].width(),
+            0.0,
+            "the flexible column shrinks to zero rather than going negative"
+        );
     }
 
     #[test]
-    fn mehrere_flexible_spalten_teilen_sich_den_rest_zu_gleichen_teilen() {
+    fn several_flexible_columns_share_the_rest_in_equal_parts() {
         let spec = [Column::Flexible, Column::Fixed(100.0), Column::Flexible];
         let rects = columns(row(400.0), &spec, 10.0);
-        assert_eq!(rects[0].width(), 140.0, "erste flexible Spalte");
-        assert_eq!(rects[2].width(), 140.0, "zweite flexible Spalte, gleich breit");
+        assert_eq!(rects[0].width(), 140.0, "first flexible column");
+        assert_eq!(rects[2].width(), 140.0, "second flexible column, same width");
     }
 }

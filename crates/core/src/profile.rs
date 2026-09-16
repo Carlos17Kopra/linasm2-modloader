@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-/// Ein Eintrag in einem Profil: welches Pak, und ob es aktiv ist.
+/// An entry in a profile: which pak, and whether it is active.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProfileEntry {
     pub pak: String,
@@ -13,8 +13,8 @@ pub struct ProfileEntry {
     pub disabled: bool,
 }
 
-/// Eine benannte Zusammenstellung: Mod-Auswahl plus Ladereihenfolge.
-/// Genau die Information, die pak_config.yaml braucht – nur ein paar hundert Byte.
+/// A named set-up: mod selection plus load order. Exactly the information
+/// pak_config.yaml needs — only a few hundred bytes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Profile {
     pub name: String,
@@ -34,16 +34,16 @@ impl Profile {
         }
     }
 
-    /// Baut die Konfiguration für dieses Profil. Fehlende Paks (im Profil
-    /// gelistet, aber keine Datei mehr im Verzeichnis) werden übersprungen
-    /// und zurückgemeldet; das Profil selbst bleibt unverändert.
+    /// Builds the configuration for this profile. Missing paks (listed in
+    /// the profile, but no longer a file in the directory) are skipped and
+    /// reported back; the profile itself stays unchanged.
     ///
-    /// Vorhandene, dem Profil unbekannte Paks kommen deaktiviert ans Ende
-    /// der neuen Konfiguration – die Engine lädt jedes Pak, das im
-    /// Verzeichnis liegt, unabhängig davon, ob es in pak_config.yaml steht;
-    /// ein nicht gelistetes Pak würde also sonst ungesteuert und zuerst
-    /// geladen. Ein doppelt gemeldetes unbekanntes Pak in `present` wird nur
-    /// einmal aufgenommen (siehe `PakConfig::reconcile`, gleiche Regel).
+    /// Paks that are present but unknown to the profile are appended
+    /// disabled at the end of the new configuration. The engine loads every
+    /// pak lying in the directory regardless of whether it appears in
+    /// pak_config.yaml, so an unlisted pak would otherwise be loaded first
+    /// and uncontrolled. An unknown pak reported twice in `present` is taken
+    /// in only once (see `PakConfig::reconcile`, same rule).
     pub fn apply(&self, present: &[String]) -> (PakConfig, Vec<String>) {
         let present_set: HashSet<&str> = present.iter().map(String::as_str).collect();
 
@@ -75,20 +75,20 @@ impl Profile {
         (PakConfig { entries }, missing)
     }
 
-    /// Leitet einen stabilen, eindeutigen Dateinamen aus dem Profilnamen ab.
+    /// Derives a stable, unique file name from the profile name.
     ///
-    /// Der Profilname selbst steht im Dateiinhalt (`name`-Feld) – der
-    /// Dateiname muss also nur stabil und eindeutig sein, nicht umkehrbar.
-    /// Ein reines "ersetze Sonderzeichen durch '-'"-Schema kann das nicht
-    /// garantieren: ein Name, der nur aus Sonderzeichen besteht (z. B.
-    /// "???"), würde zu einem leeren Stamm (versteckte Datei ohne Namen),
-    /// und zwei unterschiedliche Namen wie "Mein Profil" und "mein-profil"
-    /// würden auf dieselbe Datei abgebildet und sich gegenseitig
-    /// überschreiben. Deshalb hängt der Dateiname zusätzlich die ersten 8
-    /// Hex-Zeichen des blake3-Hashs des *ungekürzten* Originalnamens an: das
-    /// hält den Namen lesbar, macht den Stamm nie leer (der Hash-Teil ist
-    /// immer da) und lässt unterschiedliche Namen nie kollidieren (ein
-    /// Hash-Zusammenstoß ist praktisch ausgeschlossen).
+    /// The profile name itself lives in the file's content (the `name`
+    /// field), so the file name only has to be stable and unique, not
+    /// reversible. A plain "replace special characters with '-'" scheme
+    /// cannot guarantee that: a name made up entirely of special characters
+    /// (for example "???") would yield an empty stem (a hidden file without
+    /// a name), and two different names such as "Mein Profil" and
+    /// "mein-profil" would map to the same file and overwrite each other.
+    /// That is why the file name additionally appends the first 8 hex
+    /// characters of the blake3 hash of the *unshortened* original name:
+    /// this keeps the name readable, never lets the stem be empty (the hash
+    /// part is always there), and never lets different names collide (a
+    /// hash collision is practically impossible).
     fn file_stem(name: &str) -> String {
         let slug: String = name
             .chars()
@@ -111,11 +111,11 @@ impl Profile {
         format!("{}.toml", Self::file_stem(&self.name))
     }
 
-    /// Der Pfad, unter dem `save(dir)` dieses Profil ablegt bzw. abgelegt
-    /// hat. Öffentlich, damit ein Aufrufer (z. B. `profile delete` in der
-    /// CLI), der ein bereits über `list_profiles` geladenes `Profile` vor
-    /// sich hat, dessen Datei ansprechen kann, ohne das
-    /// Namens-zu-Dateiname-Schema (`file_stem`) selbst nachzubauen.
+    /// The path where `save(dir)` puts, or has put, this profile. Public so
+    /// that a caller holding a `Profile` already loaded through
+    /// `list_profiles` (`profile delete` in the CLI, say) can address its
+    /// file without rebuilding the name-to-file-name scheme (`file_stem`)
+    /// itself.
     pub fn path_in(&self, dir: &Path) -> PathBuf {
         dir.join(self.file_name())
     }
@@ -138,16 +138,15 @@ impl Profile {
     }
 }
 
-/// Listet alle Profile in `dir` alphabetisch nach Namen.
+/// Lists all profiles in `dir`, alphabetically by name.
 ///
-/// Nicht-`.toml`-Dateien werden ignoriert. Eine `.toml`-Datei, die nicht
-/// gelesen oder nicht als `Profile` interpretiert werden kann (kaputtes
-/// TOML, oder gültiges TOML ohne die erwarteten Felder), wird stillschweigend
-/// übersprungen statt die ganze Auflistung scheitern zu lassen – eine
-/// einzelne beschädigte Datei soll nicht alle anderen Profile unsichtbar
-/// machen. Das bedeutet allerdings auch: ein Profil kann so aus der Liste
-/// verschwinden, ohne dass eine Fehlermeldung erscheint. Ein Pfad, der kein
-/// Verzeichnis ist (fehlt, oder ist eine Datei), ergibt eine leere Liste.
+/// Non-`.toml` files are ignored. A `.toml` file that cannot be read, or
+/// cannot be interpreted as a `Profile` (broken TOML, or valid TOML without
+/// the expected fields), is skipped silently instead of failing the whole
+/// listing — a single damaged file should not make every other profile
+/// invisible. That does mean, though, that a profile can vanish from the
+/// list without any error message appearing. A path that is not a directory
+/// (missing, or a file) yields an empty list.
 pub fn list_profiles(dir: &Path) -> Result<Vec<Profile>> {
     if !dir.is_dir() {
         return Ok(Vec::new());
@@ -211,14 +210,14 @@ mod tests {
 
     #[test]
     fn apply_includes_unknown_paks_disabled() {
-        // Ein Pak im Verzeichnis, das das Profil nicht kennt, würde sonst
-        // ungesteuert zuerst geladen (Engine-Regel).
+        // A pak in the directory that the profile does not know would
+        // otherwise be loaded first and uncontrolled (engine rule).
         let profile = Profile::from_config("P", &config(&[("bekannt.pak", false)]));
         let (result, _) = profile.apply(&["bekannt.pak".into(), "fremd.pak".into()]);
 
         assert_eq!(result.entries.len(), 2);
         let fremd = result.entries.iter().find(|e| e.pak == "fremd.pak").unwrap();
-        assert!(fremd.disabled, "unbekannte Paks dürfen nicht stillschweigend aktiv sein");
+        assert!(fremd.disabled, "unknown paks must not be silently active");
     }
 
     #[test]
@@ -228,7 +227,7 @@ mod tests {
             profile.apply(&["fremd.pak".into(), "fremd.pak".into(), "a.pak".into()]);
 
         let count = result.entries.iter().filter(|e| e.pak == "fremd.pak").count();
-        assert_eq!(count, 1, "ein doppelt gemeldetes unbekanntes Pak darf nur einmal auftauchen");
+        assert_eq!(count, 1, "an unknown pak reported twice may only show up once");
         assert_eq!(result.entries.len(), 2);
     }
 
@@ -237,16 +236,16 @@ mod tests {
         let profile = Profile::from_config("P", &config(&[("a.pak", false)]));
         let (result, missing) = profile.apply(&["a.pak".into(), "a.pak".into()]);
 
-        assert_eq!(result.entries.len(), 1, "ein doppelt gemeldetes bekanntes Pak darf nicht dupliziert werden");
+        assert_eq!(result.entries.len(), 1, "a known pak reported twice must not be duplicated");
         assert!(missing.is_empty());
     }
 
     #[test]
     fn apply_preserves_duplicate_entries_already_in_the_profile() {
-        // Ein von Hand bearbeitetes Profil kann ein Pak bereits doppelt
-        // enthalten. apply darf das nicht "reparieren" (siehe
-        // `PakConfig::reconcile`, gleiche Designentscheidung) – es gibt hier
-        // keine sinnvolle Regel, welcher der beiden Zustände gewinnen sollte.
+        // A hand-edited profile may already contain a pak twice. apply must
+        // not "repair" that (see `PakConfig::reconcile`, same design
+        // decision) — there is no sensible rule here for which of the two
+        // states should win.
         let profile = Profile {
             name: "P".into(),
             entries: vec![
@@ -272,7 +271,7 @@ mod tests {
         let (result, missing) = profile.apply(&["b.pak".into(), "a.pak".into()]);
 
         let names: Vec<&str> = result.entries.iter().map(|e| e.pak.as_str()).collect();
-        assert_eq!(names, vec!["a.pak", "b.pak"], "unbekannte Paks werden alphabetisch angehängt");
+        assert_eq!(names, vec!["a.pak", "b.pak"], "unknown paks are appended alphabetically");
         assert!(result.entries.iter().all(|e| e.disabled));
         assert!(missing.is_empty());
     }
@@ -324,7 +323,7 @@ mod tests {
     fn list_skips_toml_files_that_are_not_profiles() {
         let dir = tempfile::tempdir().unwrap();
         Profile::from_config("Gut", &config(&[])).save(dir.path()).unwrap();
-        // Gültiges TOML, aber ohne das erforderliche Feld "name".
+        // Valid TOML, but without the required "name" field.
         std::fs::write(dir.path().join("fremd.toml"), b"irgendwas = 1\n").unwrap();
 
         let names: Vec<String> =
@@ -347,9 +346,9 @@ mod tests {
         assert_eq!(list_profiles(&dir.path().join("gibt_es_nicht")).unwrap(), Vec::new());
     }
 
-    /// Analog zu `settings.rs`s gleichnamigem Test: `Profile::load` muss
-    /// einen kaputten TOML-Inhalt mit Pfad und auf Deutsch melden, nicht mit
-    /// der rohen (englischen, mehrzeiligen) `toml::de::Error`-Meldung.
+    /// Same as the test of that name in `settings.rs`: `Profile::load` must
+    /// report broken TOML content with the path and in German, not with the
+    /// raw (English, multi-line) `toml::de::Error` message.
     #[test]
     fn corrupt_file_is_reported_with_path_in_german() {
         let dir = tempfile::tempdir().unwrap();
@@ -360,11 +359,11 @@ mod tests {
         let message = err.to_string();
         assert!(
             message.contains(path.to_str().unwrap()),
-            "Fehlermeldung muss den Pfad enthalten: {message}"
+            "the error message must contain the path: {message}"
         );
         assert!(
             !message.contains("expected") && !message.contains("invalid"),
-            "Fehlermeldung soll auf Deutsch sein, nicht die rohe toml-Meldung enthalten: {message}"
+            "the error message should be in German, not carry the raw toml message: {message}"
         );
     }
 
@@ -374,7 +373,7 @@ mod tests {
         let a = Profile::from_config("Mein Profil", &config(&[])).save(dir.path()).unwrap();
         let b = Profile::from_config("mein-profil", &config(&[])).save(dir.path()).unwrap();
 
-        assert_ne!(a, b, "unterschiedliche Namen dürfen nicht dieselbe Datei treffen");
+        assert_ne!(a, b, "different names must not end up in the same file");
         assert_eq!(Profile::load(&a).unwrap().name, "Mein Profil");
         assert_eq!(Profile::load(&b).unwrap().name, "mein-profil");
     }
@@ -387,7 +386,7 @@ mod tests {
         let path = profile.save(dir.path()).unwrap();
 
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap();
-        assert!(!stem.is_empty(), "der Dateistamm darf nie leer sein");
+        assert!(!stem.is_empty(), "the file stem must never be empty");
         assert_eq!(Profile::load(&path).unwrap().name, "???");
     }
 

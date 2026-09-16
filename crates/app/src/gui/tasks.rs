@@ -1,16 +1,16 @@
-//! Hintergrundaufträge: Import, Backup, Prüfen, Wiederherstellen.
+//! Background jobs: import, backup, verify, restore.
 //!
-//! Ein Pak ist mehrere Gigabyte groß; Entpacken, Kopieren und Hashen dauern
-//! spürbar. Liefe das im Zeichentakt, stünde das Fenster still – der Entwurf
-//! verlangt ausdrücklich das Gegenteil („Import läuft — das Fenster bleibt
-//! bedienbar“). Jeder Auftrag läuft deshalb in einem eigenen Thread und
-//! meldet seinen Fortschritt über einen geteilten Zähler zurück.
+//! A pak is several gigabytes in size; unpacking, copying and hashing take
+//! noticeable time. Running that on the paint thread would freeze the
+//! window — and the design explicitly demands the opposite ("Import läuft
+//! — das Fenster bleibt bedienbar"). Every job therefore runs on a thread
+//! of its own and reports its progress back through a shared counter.
 //!
-//! Der Thread arbeitet auf **Kopien** von Bibliothek und Konfiguration und
-//! gibt sie am Ende zurück; erst der Zeichen-Thread schreibt sie über
-//! `AppState::persist` auf die Platte. Deshalb sperrt `App::can_modify`
-//! Aktivierung, Reihenfolge und Import, solange ein Auftrag läuft: eine
-//! zwischenzeitliche Änderung würde vom zurückgegebenen Stand überschrieben.
+//! The thread works on **copies** of the library and the configuration and
+//! hands them back when it is done; only the paint thread writes them to
+//! disk, via `AppState::persist`. That is why `App::can_modify` locks
+//! activation, ordering and import while a job is running: a change made in
+//! the meantime would be overwritten by the state coming back.
 
 use super::{App, Notice, Section};
 use sm2_core::library::Library;
@@ -22,16 +22,16 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, PoisonError};
 
-/// Fortschritt eines laufenden Auftrags, wie ihn die Statusleiste zeigt.
+/// Progress of a running job, the way the status bar shows it.
 #[derive(Debug, Clone, Default)]
 pub struct Progress {
-    /// 0.0 bis 1.0 für den Balken.
+    /// 0.0 to 1.0, for the bar.
     pub fraction: f32,
-    /// Deutsche Beschreibung des gerade laufenden Schrittes.
+    /// German description of the step currently running.
     pub label: String,
 }
 
-/// Ein laufender Auftrag.
+/// A running job.
 pub struct Running {
     cancellable: bool,
     cancel: Arc<AtomicBool>,
@@ -44,9 +44,9 @@ impl Running {
         self.cancel.store(true, Ordering::Relaxed);
     }
 
-    /// Kann dieser Auftrag abgebrochen werden? Nur der Import – er setzt
-    /// zwischen zwei Dateien ab. Ein Backup oder eine Wiederherstellung
-    /// mitten im Schreiben abzubrechen hinterließe einen halben Stand.
+    /// Can this job be cancelled? Only the import can — it stops between
+    /// two files. Aborting a backup or a restore mid-write would leave
+    /// half a state behind.
     pub fn is_cancellable(&self) -> bool {
         self.cancellable
     }
@@ -56,13 +56,12 @@ impl Running {
     }
 }
 
-/// Ergebnis eines Auftrags, so wie der Zeichen-Thread es verarbeiten kann.
+/// The result of a job, in a form the paint thread can process.
 enum Outcome {
-    /// Import: der veränderte Stand plus die Meldungen je Datei. `error`
-    /// ist gesetzt, wenn eine Datei gescheitert ist – die davor bereits
-    /// erfolgreich importierten Paks stecken trotzdem in `library`/`config`
-    /// und dürfen nicht verloren gehen (dieselbe Zusage wie beim
-    /// `install`-Befehl der Kommandozeile).
+    /// Import: the changed state plus one message per file. `error` is set
+    /// when a file failed — the paks imported successfully before it are
+    /// still in `library`/`config` and must not be lost (the same promise
+    /// the command line's `install` command makes).
     Imported {
         library: Box<Library>,
         config: PakConfig,
@@ -76,7 +75,7 @@ enum Outcome {
     Restored { created_at: String, result: Result<BackupEntry, String> },
 }
 
-/// Startet einen Thread und liefert den Griff darauf.
+/// Starts a thread and returns the handle to it.
 fn spawn<F>(ctx: egui::Context, cancellable: bool, work: F) -> Running
 where
     F: FnOnce(&Arc<AtomicBool>, &Arc<Mutex<Progress>>) -> Outcome + Send + 'static,
@@ -89,9 +88,9 @@ where
     let worker_progress = Arc::clone(&progress);
     std::thread::spawn(move || {
         let result = work(&worker_cancel, &worker_progress);
-        // Der Empfänger kann weg sein, wenn das Fenster inzwischen
-        // geschlossen wurde – das ist kein Fehler, nur ein Ergebnis, das
-        // niemand mehr abholt.
+        // The receiver may be gone if the window has been closed in the
+        // meantime — that is not an error, just a result nobody picks up
+        // any more.
         let _ = sender.send(result);
         ctx.request_repaint();
     });
@@ -106,15 +105,15 @@ fn report(progress: &Arc<Mutex<Progress>>, fraction: f32, label: impl Into<Strin
 }
 
 impl App {
-    /// Nimmt ein fertiges Ergebnis entgegen, falls eines vorliegt, und hält
-    /// die Anzeige währenddessen in Bewegung.
+    /// Picks up a finished result if there is one, and keeps the display
+    /// moving while there is not.
     pub(super) fn poll_task(&mut self, ctx: &egui::Context) {
         let Some(task) = &self.task else { return };
         let outcome = match task.outcome.try_recv() {
             Ok(outcome) => outcome,
             Err(mpsc::TryRecvError::Empty) => {
-                // Der Balken muss sich bewegen, auch wenn niemand die Maus
-                // rührt.
+                // The bar has to keep moving even when nobody touches the
+                // mouse.
                 ctx.request_repaint_after(std::time::Duration::from_millis(80));
                 return;
             }
@@ -187,7 +186,7 @@ impl App {
         }
     }
 
-    /// Öffnet den Dateidialog und startet den Import der gewählten Dateien.
+    /// Opens the file dialog and starts importing the chosen files.
     pub(super) fn start_import(&mut self) {
         if !self.can_modify() {
             self.set_warning(self.blocked_reason("Import"));
@@ -205,8 +204,8 @@ impl App {
         self.begin_import(files);
     }
 
-    /// Startet den Import ohne Dateidialog – für Dateien, die der Nutzer auf
-    /// das Fenster gezogen hat.
+    /// Starts the import without a file dialog — for files the user has
+    /// dragged onto the window.
     pub(super) fn begin_import(&mut self, files: Vec<PathBuf>) {
         let Some(state) = &self.state else { return };
         let paths = state.paths.clone();
@@ -266,9 +265,8 @@ impl App {
         }));
     }
 
-    /// Spielt ein Backup zurück. Aufrufer ist ausschließlich der
-    /// Wiederherstellen-Dialog – er hat die Warnung zu Steams
-    /// Cloud-Synchronisation bereits gezeigt.
+    /// Plays a backup back in. The only caller is the restore dialog — it
+    /// has already shown the warning about Steam's cloud sync.
     pub(super) fn start_restore(&mut self, index: usize) {
         let Some(entry) = self.backups.get(index).cloned() else { return };
         let Some(state) = &self.state else { return };
@@ -292,13 +290,12 @@ impl App {
     }
 }
 
-/// Der Import selbst, im Hintergrundthread.
+/// The import itself, on the background thread.
 ///
-/// Folgt Schritt für Schritt `cli.rs`s `run_install`, inklusive der
-/// Arbeitskopie für ein einzeln angegebenes `.pak`: `extract_paks` gibt
-/// dafür den Originalpfad zurück, und `import_pak` verschiebt die Datei –
-/// ohne Kopie verschwände sie aus dem Verzeichnis, in das der Nutzer sie
-/// gelegt hat.
+/// Follows `cli.rs`'s `run_install` step by step, including the working
+/// copy for a `.pak` handed over on its own: for that one `extract_paks`
+/// returns the original path, and `import_pak` moves the file — without a
+/// copy it would vanish from the directory the user put it in.
 fn import_files(
     paths: &GamePaths,
     mut library: Library,
@@ -427,9 +424,9 @@ fn import_files(
     }
 }
 
-/// Liefert einen Pfad unterhalb von `temp`, aus dem `import_pak` die Datei
-/// wegbewegen darf. Liegt `pak` bereits dort (aus einem Archiv entpackt),
-/// wird nichts kopiert.
+/// Returns a path below `temp` that `import_pak` may move the file away
+/// from. If `pak` already lies there (unpacked from an archive), nothing is
+/// copied.
 fn working_copy_of(pak: &Path, temp: &Path) -> Result<PathBuf, String> {
     if pak.starts_with(temp) {
         return Ok(pak.to_path_buf());
@@ -440,8 +437,8 @@ fn working_copy_of(pak: &Path, temp: &Path) -> Result<PathBuf, String> {
     Ok(target)
 }
 
-/// Freier Name für eine Arbeitskopie – dieselbe Aufgabe wie `cli.rs`s
-/// gleichnamige Funktion, hier für den Hintergrundthread.
+/// A free name for a working copy — the same job as the function of the
+/// same name in `cli.rs`, here for the background thread.
 fn unique_copy_target(temp: &Path, source: &Path) -> PathBuf {
     let name = source.file_name().unwrap_or_default();
     let candidate = temp.join(name);
@@ -465,18 +462,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ein_pak_aus_dem_archiv_wird_nicht_noch_einmal_kopiert() {
+    fn a_pak_from_the_archive_is_not_copied_a_second_time() {
         let temp = tempfile::tempdir().unwrap();
         let extracted = temp.path().join("mod.pak");
         std::fs::write(&extracted, b"inhalt").unwrap();
 
         let working = working_copy_of(&extracted, temp.path()).unwrap();
 
-        assert_eq!(working, extracted, "eine bereits entpackte Datei braucht keine Kopie");
+        assert_eq!(working, extracted, "an already extracted file needs no copy");
     }
 
     #[test]
-    fn ein_einzeln_angegebenes_pak_bleibt_an_seinem_platz() {
+    fn an_individually_selected_pak_stays_where_it_is() {
         let temp = tempfile::tempdir().unwrap();
         let downloads = tempfile::tempdir().unwrap();
         let original = downloads.path().join("mod.pak");
@@ -484,12 +481,12 @@ mod tests {
 
         let working = working_copy_of(&original, temp.path()).unwrap();
 
-        assert!(working.starts_with(temp.path()), "die Arbeitskopie muss im Temp-Ordner liegen");
-        assert!(original.exists(), "die Originaldatei des Nutzers darf nicht angetastet werden");
+        assert!(working.starts_with(temp.path()), "the working copy must live in the temp folder");
+        assert!(original.exists(), "the user's original file must not be touched");
     }
 
     #[test]
-    fn zwei_gleichnamige_dateien_kollidieren_nicht() {
+    fn two_files_with_the_same_name_do_not_collide() {
         let temp = tempfile::tempdir().unwrap();
         let first = tempfile::tempdir().unwrap();
         let second = tempfile::tempdir().unwrap();
@@ -499,7 +496,7 @@ mod tests {
         let a = working_copy_of(&first.path().join("mod.pak"), temp.path()).unwrap();
         let b = working_copy_of(&second.path().join("mod.pak"), temp.path()).unwrap();
 
-        assert_ne!(a, b, "die zweite Kopie darf die erste nicht überschreiben");
+        assert_ne!(a, b, "the second copy must not overwrite the first");
         assert_eq!(std::fs::read(&a).unwrap(), b"eins");
         assert_eq!(std::fs::read(&b).unwrap(), b"zwei");
     }

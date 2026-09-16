@@ -4,15 +4,15 @@ use std::collections::HashMap;
 use std::path::Path;
 use yaml_rust2::{Yaml, YamlLoader};
 
-/// Ein Eintrag in pak_config.yaml.
+/// An entry in pak_config.yaml.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PakEntry {
     pub pak: String,
     pub disabled: bool,
 }
 
-/// Der Inhalt von pak_config.yaml. Die Reihenfolge der Einträge ist die
-/// Ladereihenfolge der Engine.
+/// The contents of pak_config.yaml. The order of the entries is the engine's
+/// load order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PakConfig {
     pub entries: Vec<PakEntry>,
@@ -20,10 +20,10 @@ pub struct PakConfig {
 
 impl PakConfig {
     pub fn parse(text: &str) -> Result<Self> {
-        // Windows-Editoren (z. B. Notepad) schreiben gerne ein UTF-8-BOM voran.
-        // Ohne das zu entfernen, liest yaml-rust2 das Dokument als Hash statt
-        // als Array und die Wurzel-Prüfung unten schlägt mit einer
-        // irreführenden Meldung fehl.
+        // Windows editors (Notepad, for example) like to write a UTF-8 BOM in
+        // front. Without stripping it, yaml-rust2 reads the document as a
+        // hash instead of an array, and the root check below fails with a
+        // misleading message.
         let text = text.strip_prefix('\u{feff}').unwrap_or(text);
 
         if text.trim().is_empty() {
@@ -84,18 +84,18 @@ impl PakConfig {
         Ok(Self { entries })
     }
 
-    /// Die aktiven Einträge in Ladereihenfolge.
+    /// The active entries in load order.
     pub fn enabled(&self) -> impl Iterator<Item = &PakEntry> {
         self.entries.iter().filter(|e| !e.disabled)
     }
 
-    /// Erzeugt den Dateiinhalt für die Engine.
+    /// Produces the file contents for the engine.
     ///
-    /// Von Hand geschrieben statt serialisiert: das Format hat zwei Felder,
-    /// und byte-genaue Kontrolle ist hier wichtiger als Bequemlichkeit.
+    /// Written by hand instead of serialized: the format has two fields, and
+    /// byte-exact control matters more here than convenience.
     pub fn to_yaml(&self) -> String {
         if self.entries.is_empty() {
-            // Eine leere Datei parst als YAML-Null, nicht als leere Liste.
+            // An empty file parses as YAML null, not as an empty list.
             return "[]\n".to_string();
         }
 
@@ -111,8 +111,8 @@ impl PakConfig {
         out
     }
 
-    /// Lädt die Konfiguration von `path`. Eine fehlende Datei ergibt eine
-    /// leere Konfiguration (frische Installation ohne Mods).
+    /// Loads the configuration from `path`. A missing file yields an empty
+    /// configuration (a fresh installation without mods).
     pub fn load(path: &Path) -> Result<Self> {
         match std::fs::read_to_string(path) {
             Ok(text) => Self::parse(&text),
@@ -121,27 +121,26 @@ impl PakConfig {
         }
     }
 
-    /// Schreibt die Konfiguration atomar nach `path`.
+    /// Writes the configuration atomically to `path`.
     pub fn save(&self, path: &Path) -> Result<()> {
         write_atomic(path, &self.to_yaml())
     }
 
-    /// Bringt die Konfiguration mit dem tatsächlichen Verzeichnisinhalt in
-    /// Einklang. Reihenfolge und Aktivierungszustand bestehender Einträge
-    /// bleiben unangetastet.
+    /// Brings the configuration in line with what the directory actually
+    /// contains. Order and activation state of existing entries stay
+    /// untouched.
     ///
-    /// `last_known` liefert, für Paks, die aktuell nicht in der Konfiguration
-    /// stehen, aber schon einmal einen bekannten Zustand hatten (siehe
-    /// `KnownState`), Aktivierung und Position aus dem letzten Mal, als sie
-    /// Teil der Konfiguration waren. Das ist die einzige Quelle, aus der ein
-    /// wieder aufgetauchtes Pak (z. B. nach einem Steam-Update, siehe
-    /// Spec §9 R3) seinen vorherigen Platz und Aktivierungszustand
-    /// zurückbekommt, statt – wie ein nie zuvor gesehenes Pak – aktiv ans
-    /// Ende gehängt zu werden. `pak_config.rs` kennt dabei bewusst nicht die
-    /// Bibliothek selbst (das würde die Modulschichtung umkehren, siehe
-    /// `library.rs`s Abhängigkeit in die andere Richtung); der Aufrufer
-    /// (z. B. `AppState::open`) baut diese Map aus `Library` und übergibt sie
-    /// explizit.
+    /// For paks that are currently not in the configuration but once had a
+    /// known state (see `KnownState`), `last_known` supplies activation and
+    /// position from the last time they were part of the configuration. That
+    /// is the only source from which a pak that has reappeared (after a Steam
+    /// update, for example, see spec §9 R3) gets its previous place and
+    /// activation state back, instead of being appended enabled at the end
+    /// like a pak never seen before. `pak_config.rs` deliberately does not
+    /// know the library itself — that would invert the module layering, see
+    /// `library.rs`s dependency in the other direction; the caller (for
+    /// example `AppState::open`) builds this map from `Library` and passes it
+    /// in explicitly.
     pub fn reconcile(
         &mut self,
         present: &[String],
@@ -160,11 +159,11 @@ impl PakConfig {
             }
         });
 
-        // `present` ist eine `&[String]`, kein Set: ein Verzeichnis kann
-        // denselben Namen zwar nicht doppelt enthalten, ein Aufrufer könnte
-        // ihn aber doppelt melden. `known` wird deshalb beim Aufbau von
-        // `added`/`restored` laufend erweitert (nicht nur einmal vorab
-        // berechnet), damit ein wiederholter Name nur einmal aufgenommen wird.
+        // `present` is a `&[String]`, not a set: a directory cannot contain
+        // the same name twice, but a caller could report it twice. `known` is
+        // therefore extended as `added`/`restored` are built up (rather than
+        // computed once up front), so that a repeated name is taken in only
+        // once.
         let mut known: std::collections::HashSet<&str> =
             self.entries.iter().map(|e| e.pak.as_str()).collect();
 
@@ -184,11 +183,11 @@ impl PakConfig {
         }
         added.sort();
 
-        // Bekannte Paks zuerst, an ihrer alten Position (aufsteigend
-        // sortiert, damit mehrere gleichzeitig wieder auftauchende Paks ihre
-        // relative Reihenfolge zueinander behalten). Erst danach werden nie
-        // zuvor gesehene Paks alphabetisch ans Ende gehängt – deren Position
-        // stand nirgends geschrieben, "ans Ende" ist die einzig sinnvolle Wahl.
+        // Known paks first, at their old position (sorted ascending so that
+        // several paks reappearing at once keep their relative order to one
+        // another). Only after that are never-before-seen paks appended
+        // alphabetically at the end — their position was written down
+        // nowhere, so "at the end" is the only sensible choice.
         with_history.sort_by_key(|(_, state)| state.position);
         for (pak, state) in with_history {
             let index = state.position.min(self.entries.len());
@@ -206,28 +205,28 @@ impl PakConfig {
     }
 }
 
-/// Letzter bekannter Zustand eines Paks, das aktuell nicht (mehr) in der
-/// Konfiguration steht – Aktivierung und Position, wie sie beim letzten
-/// `persist()` geschrieben wurden. Ermöglicht `reconcile`, ein wieder
-/// aufgetauchtes Pak an seinen alten Platz zurückzustellen, statt es wie ein
-/// unbekanntes Pak aktiv ans Ende zu hängen (siehe Spec §9 R3).
+/// Last known state of a pak that is currently no longer in the configuration
+/// — activation and position as they were written on the last `persist()`.
+/// Lets `reconcile` put a pak that has reappeared back in its old place,
+/// instead of appending it enabled at the end like an unknown pak (see spec
+/// §9 R3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KnownState {
     pub disabled: bool,
     pub position: usize,
 }
 
-/// Was ein Abgleich zwischen Verzeichnis und Konfiguration verändert hat.
+/// What a reconciliation between directory and configuration changed.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Reconciliation {
-    /// Alle Paks, die im Verzeichnis lagen, aber nicht in der Konfiguration
-    /// standen – Vereinigung aus `restored` (bekannt) und den darüber hinaus
-    /// neu hinzugekommenen, nie zuvor gesehenen Paks.
+    /// All paks that were in the directory but not in the configuration —
+    /// the union of `restored` (the known ones) and the newly arrived paks
+    /// that had never been seen before.
     pub added: Vec<String>,
-    /// Teilmenge von `added`: Paks mit bekanntem vorherigem Zustand, die an
-    /// ihre alte Position mit ihrer alten Aktivierung zurückgestellt wurden.
+    /// Subset of `added`: paks with a known previous state that were put back
+    /// at their old position with their old activation.
     pub restored: Vec<String>,
-    /// Einträge, deren Datei fehlt.
+    /// Entries whose file is missing.
     pub removed: Vec<String>,
 }
 
@@ -237,19 +236,19 @@ impl Reconciliation {
     }
 }
 
-/// Setzt einen Dateinamen in Anführungszeichen, wenn er sonst als anderes
-/// YAML-Konstrukt gelesen würde.
+/// Puts a file name in quotes when it would otherwise be read as a different
+/// YAML construct.
 ///
-/// Die offensichtlichen Sonderzeichen (Doppelpunkt, Raute, Anführungszeichen,
-/// führende Strukturzeichen, Rand-Whitespace) werden per Zeichen-Check
-/// erkannt. Das reicht aber nicht: ein Name wie "true", "null" oder "123"
-/// enthält keines dieser Zeichen, würde aber unquotiert als Bool/Null/Zahl
-/// statt als String gelesen – `parse` bekäme dann keinen gültigen
-/// `pak`-Schlüssel mehr und schlägt fehl. Deshalb wird zusätzlich mit dem
-/// echten YAML-Parser geprüft, ob der unquotierte Name als Skalar zu
-/// irgendetwas anderem als exakt sich selbst als String aufgelöst würde
-/// (das erfasst auch eingebettete Zeilenumbrüche, die als eigenständiges
-/// Plain-Scalar zu einem Leerzeichen gefaltet würden).
+/// The obvious special characters (colon, hash, quotes, leading structure
+/// characters, surrounding whitespace) are caught by a character check. That
+/// is not enough, though: a name like "true", "null" or "123" contains none
+/// of those characters, yet unquoted it would be read as a bool, null or
+/// number instead of a string — `parse` would then no longer get a valid
+/// `pak` key and would fail. So the real YAML parser is used as well, to
+/// check whether the unquoted name, taken as a scalar, would resolve to
+/// anything other than exactly itself as a string (this also catches embedded
+/// line breaks, which as a standalone plain scalar would be folded into a
+/// single space).
 fn quote_if_needed(name: &str) -> String {
     let needs_quotes = name.is_empty()
         || name.contains(':')
@@ -273,11 +272,10 @@ fn quote_if_needed(name: &str) -> String {
     }
 }
 
-/// Prüft, ob `name` als eigenständiges, unquotiertes YAML-Plain-Scalar zu
-/// etwas anderem als der Zeichenkette `name` selbst aufgelöst würde (z. B.
-/// zu einem Bool, einer Zahl, `null` oder einer gefalteten Zeile). Nutzt
-/// denselben Parser wie `parse`, damit die Entscheidung garantiert mit dem
-/// tatsächlichen Leseverhalten übereinstimmt.
+/// Checks whether `name`, as a standalone unquoted YAML plain scalar, would
+/// resolve to something other than the string `name` itself (to a bool, a
+/// number, `null` or a folded line, for example). Uses the same parser as
+/// `parse`, so the decision is guaranteed to match the actual read behavior.
 fn resolves_to_non_string_scalar(name: &str) -> bool {
     match YamlLoader::load_from_str(name) {
         Ok(docs) => !matches!(docs.first(), Some(Yaml::String(s)) if s == name),
@@ -285,9 +283,9 @@ fn resolves_to_non_string_scalar(name: &str) -> bool {
     }
 }
 
-/// Stellt einen YAML-Skalar für eine Fehlermeldung dar. `yaml-rust2` hat
-/// kein `Display` für `Yaml`, daher hier eine kleine, für Nutzer lesbare
-/// Übersetzung der gängigen Fälle mit einem `Debug`-Fallback für den Rest.
+/// Renders a YAML scalar for an error message. `yaml-rust2` has no `Display`
+/// for `Yaml`, hence this small, user-readable rendering of the common cases
+/// with a `Debug` fallback for the rest.
 fn describe_yaml_scalar(value: &Yaml) -> String {
     match value {
         Yaml::String(s) => format!("\"{s}\""),
@@ -319,8 +317,8 @@ mod tests {
 
     #[test]
     fn adds_unknown_paks_as_enabled_at_end() {
-        // Nicht aufgeführte Paks lädt die Engine ohnehin – also aktiv aufnehmen,
-        // damit sie steuerbar werden.
+        // The engine loads unlisted paks anyway — so take them in enabled,
+        // which is what makes them controllable.
         let mut cfg = PakConfig { entries: vec![entry("a.pak", false)] };
         let result = cfg.reconcile(&["a.pak".into(), "neu.pak".into()], &no_history());
 
@@ -348,8 +346,8 @@ mod tests {
         };
         cfg.reconcile(&["a.pak".into(), "z.pak".into()], &no_history());
 
-        assert_eq!(names(&cfg), vec!["z.pak", "a.pak"], "Reihenfolge darf sich nicht ändern");
-        assert!(cfg.entries[0].disabled, "Deaktivierung darf nicht verloren gehen");
+        assert_eq!(names(&cfg), vec!["z.pak", "a.pak"], "the order must not change");
+        assert!(cfg.entries[0].disabled, "the disabled state must not get lost");
     }
 
     #[test]
@@ -369,26 +367,25 @@ mod tests {
         assert!(result.is_empty());
     }
 
-    /// Ein Verzeichnis kann denselben Dateinamen nicht doppelt enthalten,
-    /// aber `present` ist ein `&[String]`, kein Set – ein Aufrufer könnte
-    /// (versehentlich, z. B. durch doppeltes Einlesen) denselben Namen
-    /// zweimal übergeben. Ohne Deduplizierung würde `reconcile` daraus zwei
-    /// identische Einträge in der Konfiguration machen – stille
-    /// Datenkorruption.
+    /// A directory cannot contain the same file name twice, but `present` is
+    /// a `&[String]`, not a set — a caller could pass the same name twice (by
+    /// accident, for example by reading the directory in twice). Without
+    /// deduplication, `reconcile` would turn that into two identical entries
+    /// in the configuration — silent data corruption.
     #[test]
     fn deduplicates_repeatedly_reported_filenames() {
         let mut cfg = PakConfig::default();
         let result = cfg.reconcile(&["a.pak".into(), "a.pak".into()], &no_history());
 
-        assert_eq!(names(&cfg), vec!["a.pak"], "darf keinen doppelten Eintrag erzeugen");
+        assert_eq!(names(&cfg), vec!["a.pak"], "must not produce a duplicate entry");
         assert_eq!(result.added, vec!["a.pak"]);
     }
 
-    /// Eine von Hand bearbeitete Konfiguration kann bereits einen Pak-Namen
-    /// doppelt enthalten. `reconcile` darf bestehende Einträge nicht
-    /// zusammenführen oder umordnen (siehe `keeps_order_and_state_of_existing_entries`) – ein
-    /// bereits vorhandenes Duplikat bleibt also unangetastet bestehen, statt
-    /// dass reconcile es „repariert“ oder ein weiteres Duplikat hinzufügt.
+    /// A hand-edited configuration can already contain a pak name twice.
+    /// `reconcile` must not merge or reorder existing entries (see
+    /// `keeps_order_and_state_of_existing_entries`) — an already present
+    /// duplicate therefore stays untouched, instead of reconcile "repairing"
+    /// it or adding yet another duplicate.
     #[test]
     fn leaves_existing_duplicates_in_config_untouched() {
         let mut cfg = PakConfig {
@@ -399,18 +396,18 @@ mod tests {
         assert_eq!(
             cfg.entries,
             vec![entry("a.pak", false), entry("a.pak", true)],
-            "bestehende Duplikate werden weder entfernt noch verändert"
+            "existing duplicates are neither removed nor changed"
         );
-        assert!(result.is_empty(), "ein bereits bekannter Name ist kein neuer Fund");
+        assert!(result.is_empty(), "an already known name is not a new find");
     }
 
-    // --- Wiederherstellung über bekannten Zustand (KnownState) ----------
+    // --- Restoration from a known state (KnownState) -------------------
 
-    /// Der zentrale Fall aus Spec §9 R3: ein Pak verschwindet (z. B. durch
-    /// ein Steam-Update), wird abgeglichen (und damit aus der Konfiguration
-    /// entfernt), taucht später wieder auf – und muss dann an seine alte
-    /// Position mit seinem alten Aktivierungszustand zurückkehren, statt wie
-    /// ein nie zuvor gesehenes Pak aktiv ans Ende gehängt zu werden.
+    /// The central case from spec §9 R3: a pak disappears (through a Steam
+    /// update, for example), gets reconciled away (and thereby removed from
+    /// the configuration), later reappears — and must then return to its old
+    /// position with its old activation state, instead of being appended
+    /// enabled at the end like a pak never seen before.
     #[test]
     fn a_pak_that_reappears_is_restored_to_its_previous_state_and_position() {
         let mut cfg = PakConfig {
@@ -424,16 +421,16 @@ mod tests {
         assert_eq!(
             names(&cfg),
             vec!["a.pak", "b.pak", "c.pak"],
-            "b.pak muss an seine alte Position (1) zurückkehren"
+            "b.pak has to return to its old position (1)"
         );
-        assert!(cfg.entries[1].disabled, "b.pak war deaktiviert und muss es wieder sein");
+        assert!(cfg.entries[1].disabled, "b.pak was disabled and has to be disabled again");
         assert_eq!(result.added, vec!["b.pak"]);
         assert_eq!(result.restored, vec!["b.pak"]);
         assert!(result.removed.is_empty());
     }
 
-    /// Ein Pak ohne bekannten Zustand (nie zuvor in der Bibliothek gesehen)
-    /// behält das heutige Verhalten: aktiv ans Ende, nicht `restored`.
+    /// A pak without a known state (never seen in the library before) keeps
+    /// today's behavior: enabled at the end, not `restored`.
     #[test]
     fn a_pak_without_history_is_still_added_enabled_at_the_end() {
         let mut cfg = PakConfig { entries: vec![entry("a.pak", false)] };
@@ -443,12 +440,12 @@ mod tests {
         assert_eq!(names(&cfg), vec!["a.pak", "neu.pak"]);
         assert!(!cfg.entries[1].disabled);
         assert_eq!(result.added, vec!["neu.pak"]);
-        assert!(result.restored.is_empty(), "ohne bekannten Zustand gibt es nichts wiederherzustellen");
+        assert!(result.restored.is_empty(), "without a known state there is nothing to restore");
     }
 
-    /// Mehrere gleichzeitig wieder auftauchende, bekannte Paks müssen an
-    /// ihren jeweiligen alten Positionen landen, in aufsteigender
-    /// Positions-Reihenfolge zueinander eingefügt.
+    /// Several known paks reappearing at once must each land at their own old
+    /// position, inserted in ascending order of position relative to one
+    /// another.
     #[test]
     fn multiple_reappearing_known_paks_are_inserted_at_their_own_positions() {
         let mut cfg = PakConfig { entries: vec![entry("b.pak", false)] };
@@ -462,10 +459,9 @@ mod tests {
         assert!(cfg.entries[2].disabled);
     }
 
-    /// Eine über den bisherigen Verzeichnisumfang hinausgehende gespeicherte
-    /// Position (z. B. weil zwischenzeitlich andere Einträge entfernt
-    /// wurden) darf nicht außerhalb des Vektors einfügen – sie wird auf das
-    /// Ende geklemmt.
+    /// A stored position that reaches beyond the current number of entries
+    /// (because other entries were removed in the meantime, for example) must
+    /// not insert outside the vector — it is clamped to the end.
     #[test]
     fn a_stale_out_of_range_position_is_clamped_to_the_end() {
         let mut cfg = PakConfig::default();
@@ -496,7 +492,7 @@ mod tests {
         let text = "- pak: z.pak\n- pak: a.pak\n- pak: m.pak\n";
         let cfg = PakConfig::parse(text).unwrap();
         let names: Vec<&str> = cfg.entries.iter().map(|e| e.pak.as_str()).collect();
-        assert_eq!(names, vec!["z.pak", "a.pak", "m.pak"], "Reihenfolge ist die Ladereihenfolge");
+        assert_eq!(names, vec!["z.pak", "a.pak", "m.pak"], "the order is the load order");
     }
 
     #[test]
@@ -534,23 +530,23 @@ mod tests {
 
     #[test]
     fn reports_yaml_syntax_error_in_german_with_position() {
-        // doppelter Schlüssel in derselben Zuordnung ist laut YAML-Spezifikation
-        // ein Scanner-Fehler in yaml-rust2, nicht nur ein Überschreiben.
+        // A duplicate key in the same mapping is, per the YAML specification,
+        // a scanner error in yaml-rust2, not merely an overwrite.
         let text = "- pak: a.pak\n  pak: b.pak\n";
         let error = PakConfig::parse(text).unwrap_err();
         let Error::PakConfig(message) = error else {
-            panic!("erwartete Error::PakConfig, bekam {error:?}");
+            panic!("expected Error::PakConfig, got {error:?}");
         };
         for english_fragment in ["duplicated key", "mapping", "byte", "at byte"] {
             assert!(
                 !message.contains(english_fragment),
-                "Meldung darf keinen rohen englischen Scanner-Text enthalten \
-                 (gefunden: {english_fragment:?}): {message:?}"
+                "the message must not carry raw English scanner text \
+                 (found: {english_fragment:?}): {message:?}"
             );
         }
         assert!(
             message.contains("Zeile") && message.contains("Spalte"),
-            "Meldung soll die Position benennen: {message:?}"
+            "the message should name the position: {message:?}"
         );
     }
 
@@ -564,11 +560,11 @@ mod tests {
         ] {
             let error = PakConfig::parse(text).unwrap_err();
             let Error::PakConfig(message) = error else {
-                panic!("erwartete Error::PakConfig für {text:?}, bekam {error:?}");
+                panic!("expected Error::PakConfig for {text:?}, got {error:?}");
             };
             assert!(
                 message.contains("Eintrag 1") && message.contains("disabled"),
-                "Meldung soll den Eintrag benennen: {message:?} (Eingabe: {text:?})"
+                "the message should name the entry: {message:?} (input: {text:?})"
             );
         }
     }
@@ -601,7 +597,7 @@ mod tests {
 
     #[test]
     fn writes_empty_list_as_valid_yaml() {
-        // Eine leere Datei wäre YAML-Null, keine Liste. "[]" ist eindeutig.
+        // An empty file would be YAML null, not a list. "[]" is unambiguous.
         assert_eq!(PakConfig::default().to_yaml(), "[]\n");
     }
 
@@ -642,10 +638,10 @@ mod tests {
         assert_eq!(PakConfig::load(&path).unwrap(), cfg);
     }
 
-    /// Namen, die keines der "offensichtlichen" Sonderzeichen enthalten,
-    /// aber unquotiert als YAML-Bool/Zahl/Null statt als String gelesen
-    /// würden. Ohne die zusätzliche Skalar-Prüfung in `quote_if_needed`
-    /// würde `parse` diese Einträge als fehlend am 'pak'-Schlüssel ablehnen.
+    /// Names that contain none of the "obvious" special characters but that
+    /// unquoted would be read as a YAML bool, number or null instead of a
+    /// string. Without the extra scalar check in `quote_if_needed`, `parse`
+    /// would reject these entries as missing the 'pak' key.
     #[test]
     fn round_trips_names_that_would_be_read_as_yaml_scalars() {
         for name in [
@@ -654,20 +650,20 @@ mod tests {
         ] {
             let cfg = PakConfig { entries: vec![entry(name, false)] };
             let roundtripped = PakConfig::parse(&cfg.to_yaml()).unwrap();
-            assert_eq!(roundtripped, cfg, "Name {name:?} übersteht den Rundtrip nicht");
+            assert_eq!(roundtripped, cfg, "the name {name:?} does not survive the round trip");
         }
     }
 
-    /// Eingebettete Steuerzeichen und Sonderzeichen, die in der
-    /// Escape-Logik von `quote_if_needed` gesondert behandelt werden
-    /// müssen, damit sie beim Wiedereinlesen nicht die YAML-Struktur
-    /// sprengen oder zu einem Leerzeichen gefaltet werden.
+    /// Embedded control characters and special characters that the escaping
+    /// logic in `quote_if_needed` has to handle separately, so that reading
+    /// them back does not break the YAML structure or fold them into a single
+    /// space.
     #[test]
     fn round_trips_names_with_embedded_special_characters() {
         for name in ["a\nb.pak", "a\rb.pak", "a\\b.pak", "a'b.pak", "  a.pak  "] {
             let cfg = PakConfig { entries: vec![entry(name, false)] };
             let roundtripped = PakConfig::parse(&cfg.to_yaml()).unwrap();
-            assert_eq!(roundtripped, cfg, "Name {name:?} übersteht den Rundtrip nicht");
+            assert_eq!(roundtripped, cfg, "the name {name:?} does not survive the round trip");
         }
     }
 }

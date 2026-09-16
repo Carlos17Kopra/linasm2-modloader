@@ -1,30 +1,29 @@
-//! Die grafische Oberfläche, eins zu eins nach dem Entwurf
+//! The graphical interface, built one to one from the design
 //! `SM2 Mod Loader GUI v2 modern.dc.html`.
 //!
-//! Aufbau des Fensters, von außen nach innen:
+//! Layout of the window, from the outside in:
 //!
 //! ```text
 //! ┌──────────────────────────────────────────────┐
-//! │ Kopfleiste: Überschrift · Startauswahl        │  58 px
+//! │ Top bar: heading · launch choice             │  58 px
 //! ├──────────┬───────────────────────────────────┤
-//! │ Seiten-  │ Inhalt: Mods / Profile /          │
-//! │ leiste   │ Savegames / Einstellungen         │
-//! │ 208 px   │                                   │
+//! │ Sidebar  │ Content: mods / profiles /        │
+//! │ 208 px   │ savegames / settings              │
 //! ├──────────┴───────────────────────────────────┤
-//! │ Statusleiste: Fortschritt · Meldung          │  30 px
+//! │ Status bar: progress · message               │  30 px
 //! └──────────────────────────────────────────────┘
 //! ```
 //!
-//! Die eigene Fenstertitelleiste des Entwurfs ist bewusst nicht
-//! nachgebaut – der Entwurf hält in seiner Schlussbemerkung selbst fest,
-//! dass sie nur Dekoration der Skizze ist und das echte Fenster
-//! Systemdekoration bekommt.
+//! The design's own window title bar is deliberately not reproduced. The
+//! design says so itself in its closing note: the title bar is only
+//! decoration of the mockup, and the real window gets the system's
+//! decoration.
 //!
-//! Ereignisse werden nicht sofort ausgeführt, sondern als `Action`
-//! gesammelt und nach dem Zeichnen angewendet. `egui` zeichnet unmittelbar:
-//! ein Klick in einer Zeile fällt an, während gerade über die Liste
-//! iteriert wird – eine sofortige Änderung genau dieser Liste wäre der
-//! klassische Weg in einen Ausleihfehler oder eine halb gezeichnete Zeile.
+//! Events are not carried out on the spot. They are collected as `Action`
+//! values and applied once drawing is done. `egui` draws immediately: a
+//! click on a row arrives while the list is still being iterated over, and
+//! changing that very list right there is the classic route into a borrow
+//! error or a half-drawn row.
 
 mod commands;
 mod dialogs;
@@ -53,8 +52,7 @@ use sm2_core::settings::Settings;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-/// Startet die Oberfläche. Kehrt zurück, wenn der Nutzer das Fenster
-/// schließt.
+/// Starts the interface. Returns once the user closes the window.
 pub fn run() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -75,7 +73,7 @@ pub fn run() -> eframe::Result {
     )
 }
 
-/// Bereich der Seitenleiste.
+/// A section of the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     Mods,
@@ -84,7 +82,7 @@ pub enum Section {
     Settings,
 }
 
-/// Auswahl der Startart in der Kopfleiste.
+/// The kind of launch chosen in the top bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchChoice {
     Steam,
@@ -102,37 +100,37 @@ impl LaunchChoice {
     }
 }
 
-/// Offenes modales Fenster.
+/// An open modal window.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Dialog {
-    /// „Wiederherstellen, obwohl Steam läuft?“ – nur dieser Dialog kann
-    /// Spielstände überschreiben, deshalb hängt er an einem eigenen
-    /// Bestätigungsschalter.
+    /// "Wiederherstellen, obwohl Steam läuft?" — this is the only dialog
+    /// that can overwrite savegames, which is why it hangs off a
+    /// confirmation toggle of its own.
     Restore { index: usize, force: bool },
-    /// „Ohne Mods starten?“
+    /// "Ohne Mods starten?"
     Vanilla,
-    /// „Steam-Nutzerprofil wählen“
+    /// "Steam-Nutzerprofil wählen"
     SteamUser { picked: Option<String> },
-    /// „Profil löschen?“
+    /// "Profil löschen?"
     DeleteProfile { name: String },
-    /// „Backup umbenennen“ – das Etikett ist das, woran man ein Backup
-    /// später wiedererkennt.
+    /// "Backup umbenennen" — the label is what lets you recognise a backup
+    /// again later on.
     RenameBackup { index: usize, label: String },
-    /// „Backup löschen?“
+    /// "Backup löschen?"
     DeleteBackup { index: usize },
 }
 
-/// Was eine Hinweiszeile als Schaltfläche anbietet.
+/// What a notice row offers as a button.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NoticeAction {
-    /// „Verzeichnis öffnen“ – bei schreibgeschütztem Mods-Verzeichnis.
+    /// "Verzeichnis öffnen" — for a read-only mods directory.
     OpenModsDir,
-    /// „Profil anwenden“ – nach einem Vanilla-Start, mit dem Namen der
-    /// Sicherung.
+    /// "Profil anwenden" — after a vanilla launch, carrying the name of the
+    /// saved profile.
     ShowProfile(String),
 }
 
-/// Eine Zeile der Hinweisleiste über der Mod-Liste.
+/// One row of the notice bar above the mod list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Notice {
     pub kind: app_state::NoticeKind,
@@ -159,18 +157,18 @@ impl Notice {
     }
 }
 
-/// Laufendes Ziehen einer Zeile der Mod-Liste.
+/// A drag of a mod-list row that is currently in progress.
 #[derive(Debug, Clone)]
 pub struct Drag {
-    /// Gezogenes Pak.
+    /// The pak being dragged.
     pub pak: String,
-    /// Stelle, an der die Einfügemarke steht – gezählt in der unveränderten
-    /// Liste, `entries.len()` bedeutet „ans Ende“.
+    /// Where the insertion marker sits — counted in the unchanged list,
+    /// where `entries.len()` means "at the end".
     pub drop_index: Option<usize>,
 }
 
-/// Eine vom Nutzer ausgelöste Absicht, gesammelt beim Zeichnen und danach
-/// angewendet (siehe Modulkommentar).
+/// An intent triggered by the user, collected while drawing and applied
+/// afterwards (see the module comment).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     ShowSection(Section),
@@ -217,24 +215,23 @@ pub enum Action {
     CancelTask,
 }
 
-/// Der gesamte Zustand der Oberfläche.
+/// The entire state of the interface.
 pub struct App {
-    /// Handgriff auf den Zeichenkontext, damit ein Hintergrundthread ein
-    /// Neuzeichnen anfordern kann, sobald er fertig ist.
+    /// A handle on the drawing context, so that a background thread can ask
+    /// for a repaint as soon as it is done.
     egui_ctx: egui::Context,
-    /// Basisverzeichnisse – auch dann bekannt, wenn das Spiel nicht
-    /// gefunden wurde.
+    /// The base directories — known even when the game was not found.
     dirs: Option<AppDirs>,
-    /// Einstellungen, solange kein `AppState` existiert. Sobald einer da
-    /// ist, gilt dessen Kopie (siehe `settings`/`settings_mut`).
+    /// The settings for as long as no `AppState` exists. Once one is there,
+    /// its copy is the one that counts (see `settings`/`settings_mut`).
     fallback_settings: Settings,
-    /// Fachlicher Zustand, oder `None`, wenn das Spiel nicht gefunden wurde.
+    /// The domain state, or `None` if the game was not found.
     state: Option<AppState>,
-    /// Grund, warum kein `AppState` zustande kam.
+    /// Why no `AppState` could be built.
     open_error: Option<String>,
-    /// Ist das Mods-Verzeichnis beschreibbar? Einmal beim Laden ermittelt.
+    /// Is the mods directory writable? Determined once while loading.
     writable: bool,
-    /// Steht ein Direktstart unter Umgehung von EAC zur Verfügung?
+    /// Is a direct launch bypassing EAC available?
     no_eac_available: bool,
 
     section: Section,
@@ -252,12 +249,12 @@ pub struct App {
 
     backups: Vec<BackupEntry>,
     backup_label: String,
-    /// Zeitstempel der Backups, die in dieser Sitzung geprüft wurden.
+    /// Timestamps of the backups verified during this session.
     verified: HashSet<String>,
-    /// Grund, warum die Savegame-Funktionen gesperrt sind – im Entwurf der
-    /// Zustand „Mehrere Steam-Profile“.
+    /// Why the savegame functions are locked — in the design this is the
+    /// "Mehrere Steam-Profile" state.
     saves_blocked: Option<String>,
-    /// Im Prefix gefundene Steam-Nutzerprofile, für die Auswahl.
+    /// The Steam user profiles found in the prefix, for the picker.
     steam_users: Vec<String>,
 
     drag: Option<Drag>,
@@ -297,8 +294,8 @@ impl App {
         app
     }
 
-    /// Lädt oder lädt neu: Basisverzeichnisse, Einstellungen, Spielpfade,
-    /// Bibliothek, Konfiguration, Profile und Backups.
+    /// Loads, or reloads: base directories, settings, game paths, library,
+    /// configuration, profiles and backups.
     fn load(&mut self) {
         let (dirs, settings) = match app_state::load_dirs_and_settings() {
             Ok(pair) => pair,
@@ -355,9 +352,9 @@ impl App {
         self.backups = saves::list_backups(&dir).unwrap_or_default();
     }
 
-    /// Ermittelt, ob das Savegame-Verzeichnis eindeutig bestimmbar ist. Bei
-    /// mehreren Steam-Nutzerprofilen im Prefix sind laut Entwurf alle
-    /// Savegame-Funktionen gesperrt, bis eines gewählt wurde.
+    /// Works out whether the savegame directory can be determined
+    /// unambiguously. With several Steam user profiles in the prefix, the
+    /// design locks every savegame function until one has been chosen.
     fn refresh_steam_users(&mut self) {
         let Some(state) = &self.state else {
             self.saves_blocked = Some(String::from("Spielverzeichnis unbekannt."));
@@ -404,8 +401,8 @@ impl App {
         self.status_is_warning = true;
     }
 
-    /// Sichert die Einstellungen und meldet einen Fehlschlag in der
-    /// Statusleiste, statt ihn zu verschlucken.
+    /// Saves the settings and reports a failure in the status bar instead
+    /// of swallowing it.
     fn save_settings(&mut self) {
         let Some(dirs) = self.dirs.clone() else { return };
         let settings = self.settings().clone();
@@ -415,9 +412,9 @@ impl App {
         }
     }
 
-    /// Schreibt Bibliothek und Konfiguration und meldet das Ergebnis.
-    /// Gibt zurück, ob das Speichern gelungen ist – der Aufrufer entscheidet,
-    /// ob er seine Erfolgsmeldung noch setzen darf.
+    /// Writes library and configuration and reports the result. Returns
+    /// whether saving succeeded — from that the caller decides whether it
+    /// may still post its own success message.
     fn persist(&mut self) -> bool {
         let Some(state) = &mut self.state else { return false };
         match state.persist() {
@@ -434,8 +431,8 @@ impl App {
         }
     }
 
-    /// Anzeigename eines Paks: der Name aus der Bibliothek, sonst der
-    /// Dateiname – dieselbe Regel wie in `cli.rs`s `list`.
+    /// Display name of a pak: the name from the library, otherwise the file
+    /// name — the same rule as in `cli.rs`'s `list`.
     fn display_name(&self, pak: &str) -> String {
         self.mod_info(pak).map_or_else(|| pak.to_string(), |info| info.name.clone())
     }
@@ -448,12 +445,12 @@ impl App {
         self.state.as_ref().map_or(&[], |s| s.config.entries.as_slice())
     }
 
-    /// Dürfen Aktivierung, Reihenfolge und Import gerade verändert werden?
+    /// May activation, order and import be changed right now?
     ///
-    /// Nein, solange das Mods-Verzeichnis schreibgeschützt ist – und nein,
-    /// solange ein Hintergrundauftrag läuft: dessen Arbeitskopie von
-    /// Bibliothek und Konfiguration würde eine zwischenzeitliche Änderung
-    /// beim Zurückschreiben überschreiben.
+    /// No, not while the mods directory is read-only — and no, not while a
+    /// background job is running: its working copy of library and
+    /// configuration would overwrite any change made in the meantime once
+    /// it writes back.
     fn can_modify(&self) -> bool {
         self.state.is_some() && self.writable && self.task.is_none()
     }
@@ -600,12 +597,12 @@ impl App {
         }
     }
 
-    /// Schiebt das gezogene Pak vor die Einfügemarke.
+    /// Moves the dragged pak in front of the insertion marker.
     ///
-    /// Die Marke zählt in der unveränderten Liste; lag das gezogene Pak
-    /// vorher darüber, rutscht der Zielindex deshalb um eins zurück. Ohne
-    /// diese Korrektur landete ein nach unten gezogenes Pak stets eine
-    /// Position zu tief.
+    /// The marker counts in the unchanged list, so if the dragged pak sat
+    /// above it before, the target index moves back by one. Without that
+    /// correction a pak dragged downwards always landed one position too
+    /// low.
     fn drop_mod(&mut self, pak: &str, before: usize) {
         if !self.can_modify() {
             self.set_warning(self.blocked_reason("Verschieben"));
@@ -625,8 +622,8 @@ impl App {
         }
     }
 
-    /// Warum eine Änderung gerade nicht geht – in der Reihenfolge, in der es
-    /// den Nutzer betrifft.
+    /// Why a change is not possible right now — in the order in which it
+    /// affects the user.
     fn blocked_reason(&self, what: &str) -> String {
         if self.state.is_none() {
             format!("{what} nicht möglich – Spielverzeichnis unbekannt.")
@@ -666,14 +663,14 @@ impl App {
     }
 }
 
-/// Rechnet die Einfügemarke einer Zieh-Bewegung in den Zielindex um.
+/// Converts the insertion marker of a drag into the target index.
 ///
-/// `before` ist die Stelle in der **unveränderten** Liste, vor die das Pak
-/// soll. Nach dem Entfernen an `from` verschiebt sich alles dahinter um eins
-/// nach vorn, deshalb die Korrektur. Ein Ablegen auf die eigene Position
-/// (davor oder dahinter) ergibt `None` – dann ist nichts zu tun, und ohne
-/// diese Prüfung entstünde eine Statusmeldung über eine Verschiebung, die
-/// gar nicht stattgefunden hat.
+/// `before` is the place in the **unchanged** list that the pak should go
+/// in front of. Removing it at `from` shifts everything behind it forward
+/// by one, hence the correction. Dropping on its own position (in front of
+/// or behind itself) yields `None` — there is nothing to do then, and
+/// without that check we would post a status message about a move that
+/// never happened.
 fn drop_target(from: usize, before: usize) -> Option<usize> {
     let to = if from < before { before.checked_sub(1)? } else { before };
     (to != from).then_some(to)
@@ -751,12 +748,12 @@ impl eframe::App for App {
 }
 
 impl App {
-    /// Zieht die Trennlinien zwischen den Panels nach.
+    /// Draws in the dividers between the panels.
     ///
-    /// `show_separator_line(false)` schaltet die eigenen Linien von `egui`
-    /// ab, weil sie die Farbe aus `Visuals` nehmen und außerdem einen
-    /// Schatten mitbringen; der Entwurf verlangt einen genau 1 px breiten
-    /// Strich in `BORDER_SOFT`.
+    /// `show_separator_line(false)` switches off `egui`'s own lines,
+    /// because they take their colour from `Visuals` and bring a shadow
+    /// along with them; the design calls for a stroke exactly 1 px wide in
+    /// `BORDER_SOFT`.
     fn draw_panel_borders(&self, ctx: &egui::Context) {
         let screen = ctx.content_rect();
         let painter = ctx.layer_painter(egui::LayerId::new(
@@ -775,8 +772,8 @@ impl App {
         painter.vline(side - 0.5, egui::Rangef::new(top, bottom), stroke);
     }
 
-    /// Dateien, die der Nutzer auf das Fenster gezogen hat, importieren –
-    /// der Entwurf nennt das in der Zeile über der Liste ausdrücklich.
+    /// Imports files the user has dragged onto the window — the design
+    /// names this explicitly in the row above the list.
     fn handle_dropped_files(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect()
@@ -793,9 +790,8 @@ impl App {
         let _ = actions;
     }
 
-    /// Alt + Pfeiltaste verschiebt den ausgewählten Mod – die
-    /// Tastaturalternative zum Ziehen, die der Entwurf in der Zeile über der
-    /// Liste vorsieht.
+    /// Alt + arrow key moves the selected mod — the keyboard alternative to
+    /// dragging that the design provides for in the row above the list.
     fn handle_keyboard(&self, ctx: &egui::Context, actions: &mut Vec<Action>) {
         let Some(pak) = &self.selected else { return };
         if ctx.egui_wants_keyboard_input() {
@@ -816,8 +812,8 @@ impl App {
 }
 
 
-/// Überschrift und Erläuterung über einer Karte – Profile und Savegames
-/// benutzen dieselbe Form.
+/// A heading and its explanatory text above a card — profiles and savegames
+/// use the same shape.
 fn page_heading(ui: &mut egui::Ui, title: &str, description: &str, max_width: f32) {
     ui.label(
         egui::RichText::new(title).font(theme::medium(15.0)).color(theme::color::TEXT_STRONG),
@@ -838,7 +834,7 @@ fn page_heading(ui: &mut egui::Ui, title: &str, description: &str, max_width: f3
     ui.add_space(theme::metric::CONTENT_GAP);
 }
 
-/// Die Fläche einer Karte: Füllung, 1-px-Rahmen, 12-px-Rundung.
+/// The surface of a card: fill, 1 px border, 12 px corner radius.
 fn draw_card(ui: &egui::Ui, rect: egui::Rect) {
     let radius = egui::CornerRadius::same(12);
     ui.painter().rect_filled(rect, radius, theme::color::CARD);
@@ -850,8 +846,8 @@ fn draw_card(ui: &egui::Ui, rect: egui::Rect) {
     );
 }
 
-/// Der Spaltenkopf einer Tabelle: gesperrte Großbuchstaben auf dunklerem
-/// Grund, unten abgeschlossen durch eine Trennlinie.
+/// The column header of a table: letter-spaced capitals on a darker ground,
+/// closed off at the bottom by a divider.
 fn draw_column_head(
     ui: &egui::Ui,
     rect: egui::Rect,
@@ -886,7 +882,7 @@ fn draw_column_head(
     }
 }
 
-/// Text in der Mitte einer leeren Tabelle.
+/// Text in the middle of an empty table.
 fn empty_hint(ui: &mut egui::Ui, text: &str) {
     let rect = ui.available_rect_before_wrap();
     ui.painter().text(
@@ -903,26 +899,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn nach_unten_ziehen_landet_genau_vor_der_einfuegemarke() {
-        // Aus Position 0 vor Position 3 gezogen: nach dem Entfernen rutscht
-        // alles dahinter um eins vor, das Ziel ist also 2.
+    fn dragging_down_lands_exactly_in_front_of_the_insertion_marker() {
+        // Dragged from position 0 to in front of position 3: after the
+        // removal everything behind it moves up by one, so the target is 2.
         assert_eq!(drop_target(0, 3), Some(2));
     }
 
     #[test]
-    fn nach_oben_ziehen_braucht_keine_korrektur() {
+    fn dragging_up_needs_no_correction() {
         assert_eq!(drop_target(4, 1), Some(1));
     }
 
     #[test]
-    fn ablegen_auf_der_eigenen_position_veraendert_nichts() {
-        assert_eq!(drop_target(2, 2), None, "Marke direkt über der eigenen Zeile");
-        assert_eq!(drop_target(2, 3), None, "Marke direkt unter der eigenen Zeile");
+    fn dropping_on_its_own_position_changes_nothing() {
+        assert_eq!(drop_target(2, 2), None, "marker directly above its own row");
+        assert_eq!(drop_target(2, 3), None, "marker directly below its own row");
     }
 
     #[test]
-    fn ans_ende_ziehen_trifft_die_letzte_position() {
-        // Sieben Einträge, das erste Pak ans Ende: Marke steht auf 7.
+    fn dragging_to_the_end_hits_the_last_position() {
+        // Seven entries, the first pak going to the end: the marker sits
+        // at 7.
         assert_eq!(drop_target(0, 7), Some(6));
     }
 }

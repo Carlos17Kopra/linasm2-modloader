@@ -1,4 +1,4 @@
-//! Der Bereich „Savegames“: Backups anlegen, prüfen, zurückspielen.
+//! The "Savegames" section: making, verifying and restoring backups.
 
 use super::format::{human_size, human_time};
 use super::theme::{color, medium, metric, mono, sans};
@@ -94,7 +94,7 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     });
 }
 
-/// Der Warnkasten, solange das Steam-Nutzerprofil nicht eindeutig ist.
+/// The warning box shown while the Steam user profile is ambiguous.
 fn blocked_banner(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     let Some(reason) = &app.saves_blocked else { return };
 
@@ -158,21 +158,20 @@ fn blocked_banner(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
 fn row(app: &App, ui: &mut Ui, index: usize, actions: &mut Vec<Action>) {
     let entry = &app.backups[index];
     let width = ui.available_width();
-    // `Sense::click()` statt `hover()`: ohne einen Klick-Sinn bekommt die
-    // Zeile den rechten Mausklick nicht zu sehen, an dem das Kontextmenü
-    // hängt.
+    // `Sense::click()` rather than `hover()`: without a click sense the row
+    // never sees the right mouse click the context menu hangs off.
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(width, metric::LIST_ROW_HEIGHT), Sense::click());
-    // Die Zeile bleibt hervorgehoben, solange ihr Menü offen steht – sonst
-    // ließe sich bei mehreren Backups nicht mehr erkennen, zu welchem das
-    // Menü gehört, sobald der Zeiger darin liegt.
+    // The row stays highlighted as long as its menu is open — otherwise,
+    // with several backups, there would be no telling which one the menu
+    // belongs to once the pointer is inside it.
     if response.hovered() || response.context_menu_opened() {
         ui.painter().rect_filled(rect, CornerRadius::ZERO, color::HOVER);
     }
     ui.painter().hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, color::BORDER_ROW));
 
-    // Gesperrte Savegame-Funktionen zeigt der Entwurf als abgeblendete
-    // Liste – lesbar, aber sichtbar außer Betrieb.
+    // The design shows locked savegame functions as a dimmed list —
+    // readable, but visibly out of service.
     let usable = app.saves_blocked.is_none() && app.task.is_none();
     let dim = |c: egui::Color32| if usable { c } else { c.gamma_multiply(0.45) };
 
@@ -254,14 +253,14 @@ fn row(app: &App, ui: &mut Ui, index: usize, actions: &mut Vec<Action>) {
     context_menu(app, &response, index, actions);
 }
 
-/// Das Kontextmenü einer Backup-Zeile: die beiden Knöpfe der Zeile plus
-/// das, wofür dort kein Platz ist.
+/// A backup row's context menu: the row's two buttons plus what there is no
+/// room for in the row itself.
 ///
-/// Umbenennen, Löschen und Anzeigen rühren nur an das Backup-Verzeichnis des
-/// Loaders, nicht an die Spielstände. Sie bleiben deshalb auch dann nutzbar,
-/// wenn die Savegame-Funktionen wegen eines ungeklärten Steam-Nutzerprofils
-/// gesperrt sind – gerade dann hilft es, die vorhandenen Backups
-/// aufzuräumen und zu beschriften.
+/// Renaming, deleting and revealing only touch the loader's own backup
+/// directory, never the saves themselves. They therefore stay usable even
+/// when the savegame functions are locked because the Steam user profile is
+/// unresolved — that is precisely when tidying up and labelling the backups
+/// on hand helps.
 fn context_menu(app: &App, response: &egui::Response, index: usize, actions: &mut Vec<Action>) {
     let idle = app.task.is_none();
     let usable = app.saves_blocked.is_none() && idle;
@@ -294,8 +293,8 @@ fn context_menu(app: &App, response: &egui::Response, index: usize, actions: &mu
     });
 }
 
-/// Größe des Archivs auf der Platte. Steht nirgends im Manifest – die Datei
-/// weiß es selbst.
+/// The size of the archive on disk. It is nowhere in the manifest — the
+/// file knows it itself.
 fn archive_size(entry: &sm2_core::saves::BackupEntry) -> String {
     std::fs::metadata(&entry.archive).map_or_else(|_| String::from("—"), |m| human_size(m.len()))
 }

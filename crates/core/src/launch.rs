@@ -4,23 +4,23 @@ use crate::platform::{Current, Platform};
 use crate::APP_ID;
 use std::path::Path;
 
-/// Wie das Spiel gestartet werden soll.
+/// How the game should be launched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchMode {
-    /// Regulärer Start über Steam, mit EAC.
+    /// Regular launch through Steam, with EAC.
     Steam,
-    /// Direktstart im vorhandenen Proton-Prefix, ohne EAC.
-    /// Nur für Offline-Modding – kein Multiplayer.
+    /// Direct launch in the existing Proton prefix, without EAC.
+    /// For offline modding only — no multiplayer.
     NoEac,
 }
 
-/// Startet das Spiel gemäß `mode`.
+/// Launches the game according to `mode`.
 ///
-/// Bei `LaunchMode::Steam` übernimmt Steam selbst die Auflösung der
-/// Executable anhand seines eigenen Manifests – `paths` wird hier bewusst
-/// nicht verwendet, da `GamePaths::from_game_dir` bzw. `discover` das
-/// Installationsverzeichnis bereits validiert haben und es für den
-/// Steam-Start nichts zusätzlich zu prüfen gibt.
+/// With `LaunchMode::Steam`, Steam resolves the executable itself from its
+/// own manifest. `paths` is deliberately left unused here, because
+/// `GamePaths::from_game_dir` and `discover` have already validated the
+/// installation directory and there is nothing extra to verify for the
+/// Steam launch.
 pub fn launch(paths: &GamePaths, mode: LaunchMode) -> Result<()> {
     match mode {
         LaunchMode::Steam => Current::launch_via_steam(APP_ID),
@@ -43,25 +43,24 @@ pub fn launch(paths: &GamePaths, mode: LaunchMode) -> Result<()> {
     }
 }
 
-/// Ist ein Start ohne EAC auf diesem System überhaupt möglich?
+/// Is a launch without EAC possible on this system at all?
 ///
-/// Meldet, ob `umu-run` installiert ist – also ob ein Direktstart *ohne*
-/// EAC technisch durchführbar ist, nicht ob EAC aktiv oder verfügbar wäre.
-/// Der Name spiegelt bewusst das zurückgegebene `bool`: `true` heißt "der
-/// EAC-lose Start ist verfügbar". Die GUI blendet die Option danach ein
-/// oder aus.
+/// Reports whether `umu-run` is installed — that is, whether a direct
+/// launch *without* EAC is technically feasible, not whether EAC itself is
+/// active or available. The name deliberately mirrors the `bool` returned:
+/// `true` means "the EAC-less launch is available". The GUI shows or hides
+/// the option accordingly.
 pub fn no_eac_available() -> bool {
     Current::direct_launch_available()
 }
 
-/// Baut die Umgebungsvariablen für den EAC-losen Direktstart.
+/// Builds the environment variables for the EAC-less direct launch.
 ///
-/// `WINEPREFIX` wird nur gesetzt, wenn der Proton-Prefix für dieses Spiel
-/// tatsächlich existiert. `Platform::launch_direct` setzt jede übergebene
-/// Variable mit `Command::env`, auch mit leerem Wert – ein leerer String
-/// wäre also schlimmer als eine fehlende Variable, weil `umu-run` dann
-/// einen tatsächlich leeren Prefix-Pfad sieht statt selbst einen sinnvollen
-/// Default zu wählen.
+/// `WINEPREFIX` is only set when the Proton prefix for this game actually
+/// exists. `Platform::launch_direct` sets every variable handed to it with
+/// `Command::env`, empty value included — so an empty string would be worse
+/// than a missing variable, because `umu-run` would then see a genuinely
+/// empty prefix path instead of picking a sensible default itself.
 fn no_eac_env(library_dir: &Path) -> Vec<(String, String)> {
     let mut env = vec![
         ("SteamAppId".to_string(), APP_ID.to_string()),
@@ -96,24 +95,24 @@ mod tests {
     fn no_eac_reports_missing_executable_before_launching_it() {
         let (_tmp, paths) = game_dir_fixture();
 
-        // Die .exe existiert nicht – der Fehler muss das benennen, nicht umu.
-        // Eine bloße Substring-Prüfung auf "Retail.exe" wäre hier
-        // unfalsifizierbar: `Error::io` rendert den übergebenen Pfad immer
-        // in die Meldung, unabhängig vom eigentlichen Text – ein Test, der
-        // nur den gerenderten String prüft, würde also selbst dann grün
-        // bleiben, wenn hier versehentlich ein völlig anderer Fehler mit
-        // demselben Pfad entstünde. Stattdessen wird auf die Variante und
-        // den tatsächlichen Pfad im Fehler selbst geprüft.
-        let fehler = launch(&paths, LaunchMode::NoEac).unwrap_err();
-        match fehler {
+        // The .exe does not exist — the error has to name that, not umu. A
+        // plain substring check for "Retail.exe" would be unfalsifiable
+        // here: `Error::io` always renders the path it is given into the
+        // message, whatever the actual text is. A test that only checks the
+        // rendered string would therefore stay green even if a completely
+        // different error with the same path arose here by accident.
+        // Instead the variant and the actual path inside the error are
+        // verified.
+        let error = launch(&paths, LaunchMode::NoEac).unwrap_err();
+        match error {
             Error::Io { path, .. } => {
                 assert!(
                     path.to_string_lossy().contains("Retail.exe"),
-                    "Fehler muss den Pfad der Executable nennen, war: {}",
+                    "the error has to name the path of the executable, was: {}",
                     path.display()
                 );
             }
-            other => panic!("erwartete Error::Io, bekam {other:?}"),
+            other => panic!("expected Error::Io, got {other:?}"),
         }
     }
 
@@ -124,7 +123,7 @@ mod tests {
 
         assert!(
             env.contains(&("GAMEID".to_string(), format!("umu-{APP_ID}"))),
-            "GAMEID muss aus APP_ID abgeleitet werden: {env:?}"
+            "GAMEID has to be derived from APP_ID: {env:?}"
         );
     }
 
@@ -135,7 +134,7 @@ mod tests {
 
         assert!(
             env.iter().all(|(k, _)| k != "WINEPREFIX"),
-            "ohne vorhandenen Prefix darf WINEPREFIX nicht gesetzt werden (auch nicht leer): {env:?}"
+            "without an existing prefix WINEPREFIX must not be set (not even empty): {env:?}"
         );
     }
 
@@ -153,7 +152,7 @@ mod tests {
 
         assert!(
             env.contains(&("WINEPREFIX".to_string(), prefix.display().to_string())),
-            "WINEPREFIX muss auf den echten Prefix-Pfad zeigen: {env:?}"
+            "WINEPREFIX has to point at the real prefix path: {env:?}"
         );
     }
 }

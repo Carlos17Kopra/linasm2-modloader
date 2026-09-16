@@ -3,17 +3,17 @@ use crate::platform::{Current, Platform};
 use crate::APP_ID;
 use std::path::{Path, PathBuf};
 
-/// Alle Pfade rund um eine Spielinstallation.
+/// All paths around a game installation.
 #[derive(Debug, Clone)]
 pub struct GamePaths {
     pub game_dir: PathBuf,
-    /// Die Steam-Bibliothek, in der das Spiel liegt. Der Proton-Prefix hängt
-    /// daran, nicht am Spielverzeichnis.
+    /// The Steam library the game lives in. The Proton prefix hangs off
+    /// that, not off the game directory.
     pub library_dir: PathBuf,
 }
 
 impl GamePaths {
-    /// Prüft, ob `game_dir` tatsächlich eine Space-Marine-2-Installation ist.
+    /// Verifies that `game_dir` really is a Space Marine 2 installation.
     pub fn from_game_dir(game_dir: &Path, library_dir: &Path) -> Result<Self> {
         if !game_dir.join("client_pc/root/mods").is_dir() {
             return Err(Error::NotAGameDir(game_dir.to_path_buf()));
@@ -24,19 +24,18 @@ impl GamePaths {
         })
     }
 
-    /// Findet das Spiel über die Steam-Bibliotheken.
+    /// Finds the game through the Steam libraries.
     ///
-    /// `steamlocate` deckt den Regelfall ab (Standard- wie benutzerdefinierte
-    /// Bibliotheken über `libraryfolders.vdf`, Flatpak-Steam eingeschlossen).
-    /// Findet es überhaupt keine Steam-Installation, greift als Rückfall
-    /// `Platform::steam_roots` (siehe `find_in_roots`) – bislang deklariert,
-    /// aber ungenutzt, obwohl `steamlocate` selbst intern denselben
-    /// Wurzel-Suchraum abdeckt. Der Rückfall prüft nur die Standard-Bibliothek
-    /// direkt unter jeder Wurzel, nicht deren eigene
-    /// `libraryfolders.vdf` – das deckt `steamlocate` im Erfolgsfall bereits
-    /// ab, und wenn schon dieses robustere Vorgehen scheitert, ist eine
-    /// ungewöhnliche Custom-Bibliothek ohnehin nur noch manuell über
-    /// `settings.toml`s `game_dir` erreichbar.
+    /// `steamlocate` covers the normal case (default and custom libraries
+    /// alike via `libraryfolders.vdf`, Flatpak Steam included). If it finds
+    /// no Steam installation at all, `Platform::steam_roots` steps in as a
+    /// fallback (see `find_in_roots`) — declared so far but never actually
+    /// taken, since `steamlocate` itself already covers the same set of
+    /// roots internally. The fallback only checks the default library
+    /// directly under each root, not that root's own `libraryfolders.vdf`.
+    /// `steamlocate` already covers that when it succeeds, and if even that
+    /// more robust approach fails, an unusual custom library is only
+    /// reachable by hand through `settings.toml`'s `game_dir` anyway.
     pub fn discover() -> Result<Self> {
         match steamlocate::SteamDir::locate() {
             Ok(steam) => {
@@ -56,12 +55,11 @@ impl GamePaths {
         }
     }
 
-    /// Prüft jede der übergebenen Steam-Wurzeln direkt auf eine
-    /// Space-Marine-2-Installation unter `steamapps/common/Space Marine 2`.
-    /// Eigene Funktion (statt inline in `discover`), damit sie ohne Umweg
-    /// über `$HOME` (von dem `Platform::steam_roots` abhängt) mit
-    /// synthetischen Wurzeln aus einem `tempfile`-Fixture getestet werden
-    /// kann.
+    /// Checks each of the given Steam roots directly for a Space Marine 2
+    /// installation under `steamapps/common/Space Marine 2`. A function of
+    /// its own (rather than inline in `discover`) so it can be tested with
+    /// synthetic roots from a `tempfile` fixture, without the detour through
+    /// `$HOME` that `Platform::steam_roots` depends on.
     fn find_in_roots(roots: &[PathBuf]) -> Result<Self> {
         for root in roots {
             let game_dir = root.join("steamapps/common/Space Marine 2");
@@ -86,21 +84,21 @@ impl GamePaths {
             .join("Warhammer 40000 Space Marine 2 - Retail.exe")
     }
 
-    /// Das Savegame-Verzeichnis im Proton-Prefix.
+    /// The savegame directory inside the Proton prefix.
     ///
-    /// Unterhalb von `AppData/Local` ist der Pfad mit Windows identisch –
-    /// nur die Wurzel liefert die Plattform.
+    /// Below `AppData/Local` the path is identical to Windows — only the
+    /// root comes from the platform.
     ///
-    /// `steam_user`, sofern angegeben (`settings.toml`s `steam_user`),
-    /// überschreibt die automatische Auswahl: liegt genau ein
-    /// Nutzerverzeichnis vor, würde die automatische Auswahl es ohnehin
-    /// treffen; liegen mehrere vor, entscheidet sonst `Error::AmbiguousSaveUser`
-    /// – mit einer Vorgabe wird stattdessen genau dieses Verzeichnis
-    /// verwendet, sofern es unter den gefundenen ist. Ein `steam_user`, der zu
-    /// keinem gefundenen Verzeichnis passt, ergibt einen eigenen Fehler, der
-    /// die tatsächlich vorhandenen Profile nennt – so lässt sich ein Tippfehler
-    /// in `settings.toml` sofort erkennen, statt in einer stillen
-    /// `Error::NoSaveUser`/`AmbiguousSaveUser` unterzugehen.
+    /// `steam_user`, when given (`settings.toml`'s `steam_user`), overrides
+    /// the automatic choice: with exactly one user directory present the
+    /// automatic choice would pick it anyway; with several present
+    /// `Error::AmbiguousSaveUser` would otherwise decide the matter — a
+    /// preset instead selects exactly that directory, provided it is among
+    /// the ones found. A `steam_user` that matches none of the directories
+    /// found yields an error of its own naming the profiles actually
+    /// present. That way a typo in `settings.toml` is obvious at once
+    /// instead of disappearing into a silent
+    /// `Error::NoSaveUser`/`AmbiguousSaveUser`.
     pub fn save_dir(&self, steam_user: Option<&str>) -> Result<PathBuf> {
         let prefix_root = Current::user_profile_root(APP_ID, &self.library_dir);
         if !prefix_root.is_dir() {
@@ -110,11 +108,11 @@ impl GamePaths {
         let user_root =
             prefix_root.join("AppData/Local/Saber/Space Marine 2/storage/steam/user");
 
-        // Ein fehlgeschlagenes read_dir hier bedeutet nicht zwingend, dass der
-        // Ordner nie existiert hat: bei einer frischen Installation legt Proton
-        // den Prefix beim ersten Start an, aber der Saber-Ordner entsteht erst,
-        // wenn das Spiel tatsächlich einen Spielstand schreibt. Beide Fälle
-        // sind für den Nutzer gleich zu behandeln – es gibt (noch) kein Profil.
+        // A failed read_dir here does not necessarily mean the folder never
+        // existed: on a fresh installation Proton creates the prefix on the
+        // first launch, but the Saber folder only appears once the game
+        // actually writes a save. Both cases look the same to the user —
+        // there is no profile (yet).
         let mut user_ids: Vec<String> = std::fs::read_dir(&user_root)
             .map_err(|_| Error::NoSaveUser(user_root.clone()))?
             .filter_map(std::result::Result::ok)
@@ -138,11 +136,11 @@ impl GamePaths {
         }
     }
 
-    /// Alle `.pak`-Dateien im Mods-Verzeichnis, alphabetisch.
+    /// All `.pak` files in the mods directory, alphabetically.
     ///
-    /// `Path::is_file` folgt Symlinks, ein Symlink auf eine `.pak`-Datei wird
-    /// also korrekt mitgezählt; ein toter oder auf ein Verzeichnis zeigender
-    /// Symlink wird korrekt ausgeschlossen.
+    /// `Path::is_file` follows symlinks, so a symlink to a `.pak` file is
+    /// correctly counted; a dead symlink, or one pointing at a directory, is
+    /// correctly excluded.
     pub fn list_paks(&self) -> Result<Vec<String>> {
         let dir = self.mods_dir();
         let mut paks: Vec<String> = std::fs::read_dir(&dir)
@@ -157,7 +155,7 @@ impl GamePaths {
     }
 }
 
-/// Die XDG-Verzeichnisse der Anwendung.
+/// The application's XDG directories.
 #[derive(Debug, Clone)]
 pub struct AppDirs {
     pub config: PathBuf,
@@ -176,10 +174,10 @@ pub fn app_dirs() -> Result<AppDirs> {
     Ok(AppDirs {
         config: project_dirs.config_dir().to_path_buf(),
         data: project_dirs.data_dir().to_path_buf(),
-        // state_dir() liefert unter Linux mit XDG_STATE_HOME praktisch immer
-        // Some(..); der Fallback greift nur auf Plattformen ohne eigenes
-        // State-Verzeichnis und verwendet dann bewusst denselben Ort wie die
-        // übrigen persistenten Daten.
+        // On Linux with XDG_STATE_HOME, state_dir() practically always
+        // returns Some(..); the fallback only applies on platforms without a
+        // state directory of their own, and then deliberately uses the same
+        // place as the rest of the persistent data.
         state: project_dirs
             .state_dir()
             .unwrap_or_else(|| project_dirs.data_dir())
@@ -191,7 +189,7 @@ pub fn app_dirs() -> Result<AppDirs> {
 mod tests {
     use super::*;
 
-    /// Baut einen Verzeichnisbaum, der einer echten Installation entspricht.
+    /// Builds a directory tree matching a real installation.
     fn fixture() -> (tempfile::TempDir, GamePaths) {
         let tmp = tempfile::tempdir().unwrap();
         let library = tmp.path().join("SteamLibrary");
@@ -216,7 +214,7 @@ mod tests {
         assert!(matches!(err, Error::NotAGameDir(_)));
     }
 
-    // --- find_in_roots (Rückfall für discover(), wenn steamlocate scheitert) --
+    // --- find_in_roots (fallback for discover() when steamlocate fails) ---
 
     #[test]
     fn find_in_roots_locates_the_game_in_a_later_root() {
@@ -229,7 +227,7 @@ mod tests {
         let paths = GamePaths::find_in_roots(&[empty_root, real_root.clone()]).unwrap();
 
         assert_eq!(paths.game_dir, game);
-        assert_eq!(paths.library_dir, real_root, "Bibliothek ist die Wurzel selbst");
+        assert_eq!(paths.library_dir, real_root, "the library is the root itself");
     }
 
     #[test]
@@ -265,17 +263,17 @@ mod tests {
         assert!(matches!(paths.save_dir(None).unwrap_err(), Error::PrefixMissing(2183900)));
     }
 
-    /// Prefix existiert (Proton hat ihn beim ersten Start angelegt), aber der
-    /// Saber-Ordner fehlt noch, weil das Spiel nie über das Hauptmenü hinaus
-    /// gestartet und nie gespeichert wurde. Das darf nicht wie ein I/O-Fehler
-    /// aussehen, sondern muss als "kein Nutzerprofil gefunden" gemeldet werden.
+    /// The prefix exists (Proton created it on the first launch), but the
+    /// Saber folder is still missing because the game was never taken past
+    /// the main menu and never saved. This must not look like an I/O error;
+    /// it has to be reported as "no user profile found".
     #[test]
     fn reports_no_save_user_for_fresh_install_without_saber_dir() {
         let tmp = tempfile::tempdir().unwrap();
         let library = tmp.path().join("SteamLibrary");
         let game = library.join("steamapps/common/Space Marine 2");
         std::fs::create_dir_all(game.join("client_pc/root/mods")).unwrap();
-        // Prefix existiert, aber ohne AppData/Local/Saber/...
+        // The prefix exists, but without AppData/Local/Saber/...
         std::fs::create_dir_all(
             library.join("steamapps/compatdata/2183900/pfx/drive_c/users/steamuser"),
         )
@@ -297,8 +295,9 @@ mod tests {
         assert!(matches!(paths.save_dir(None).unwrap_err(), Error::AmbiguousSaveUser(_)));
     }
 
-    /// `settings.toml`s `steam_user` (2b): liegen mehrere Nutzerverzeichnisse
-    /// vor, löst eine passende Vorgabe die sonst tödliche Mehrdeutigkeit auf.
+    /// `settings.toml`'s `steam_user` (2b): when several user directories
+    /// are present, a matching preset resolves the otherwise fatal
+    /// ambiguity.
     #[test]
     fn steam_user_override_resolves_ambiguity_when_it_matches_one_of_the_found_ids() {
         let (tmp, paths) = fixture();
@@ -307,17 +306,17 @@ mod tests {
             .join("SteamLibrary/steamapps/compatdata/2183900/pfx/drive_c/users/steamuser")
             .join("AppData/Local/Saber/Space Marine 2/storage/steam/user");
         std::fs::create_dir_all(user_root.join("76561198000000000/Main")).unwrap();
-        // Die Fixture legt bereits 76561198412726373/Main an.
+        // The fixture already creates 76561198412726373/Main.
 
         let saves = paths.save_dir(Some("76561198000000000")).unwrap();
 
         assert!(saves.ends_with("76561198000000000/Main"));
     }
 
-    /// Eine Vorgabe, die zu keinem gefundenen Nutzerverzeichnis passt (z. B.
-    /// ein Tippfehler in `settings.toml`), muss einen eigenen, klaren Fehler
-    /// ergeben, der die tatsächlich vorhandenen Profile nennt – statt
-    /// stillschweigend zu ignorieren oder in `AmbiguousSaveUser` unterzugehen.
+    /// A preset that matches none of the user directories found (a typo in
+    /// `settings.toml`, say) must produce a clear error of its own that
+    /// names the profiles actually present — rather than being silently
+    /// ignored or disappearing into `AmbiguousSaveUser`.
     #[test]
     fn steam_user_override_that_matches_nothing_names_the_available_ids() {
         let (_tmp, paths) = fixture();
@@ -325,7 +324,7 @@ mod tests {
         let err = paths.save_dir(Some("00000000000000000")).unwrap_err();
 
         let Error::UnknownSaveUser { requested, available } = err else {
-            panic!("erwartete Error::UnknownSaveUser, bekam {err:?}");
+            panic!("expected Error::UnknownSaveUser, got {err:?}");
         };
         assert_eq!(requested, "00000000000000000");
         assert_eq!(available, vec!["76561198412726373".to_string()]);

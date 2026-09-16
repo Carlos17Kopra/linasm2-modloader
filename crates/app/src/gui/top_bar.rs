@@ -1,4 +1,4 @@
-//! Die Kopfleiste: Überschrift mit Pfad links, Startauswahl rechts.
+//! The top bar: heading with path on the left, launch choice on the right.
 
 use super::theme::{color, medium, metric, mono, sans};
 use super::widgets::{self, ButtonStyle, Icon};
@@ -28,7 +28,7 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     });
 }
 
-/// Überschrift und Pfad, zwei Zeilen übereinander.
+/// Heading and path, two rows stacked on top of each other.
 fn headline(app: &App, ui: &mut Ui) {
     let available = ui.available_rect_before_wrap();
 
@@ -60,7 +60,7 @@ fn headline(app: &App, ui: &mut Ui) {
     painter.galley(Pos2::new(available.left(), path_top), path_galley, color::TEXT_MUTED);
 }
 
-/// Das Aufklappfeld mit der gewählten Startart.
+/// The drop-down field showing the chosen way to launch.
 fn launch_combo(app: &App, ui: &mut Ui) -> egui::Response {
     let label = app.launch_choice.label();
     let galley = ui.painter().layout_no_wrap(label.to_owned(), sans(12.5), color::TEXT);
@@ -91,9 +91,9 @@ fn launch_combo(app: &App, ui: &mut Ui) -> egui::Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// Das Aufklappmenü unter dem Feld. „Ohne EAC“ fehlt, wenn `umu-run` nicht
-/// im PATH liegt – der Entwurf blendet die Zeile aus, statt den Nutzer erst
-/// beim Start scheitern zu lassen.
+/// The drop-down menu below the field. "Ohne EAC" is missing when
+/// `umu-run` is not on the PATH — the design hides the row rather than let
+/// the user fail only once they hit launch.
 fn launch_menu(app: &App, ui: &Ui, anchor: Rect, actions: &mut Vec<Action>) {
     let mut choices = vec![LaunchChoice::Steam, LaunchChoice::Vanilla];
     if app.no_eac_available {
@@ -159,7 +159,7 @@ fn launch_menu(app: &App, ui: &Ui, anchor: Rect, actions: &mut Vec<Action>) {
                 }
             }
 
-            // Ein Klick irgendwo sonst schließt das Menü wieder.
+            // A click anywhere else closes the menu again.
             if ui.ctx().input(|i| i.pointer.any_click()) && !menu_rect.contains(
                 ui.ctx().pointer_interact_pos().unwrap_or(Pos2::new(f32::MIN, f32::MIN)),
             ) && !anchor.contains(

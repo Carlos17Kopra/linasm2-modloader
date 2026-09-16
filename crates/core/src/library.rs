@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-/// Metadaten zu einem importierten Mod. Die Pak-Datei selbst liegt im
-/// Spielverzeichnis; hier steht nur, was wir darüber wissen.
+/// Metadata about an imported mod. The pak file itself lives in the game
+/// directory; all that is recorded here is what we know about it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModInfo {
     pub pak: String,
@@ -18,73 +18,70 @@ pub struct ModInfo {
     pub nexus_id: Option<u32>,
     #[serde(default)]
     pub notes: Option<String>,
-    /// blake3 des Pak-Inhalts – erkennt Dubletten und Änderungen von außen.
+    /// blake3 of the pak contents — detects duplicates and outside changes.
     pub hash: String,
     pub size: u64,
-    /// RFC-3339-Zeitstempel.
+    /// RFC 3339 timestamp.
     pub imported_at: String,
-    /// Pfad des Archivs oder der Datei, aus der importiert wurde.
+    /// Path of the archive or file the mod was imported from.
     #[serde(default)]
     pub source: Option<String>,
 
-    /// Aktivierungszustand, wie ihn `pak_config.yaml` beim letzten
-    /// erfolgreichen `persist()` für dieses Pak trug. Dient
-    /// `PakConfig::reconcile` dazu, ein zwischenzeitlich verschwundenes und
-    /// wieder aufgetauchtes Pak (Spec §9 R3, z. B. nach einem Steam-Update)
-    /// mit seinem vorherigen Zustand zurückzustellen, statt es wie ein nie
-    /// zuvor gesehenes Pak aktiv ans Ende zu hängen. `#[serde(default)]`,
-    /// damit ältere `library.json`-Dateien ohne dieses Feld weiter laden.
+    /// The activation state `pak_config.yaml` carried for this pak at the
+    /// last successful `persist()`. It lets `PakConfig::reconcile` restore a
+    /// pak that vanished and later reappeared (Spec §9 R3, e.g. after a
+    /// Steam update) to its previous state, instead of appending it enabled
+    /// at the end like a pak never seen before. `#[serde(default)]`, so that
+    /// older `library.json` files without this field still load.
     #[serde(default)]
     pub last_known_disabled: bool,
-    /// Position in `pak_config.yaml`, wie sie beim letzten erfolgreichen
-    /// `persist()` für dieses Pak galt – siehe `last_known_disabled`.
+    /// The position in `pak_config.yaml` this pak held at the last
+    /// successful `persist()` — see `last_known_disabled`.
     ///
-    /// `Option`, nicht `usize`: ein `library.json` von vor diesem Feld (oder
-    /// ein Pak, das noch nie Teil der Konfiguration war) muss als "keine
-    /// Positions-Historie bekannt" ankommen, nicht als "Position 0". Mit
-    /// einem bloßen `usize` und `#[serde(default)]` würde jeder Alt-Eintrag
-    /// beim ersten `reconcile` nach einem Wiederauftauchen an den Anfang der
-    /// Konfiguration springen (und mehrere solche Einträge nacheinander
-    /// sogar in umgekehrter Reihenfolge) – eine stille Änderung der
-    /// Ladereihenfolge, die niemand angefordert hat.
+    /// `Option`, not `usize`: a `library.json` written before this field
+    /// existed (or a pak that was never part of the configuration) has to
+    /// arrive as "no position history known", not as "position 0". With a
+    /// plain `usize` and `#[serde(default)]`, every legacy entry would jump
+    /// to the top of the configuration on the first `reconcile` after
+    /// reappearing (and several such entries in a row would even end up in
+    /// reverse order) — a silent change to the load order that nobody asked
+    /// for.
     #[serde(default)]
     pub last_known_position: Option<usize>,
 
-    /// Größe und Änderungszeit der Pak-Datei zum Zeitpunkt der letzten
-    /// Prüfung durch `detect_altered`. Dient als billiger Vorfilter (ein
-    /// `stat`-Aufruf statt eines vollständigen Hashs über eine ggf. mehrere
-    /// Gigabyte große Datei): weichen Größe oder Änderungszeit der Datei auf
-    /// der Platte von diesen Werten ab, lohnt sich ein tatsächlicher
-    /// Hash-Vergleich; stimmen beide überein, ist ein Hash-Vergleich
-    /// unnötig. Ist der zuletzt geprüfte Inhalt als verändert bekannt (siehe
-    /// `known_altered`), spiegeln diese Werte bewusst den *veränderten*
-    /// Stand wider, nicht den ursprünglich importierten – nur so bleibt der
-    /// Vorfilter auch für einen dauerhaft veränderten Pak wirksam.
-    /// `#[serde(default)]`, damit ältere `library.json`-Dateien ohne dieses
-    /// Feld weiter laden (der erste Lauf danach hasht dann einmalig, statt
-    /// der Abweichung blind zu vertrauen).
+    /// Size and modification time of the pak file as of the last
+    /// verification by `detect_altered`. Serves as a cheap prefilter (one
+    /// `stat` call instead of a full hash over a file that may be several
+    /// gigabytes): if the size or modification time on disk differs from
+    /// these values, an actual hash comparison is worth it; if both match, a
+    /// hash comparison is unnecessary. When the content last checked is
+    /// known to be altered (see `known_altered`), these values deliberately
+    /// reflect the *altered* state, not the originally imported one — only
+    /// that keeps the prefilter effective for a permanently altered pak.
+    /// `#[serde(default)]`, so that older `library.json` files without this
+    /// field still load (the first run after that hashes once, rather than
+    /// blindly trusting the mismatch).
     #[serde(default)]
     pub mtime: Option<u64>,
 
-    /// `true`, wenn `detect_altered` den Inhalt zuletzt als vom
-    /// ursprünglichen `hash` abweichend bestätigt hat ("außerhalb
-    /// verändert", Spec §6.3). `hash` selbst bleibt dabei unangetastet – er
-    /// bleibt der Fingerabdruck der ursprünglich importierten Version für
-    /// `find_by_hash`s Dublettenerkennung, sonst würde ein späterer
-    /// Re-Import genau dieser Originaldatei nicht mehr als Dublette erkannt.
-    /// Zusammen mit dem auf den *veränderten* Stand aufgefrischten
-    /// `size`/`mtime` erlaubt dieses Flag, die Warnung bei unverändert
-    /// gebliebenem (aber weiterhin abweichendem) Inhalt aus dem Cache zu
-    /// wiederholen, ohne die Datei bei jedem Lauf erneut zu hashen.
-    /// `#[serde(default)]`, damit ältere `library.json`-Dateien ohne dieses
-    /// Feld weiter laden.
+    /// `true` when `detect_altered` last confirmed that the content differs
+    /// from the original `hash` ("altered outside the loader", Spec §6.3).
+    /// `hash` itself stays untouched — it remains the fingerprint of the
+    /// originally imported version for `find_by_hash`'s duplicate detection;
+    /// otherwise a later re-import of exactly that original file would no
+    /// longer be recognized as a duplicate. Together with `size`/`mtime`
+    /// refreshed to the *altered* state, this flag makes it possible to
+    /// repeat the warning from the cache while the content stays as it is
+    /// (but still differs), without re-hashing the file on every run.
+    /// `#[serde(default)]`, so that older `library.json` files without this
+    /// field still load.
     #[serde(default)]
     pub known_altered: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Library {
-    /// Schlüssel ist der Pak-Dateiname.
+    /// The key is the pak file name.
     #[serde(default)]
     pub mods: BTreeMap<String, ModInfo>,
 }
@@ -107,9 +104,9 @@ impl Library {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        // Unerreichbar für die aktuellen Feldtypen (String, Option<_>, u64,
-        // u32, BTreeMap<String, _> können nicht fehlschlagen); der rohe
-        // Fehler wird bewusst verworfen, damit die Meldung rein deutsch bleibt.
+        // Unreachable for the current field types (String, Option<_>, u64,
+        // u32, BTreeMap<String, _> cannot fail); the raw error is discarded
+        // on purpose so that the message stays purely German.
         let json = serde_json::to_string_pretty(self).map_err(|_| {
             Error::io(
                 path,
@@ -122,67 +119,64 @@ impl Library {
         write_atomic(path, &format!("{json}\n"))
     }
 
-    /// Liefert den ersten Eintrag mit diesem Hash. Bei geteiltem Hash
-    /// zweier Paks (z. B. Import derselben Datei unter zwei Namen) ist das
-    /// Ergebnis durch die Schlüsselreihenfolge von `BTreeMap` deterministisch
-    /// der alphabetisch erste Pak-Dateiname.
+    /// Returns the first entry with this hash. When two paks share a hash
+    /// (e.g. the same file imported under two names), `BTreeMap`'s key order
+    /// makes the result deterministically the alphabetically first pak file
+    /// name.
     pub fn find_by_hash(&self, hash: &str) -> Option<&ModInfo> {
         self.mods.values().find(|m| m.hash == hash)
     }
 
-    /// Erkennt Paks, deren Inhalt außerhalb des Loaders verändert wurde
-    /// (Spec §6.3, dritter Abgleichsfall: Hash weicht von `library.json`
-    /// ab). Nur Paks, die der Bibliothek bereits bekannt sind, werden
-    /// geprüft – für ein unbekanntes Pak gibt es nichts, wogegen verglichen
-    /// werden könnte (das behandelt bereits `PakConfig::reconcile`s
-    /// `added`-Fall; ein von Hand hineinkopiertes Pak bekommt seine eigene
-    /// Historie erst über `AppState::persist`, siehe dessen Doc-Kommentar).
+    /// Detects paks whose content was altered outside the loader (Spec §6.3,
+    /// third reconciliation case: the hash differs from `library.json`).
+    /// Only paks already known to the library are checked — for an unknown
+    /// pak there is nothing to compare against (that is already covered by
+    /// `PakConfig::reconcile`'s `added` case; a pak copied in by hand only
+    /// gets a history of its own through `AppState::persist`, see that
+    /// function's doc comment).
     ///
-    /// Ein vollständiger Hash über jede (ggf. mehrere Gigabyte große) Datei
-    /// bei jedem einzelnen Aufruf ist nicht vertretbar. Deshalb zuerst ein
-    /// billiger Vorfilter: Größe und Änderungszeit gegen die zuletzt
-    /// bestätigten Werte (`ModInfo::size`/`ModInfo::mtime`) vergleichen –
-    /// ein `stat`-Aufruf statt eines vollständigen Lesens. Nur wenn einer
-    /// der beiden Werte abweicht, wird tatsächlich gehasht.
+    /// Hashing every file in full — and they can run to several gigabytes —
+    /// on every single call is not defensible. So a cheap prefilter comes
+    /// first: compare size and modification time against the last confirmed
+    /// values (`ModInfo::size`/`ModInfo::mtime`) — one `stat` call instead
+    /// of a full read. Only when one of the two differs is the file actually
+    /// hashed.
     ///
-    /// Drei Ausgänge nach einem tatsächlichen Hash:
-    /// - Hash bestätigt den ursprünglich importierten Inhalt (z. B. nach
-    ///   einem `touch` ohne Inhaltsänderung, oder weil ein `library.json`
-    ///   von vor `ModInfo::mtime` stammt und das Feld deshalb `None` trägt):
-    ///   `size`/`mtime` werden aufgefrischt, `known_altered` wird (falls
-    ///   gesetzt) zurückgenommen.
-    /// - Hash weicht ab und das Pak galt bisher nicht als verändert: als
-    ///   "außerhalb verändert" gemeldet, UND `size`/`mtime` werden auf den
-    ///   *veränderten* Stand aufgefrischt und `known_altered` gesetzt.
-    /// - Ein bereits als verändert bekanntes Pak (`known_altered`), dessen
-    ///   Größe/Änderungszeit sich seit der letzten Prüfung nicht geändert
-    ///   haben (der Vorfilter also gar nicht erst auslöst): wird ohne
-    ///   erneuten Hash weiterhin gemeldet – siehe die eigene Prüfung dafür
-    ///   direkt nach dem Vorfilter.
+    /// Three outcomes after an actual hash:
+    /// - The hash confirms the originally imported content (e.g. after a
+    ///   `touch` that changed nothing, or because a `library.json` predates
+    ///   `ModInfo::mtime` and the field is therefore `None`): `size`/`mtime`
+    ///   are refreshed and `known_altered` is cleared if it was set.
+    /// - The hash differs and the pak was not considered altered until now:
+    ///   reported as "altered outside the loader", AND `size`/`mtime` are
+    ///   refreshed to the *altered* state and `known_altered` is set.
+    /// - A pak already known to be altered (`known_altered`) whose size and
+    ///   modification time have not changed since the last verification (so
+    ///   the prefilter never fires at all): still reported, without hashing
+    ///   again — see the dedicated check for that right after the prefilter.
     ///
-    /// In allen drei Fällen bleibt `hash` selbst unangetastet – er bleibt der
-    /// Fingerabdruck der ursprünglich importierten Version für die
-    /// Dublettenerkennung beim Import (`find_by_hash`). Ohne das Auffrischen
-    /// von `size`/`mtime` auch im veränderten Fall (der eigentliche Grund für
-    /// `known_altered`) würde ein dauerhaft dem Original abweichender Pak bei
-    /// *jedem* Aufruf erneut vollständig gehasht, auf ewig – genau das
-    /// bewusste Nicht-Erkennen dieses Falls war der ursprüngliche Fehler.
+    /// In all three cases `hash` itself stays untouched — it remains the
+    /// fingerprint of the originally imported version for duplicate
+    /// detection on import (`find_by_hash`). Without refreshing
+    /// `size`/`mtime` in the altered case too (the very reason
+    /// `known_altered` exists), a pak that permanently differs from the
+    /// original would be hashed in full on *every* call, forever — failing
+    /// to recognize exactly that case was the original bug.
     ///
-    /// `cache_refreshed` im Ergebnis meldet, ob sich am gespeicherten Zustand
-    /// (Vorfilter-Werte oder `known_altered`) etwas geändert hat: der
-    /// Aufrufer (`AppState::open`) schreibt `library.json` dann sofort neu,
-    /// statt die Änderung nur im Speicher zu halten und bei jedem weiteren –
-    /// auch rein lesenden – Aufruf erneut zu hashen.
+    /// `cache_refreshed` in the result reports whether anything about the
+    /// stored state (the prefilter values or `known_altered`) changed: the
+    /// caller (`AppState::open`) then rewrites `library.json` right away,
+    /// instead of keeping the change in memory only and hashing again on
+    /// every further call — read-only ones included.
     ///
-    /// Eine Datei, die laut `present` existieren sollte, aber nicht (mehr)
-    /// gelesen werden kann, wird stillschweigend übersprungen – das ist der
-    /// Fall, den `PakConfig::reconcile`s `removed` bereits meldet. Jeder
-    /// andere E/A-Fehler beim Prüfen (fehlende Leserechte, Hash-Fehlschlag)
-    /// bricht die gesamte Prüfung nicht ab: Spec §6.3 beschreibt diesen
-    /// dritten Fall ausdrücklich als Markierung, nicht als hartes
-    /// Erfordernis – ein einzelnes unlesbares Pak darf nicht einmal
-    /// schreibgeschützt lesende Befehle wie `paths` zum Scheitern bringen.
-    /// Solche Fälle landen stattdessen als deutsche Meldung in `warnings`.
+    /// A file that `present` says should exist but that can no longer be
+    /// read is skipped silently — that is the case `PakConfig::reconcile`'s
+    /// `removed` already reports. Any other I/O error during verification
+    /// (missing read permission, a failed hash) does not abort the whole
+    /// verification: Spec §6.3 describes this third case explicitly as a
+    /// marker, not as a hard requirement — a single unreadable pak must not
+    /// bring down even purely read-only commands such as `paths`. Such cases
+    /// end up as a German message in `warnings` instead.
     pub fn detect_altered(&mut self, mods_dir: &Path, present: &[String]) -> Result<AlteredReport> {
         let mut altered = Vec::new();
         let mut warnings = Vec::new();
@@ -211,12 +205,13 @@ impl Library {
                 .map(|d| d.as_secs());
 
             if size == info.size && mtime == info.mtime {
-                // Vorfilter meldet keine Änderung seit der letzten Prüfung.
-                // War der Inhalt damals bereits als verändert bekannt, bleibt
-                // er es – ohne erneuten Hash. Das ist der eigentliche Zweck
-                // von `known_altered`: die Warnung erscheint bei jedem Lauf
-                // weiter (sie ist das Signal an den Nutzer), aber der teure
-                // Hash läuft nur einmal pro tatsächlicher Änderung.
+                // The prefilter reports no change since the last
+                // verification. If the content was already known to be
+                // altered back then, it stays altered — without hashing
+                // again. That is the real purpose of `known_altered`: the
+                // warning keeps appearing on every run (it is the signal
+                // to the user), but the expensive hash runs only once per
+                // actual change.
                 if info.known_altered {
                     altered.push(pak.clone());
                 }
@@ -242,11 +237,11 @@ impl Library {
             } else {
                 altered.push(pak.clone());
                 if let Some(entry) = self.mods.get_mut(pak) {
-                    // `hash` bleibt der Fingerabdruck der ursprünglich
-                    // importierten Version (Dublettenerkennung) – nur
-                    // Größe/Änderungszeit werden auf den *veränderten*
-                    // Stand aufgefrischt, damit der Vorfilter beim nächsten
-                    // Lauf wieder greift (siehe Doc-Kommentar oben).
+                    // `hash` stays the fingerprint of the originally
+                    // imported version (duplicate detection) — only size
+                    // and modification time are refreshed to the
+                    // *altered* state, so that the prefilter works again
+                    // on the next run (see the doc comment above).
                     entry.size = size;
                     entry.mtime = mtime;
                     entry.known_altered = true;
@@ -259,24 +254,24 @@ impl Library {
     }
 }
 
-/// Ergebnis von `Library::detect_altered`.
+/// Result of `Library::detect_altered`.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct AlteredReport {
-    /// Paks, deren Hash vom zuletzt bekannten Stand abweicht ("außerhalb
-    /// verändert", Spec §6.3).
+    /// Paks whose hash differs from the last known state ("altered outside
+    /// the loader", Spec §6.3).
     pub altered: Vec<String>,
-    /// `true`, wenn für mindestens ein Pak Größe/Änderungszeit im
-    /// billigen Vorfilter nicht mehr stimmten, der Hash den Inhalt aber
-    /// bestätigt hat – der Aufrufer sollte `library.json` dann neu
-    /// schreiben, damit künftige Läufe den Vorfilter wieder nutzen können.
+    /// `true` when, for at least one pak, size and modification time no
+    /// longer matched in the cheap prefilter but the hash confirmed the
+    /// content — the caller should then rewrite `library.json` so that
+    /// future runs can make use of the prefilter again.
     pub cache_refreshed: bool,
-    /// Deutsche Meldungen zu Paks, deren Prüfung selbst nicht möglich war
-    /// (fehlende Leserechte o. Ä.) – informativ, kein Fehlschlag der
-    /// gesamten Prüfung.
+    /// German messages about paks that could not be verified at all
+    /// (missing read permission or similar) — informational, not a failure
+    /// of the whole verification.
     pub warnings: Vec<String>,
 }
 
-/// blake3-Hash einer Datei, streamend gelesen – Paks können Gigabytes groß sein.
+/// blake3 hash of a file, read as a stream — paks can be gigabytes in size.
 pub fn hash_file(path: &Path) -> Result<String> {
     let mut file = std::fs::File::open(path).map_err(|e| Error::io(path, e))?;
     let mut hasher = blake3::Hasher::new();
@@ -349,10 +344,10 @@ mod tests {
         assert!(lib.find_by_hash("unbekannt").is_none());
     }
 
-    /// BTreeMap iteriert in Schlüsselreihenfolge; bei gemeinsamem Hash
-    /// zweier Paks (z. B. derselbe Mod unter zwei Dateinamen importiert)
-    /// ist das Ergebnis dadurch deterministisch der alphabetisch erste
-    /// Pak-Dateiname statt einer zufälligen Auswahl.
+    /// BTreeMap iterates in key order; when two paks share a hash (e.g. the
+    /// same mod imported under two file names), the result is therefore
+    /// deterministically the alphabetically first pak file name rather than
+    /// an arbitrary pick.
     #[test]
     fn finds_first_pak_by_key_order_on_shared_hash() {
         let mut lib = Library::default();
@@ -362,7 +357,7 @@ mod tests {
         assert_eq!(
             lib.find_by_hash("gemeinsamer-hash").map(|m| m.pak.as_str()),
             Some("a.pak"),
-            "bei gleichem Hash muss der alphabetisch erste Pak-Name gewinnen"
+            "on an identical hash the alphabetically first pak name must win"
         );
     }
 
@@ -376,11 +371,11 @@ mod tests {
         let message = err.to_string();
         assert!(
             message.contains(path.to_str().unwrap()),
-            "Fehlermeldung muss den Pfad enthalten: {message}"
+            "the error message must contain the path: {message}"
         );
         assert!(
             !message.contains("expected") && !message.contains("invalid"),
-            "Fehlermeldung soll auf Deutsch sein, nicht die rohe serde_json-Meldung enthalten: {message}"
+            "the error message should be in German, not carry the raw serde_json message: {message}"
         );
     }
 
@@ -404,16 +399,16 @@ mod tests {
         m
     }
 
-    /// Beweist nicht nur, dass kein "verändert" gemeldet wird, sondern dass
-    /// der billige Vorfilter tatsächlich verhindert, dass die Datei
-    /// überhaupt gehasht wird: ohne Leserechte müsste ein tatsächlicher
-    /// Hash-Versuch scheitern und eine Warnung hinterlassen (siehe
+    /// Proves not just that nothing is reported as "altered", but that the
+    /// cheap prefilter really does keep the file from being hashed at all:
+    /// without read permission an actual hash attempt would have to fail and
+    /// leave a warning behind (see
     /// `detect_altered_warns_instead_of_failing_on_an_unreadable_pak`
-    /// unten) – bleibt `warnings` leer, wurde `hash_file` nie aufgerufen.
-    /// Eine Assertion, die nur `altered.is_empty()` prüft, bliebe auch dann
-    /// grün, wenn der Vorfilter versehentlich entfernt und jede Datei bei
-    /// jedem Aufruf gehasht würde – genau die Eigenschaft, die diese
-    /// Funktion laut ihrem eigenen Doc-Kommentar erst automatisierbar macht.
+    /// below) — so if `warnings` stays empty, `hash_file` was never called.
+    /// An assertion that only checks `altered.is_empty()` would stay green
+    /// even if the prefilter were accidentally removed and every file hashed
+    /// on every call — and that is precisely the property which, by this
+    /// function's own doc comment, makes it usable automatically at all.
     #[test]
     fn detect_altered_ignores_an_unchanged_pak_without_hashing() {
         let dir = tempfile::tempdir().unwrap();
@@ -429,11 +424,11 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
             if std::fs::read(&path).is_ok() {
-                // Läuft der Test als root, übergeht der Kernel den
-                // Leseschutz vollständig – die Beobachtbarkeit lässt sich
-                // dann mit dieser Methode nicht herstellen.
+                // When the test runs as root, the kernel bypasses the read
+                // protection entirely — this method then cannot make the
+                // behaviour observable.
                 std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-                eprintln!("übersprungen: Prozess kann Leserechte offenbar übergehen (root?)");
+                eprintln!("skipped: this process can apparently bypass read permissions (root?)");
                 return;
             }
         }
@@ -449,16 +444,16 @@ mod tests {
         assert!(report.altered.is_empty());
         assert!(
             report.warnings.is_empty(),
-            "ein tatsächlicher Hash-Versuch hätte an den entzogenen Leserechten scheitern \
-             müssen und wäre als Warnung sichtbar geworden: {:?}",
+            "an actual hash attempt would have had to fail on the revoked read permission \
+             and would have become visible as a warning: {:?}",
             report.warnings
         );
     }
 
-    /// Der eigentliche Zweck von `detect_altered`: ein Pak, dessen Inhalt
-    /// außerhalb des Loaders ersetzt wurde (anderer Hash bei abweichender
-    /// Größe/Änderungszeit), muss als verändert gemeldet werden (Spec §6.3,
-    /// dritter Abgleichsfall).
+    /// The actual purpose of `detect_altered`: a pak whose content was
+    /// replaced outside the loader (a different hash, with differing size
+    /// and modification time) must be reported as altered (Spec §6.3, third
+    /// reconciliation case).
     #[test]
     fn detect_altered_reports_a_pak_whose_content_was_replaced_outside_the_loader() {
         let dir = tempfile::tempdir().unwrap();
@@ -468,37 +463,37 @@ mod tests {
         let mut lib = Library::default();
         lib.mods.insert("a.pak".into(), info_matching("a.pak", &metadata, &hash));
 
-        // Von Hand ersetzt, ohne den Loader – Größe und Inhalt ändern sich.
+        // Replaced by hand, without the loader — size and content change.
         std::fs::write(dir.path().join("a.pak"), b"ERSETZT MIT ANDEREM INHALT").unwrap();
 
         let report = lib.detect_altered(dir.path(), &["a.pak".into()]).unwrap();
 
         assert_eq!(report.altered, vec!["a.pak"]);
-        assert!(report.cache_refreshed, "die Erkennung selbst ist eine Zustandsänderung, die gespeichert werden muss");
+        assert!(report.cache_refreshed, "the detection itself is a state change that has to be saved");
         assert!(report.warnings.is_empty());
         assert_eq!(
             lib.mods["a.pak"].hash, hash,
-            "der gespeicherte Hash bleibt der der zuletzt importierten Version, \
-             sonst würde ein späterer Re-Import derselben Originaldatei nicht mehr \
-             als Dublette erkannt"
+            "the stored hash stays that of the last imported version, otherwise a later \
+             re-import of the same original file would no longer be recognized as a \
+             duplicate"
         );
-        assert!(lib.mods["a.pak"].known_altered, "der veränderte Zustand muss vermerkt werden");
+        assert!(lib.mods["a.pak"].known_altered, "the altered state has to be recorded");
         assert_eq!(
             lib.mods["a.pak"].size,
             std::fs::metadata(dir.path().join("a.pak")).unwrap().len(),
-            "Größe/mtime werden auf den VERÄNDERTEN Stand aufgefrischt, sonst würde jeder \
-             künftige Lauf erneut hashen (siehe detect_altered_repeats_the_advisory_...)"
+            "size/mtime are refreshed to the ALTERED state, otherwise every future run \
+             would hash again (see detect_altered_repeats_the_advisory_...)"
         );
     }
 
-    /// Der eigentliche Fix für Review-Punkt 2 (dritte Instanz): ein bereits
-    /// als verändert erkanntes Pak muss die Warnung bei jedem weiteren Lauf
-    /// wiederholen – sie ist das Signal an den Nutzer –, darf dafür aber
-    /// nicht erneut gehasht werden, solange sich an Größe/Änderungszeit
-    /// nichts ändert. Prüft beide Hälften: dass die Meldung bestehen bleibt,
-    /// UND dass der zweite Lauf tatsächlich nicht mehr liest (nachgewiesen
-    /// über entzogene Leserechte – ein tatsächlicher zweiter Hash-Versuch
-    /// würde daran scheitern und als Warnung sichtbar werden, siehe
+    /// The actual fix for review item 2 (third instance): a pak already
+    /// recognized as altered must repeat the warning on every further run —
+    /// it is the signal to the user — but must not be hashed again for it,
+    /// as long as size and modification time do not change. Checks both
+    /// halves: that the message persists, AND that the second run really
+    /// stops reading (demonstrated via revoked read permission — an actual
+    /// second hash attempt would fail on that and become visible as a
+    /// warning, see
     /// `detect_altered_warns_instead_of_failing_on_an_unreadable_pak`).
     #[test]
     fn detect_altered_repeats_the_advisory_without_hashing_again_once_confirmed() {
@@ -512,12 +507,12 @@ mod tests {
 
         std::fs::write(&path, b"ERSETZT MIT ANDEREM INHALT").unwrap();
 
-        // Erster Lauf: hasht tatsächlich und erkennt die Abweichung.
+        // First run: actually hashes and detects the mismatch.
         let first = lib.detect_altered(dir.path(), &["a.pak".into()]).unwrap();
         assert_eq!(first.altered, vec!["a.pak"]);
         assert!(first.cache_refreshed);
         assert!(lib.mods["a.pak"].known_altered);
-        assert_eq!(lib.mods["a.pak"].hash, original_hash, "Baseline-Hash bleibt für die Dublettenerkennung erhalten");
+        assert_eq!(lib.mods["a.pak"].hash, original_hash, "the baseline hash is kept for duplicate detection");
 
         #[cfg(unix)]
         {
@@ -525,7 +520,7 @@ mod tests {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
             if std::fs::read(&path).is_ok() {
                 std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-                eprintln!("übersprungen: Prozess kann Leserechte offenbar übergehen (root?)");
+                eprintln!("skipped: this process can apparently bypass read permissions (root?)");
                 return;
             }
         }
@@ -538,20 +533,20 @@ mod tests {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         }
 
-        assert_eq!(second.altered, vec!["a.pak"], "die Warnung muss bei jedem Lauf weiter erscheinen");
-        assert!(!second.cache_refreshed, "ohne neue Erkenntnis gibt es nichts erneut aufzufrischen");
+        assert_eq!(second.altered, vec!["a.pak"], "the warning has to keep appearing on every run");
+        assert!(!second.cache_refreshed, "without a new finding there is nothing to refresh again");
         assert!(
             second.warnings.is_empty(),
-            "ein tatsächlicher zweiter Hash-Versuch hätte an den entzogenen Leserechten \
-             scheitern müssen: {:?}",
+            "an actual second hash attempt would have had to fail on the revoked read \
+             permission: {:?}",
             second.warnings
         );
     }
 
-    /// Kehrt der Inhalt zum ursprünglich importierten Stand zurück (Hash
-    /// stimmt wieder), muss `known_altered` zurückgenommen werden – sonst
-    /// würde die Warnung fälschlich weiterlaufen, obwohl gar keine
-    /// Abweichung mehr besteht.
+    /// When the content returns to the originally imported state (the hash
+    /// matches again), `known_altered` has to be cleared — otherwise the
+    /// warning would wrongly keep running even though nothing differs any
+    /// more.
     #[test]
     fn detect_altered_clears_known_altered_once_content_matches_the_original_again() {
         let dir = tempfile::tempdir().unwrap();
@@ -567,18 +562,18 @@ mod tests {
         assert_eq!(first.altered, vec!["a.pak"]);
         assert!(lib.mods["a.pak"].known_altered);
 
-        // Originalinhalt (und – wichtig für den Vorfilter – auch die
-        // ursprüngliche Größe) wird wiederhergestellt.
+        // The original content is restored — and, importantly for the
+        // prefilter, the original size along with it.
         std::fs::write(&path, b"URSPRUENGLICH").unwrap();
         let second = lib.detect_altered(dir.path(), &["a.pak".into()]).unwrap();
 
-        assert!(second.altered.is_empty(), "der Originalinhalt ist wieder da – keine Abweichung mehr");
-        assert!(!lib.mods["a.pak"].known_altered, "die Markierung muss zurückgenommen werden");
+        assert!(second.altered.is_empty(), "the original content is back – no difference any more");
+        assert!(!lib.mods["a.pak"].known_altered, "the marker has to be cleared");
     }
 
-    /// Ein Pak, das der Bibliothek unbekannt ist (nie importiert, z. B. von
-    /// Hand hineinkopiert), hat nichts, wogegen verglichen werden könnte –
-    /// das ist der `added`-Fall von `PakConfig::reconcile`, nicht dieser.
+    /// A pak unknown to the library (never imported, e.g. copied in by
+    /// hand) has nothing to compare against — that is the `added` case of
+    /// `PakConfig::reconcile`, not this one.
     #[test]
     fn detect_altered_skips_a_pak_unknown_to_the_library() {
         let dir = tempfile::tempdir().unwrap();
@@ -590,11 +585,11 @@ mod tests {
         assert!(report.altered.is_empty());
     }
 
-    /// Eine veränderte Änderungszeit ohne veränderten Inhalt (z. B. durch
-    /// `touch`, oder weil eine Kopie das Original bei gleichem Inhalt mit
-    /// neuem Zeitstempel ersetzt hat) ist kein "außerhalb verändert" – der
-    /// Hash bestätigt den unveränderten Inhalt. Der Vorfilter-Cache wird
-    /// trotzdem aufgefrischt, damit künftige Läufe nicht erneut hashen.
+    /// A changed modification time without changed content (e.g. from a
+    /// `touch`, or because a copy replaced the original with identical
+    /// content but a new timestamp) is not "altered outside the loader" —
+    /// the hash confirms the unchanged content. The prefilter cache is
+    /// refreshed anyway, so that future runs do not hash again.
     #[test]
     fn detect_altered_refreshes_the_cache_on_a_false_positive_from_the_cheap_prefilter() {
         let dir = tempfile::tempdir().unwrap();
@@ -603,28 +598,28 @@ mod tests {
 
         let mut lib = Library::default();
         let mut stale = info_matching("a.pak", &metadata, &hash);
-        // Absichtlich veraltete Änderungszeit, wie sie ein `touch` oder eine
-        // erneute Kopie mit unverändertem Inhalt hinterlassen könnte.
+        // Deliberately stale modification time, of the kind a `touch` or
+        // another copy with unchanged content could leave behind.
         stale.mtime = stale.mtime.map(|t| t.saturating_sub(3600));
         lib.mods.insert("a.pak".into(), stale);
 
         let report = lib.detect_altered(dir.path(), &["a.pak".into()]).unwrap();
 
-        assert!(report.altered.is_empty(), "unveränderter Inhalt darf nicht als verändert gelten");
-        assert!(report.cache_refreshed, "eine Vorfilter-Auffrischung muss gemeldet werden (2)");
+        assert!(report.altered.is_empty(), "unchanged content must not count as altered");
+        assert!(report.cache_refreshed, "a prefilter refresh has to be reported (2)");
         assert_eq!(
             lib.mods["a.pak"].mtime, metadata.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()),
-            "der Vorfilter-Cache muss nach der Bestätigung aufgefrischt werden"
+            "the prefilter cache has to be refreshed after the confirmation"
         );
     }
 
-    /// Simuliert genau das Szenario aus Review-Punkt 2: ein `library.json`
-    /// von vor `ModInfo::mtime` deserialisiert dieses Feld als `None` (siehe
-    /// `#[serde(default)]`), während die echte Datei ein tatsächliches
-    /// `mtime` hat. Ohne `cache_refreshed` würde das bei jedem einzelnen
-    /// Aufruf – auch rein lesenden Befehlen wie `list`/`paths` – erneut zu
-    /// einem vollständigen Hash führen, unbegrenzt oft, weil `library.json`
-    /// von diesen Befehlen nie neu geschrieben wird.
+    /// Simulates exactly the scenario from review item 2: a `library.json`
+    /// that predates `ModInfo::mtime` deserializes that field as `None` (see
+    /// `#[serde(default)]`), while the real file does have an actual
+    /// `mtime`. Without `cache_refreshed` that would lead to a full hash on
+    /// every single call — read-only commands such as `list`/`paths`
+    /// included — without limit, because those commands never rewrite
+    /// `library.json`.
     #[test]
     fn detect_altered_reports_cache_refresh_for_a_pre_mtime_library_entry() {
         let dir = tempfile::tempdir().unwrap();
@@ -634,24 +629,24 @@ mod tests {
         let mut lib = Library::default();
         let mut legacy = info("a.pak", &hash);
         legacy.size = metadata.len();
-        legacy.mtime = None; // wie ein Alt-Eintrag ohne dieses Feld
+        legacy.mtime = None; // like a legacy entry without this field
         lib.mods.insert("a.pak".into(), legacy);
 
         let first_run = lib.detect_altered(dir.path(), &["a.pak".into()]).unwrap();
         assert!(first_run.altered.is_empty());
-        assert!(first_run.cache_refreshed, "fehlendes mtime muss als Vorfilter-Abweichung erkannt werden");
+        assert!(first_run.cache_refreshed, "a missing mtime has to count as a prefilter mismatch");
 
-        // Nach dem (simulierten) Neuschreiben von library.json greift der
-        // Vorfilter jetzt wieder: kein zweiter Hash-Versuch nötig.
+        // After the (simulated) rewrite of library.json the prefilter now
+        // works again: no second hash attempt needed.
         let second_run = lib.detect_altered(dir.path(), &["a.pak".into()]).unwrap();
         assert!(second_run.altered.is_empty());
-        assert!(!second_run.cache_refreshed, "der Vorfilter muss beim zweiten Lauf bereits greifen");
+        assert!(!second_run.cache_refreshed, "the prefilter has to take effect on the second run already");
     }
 
-    /// Item 3: ein einzelnes unlesbares Pak darf die gesamte Prüfung nicht
-    /// scheitern lassen (das würde selbst `sm2 paths` betreffen, das nie
-    /// Pak-Inhalte liest) – Spec §6.3 beschreibt diesen Fall als Markierung,
-    /// nicht als hartes Erfordernis.
+    /// Item 3: a single unreadable pak must not make the whole verification
+    /// fail (that would even hit `sm2 paths`, which never reads pak
+    /// contents) — Spec §6.3 describes this case as a marker, not as a hard
+    /// requirement.
     #[cfg(unix)]
     #[test]
     fn detect_altered_warns_instead_of_failing_on_an_unreadable_pak() {
@@ -662,9 +657,9 @@ mod tests {
         write_pak(dir.path(), "a.pak", b"INHALT");
 
         let mut lib = Library::default();
-        // Größe/Hash weichen bewusst vom billigen Vorfilter ab, damit der
-        // Codepfad tatsächlich bis zum (dann scheiternden) Hash-Versuch
-        // kommt, statt schon vorher überzuspringen.
+        // Size and hash deliberately disagree with the cheap prefilter, so
+        // that the code path really reaches the (then failing) hash attempt
+        // instead of skipping out before it.
         let mut mismatched = info("a.pak", "irrelevant");
         mismatched.size = 0;
         mismatched.mtime = None;
@@ -673,7 +668,7 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
         if std::fs::read(&path).is_ok() {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-            eprintln!("übersprungen: Prozess kann Leserechte offenbar übergehen (root?)");
+            eprintln!("skipped: this process can apparently bypass read permissions (root?)");
             return;
         }
 
@@ -681,16 +676,16 @@ mod tests {
 
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
 
-        let report = result.expect("ein unlesbares Pak darf die Prüfung nicht scheitern lassen");
-        assert!(report.altered.is_empty(), "ohne lesbaren Inhalt kann nichts als verändert gelten");
-        assert_eq!(report.warnings.len(), 1, "die Nichtlesbarkeit muss als Warnung sichtbar werden");
+        let report = result.expect("an unreadable pak must not make the verification fail");
+        assert!(report.altered.is_empty(), "without readable content nothing can count as altered");
+        assert_eq!(report.warnings.len(), 1, "the unreadability has to become visible as a warning");
         assert!(report.warnings[0].contains("a.pak"));
     }
 
-    /// Eine Datei, die laut Aufrufer vorhanden sein sollte, aber (z. B. in
-    /// einer seltenen Race-Bedingung zwischen `list_paks` und diesem Aufruf)
-    /// nicht mehr gelesen werden kann, darf `detect_altered` nicht scheitern
-    /// lassen – dieser Fall gehört `PakConfig::reconcile`s `removed`.
+    /// A file the caller says should be there but that can no longer be read
+    /// (e.g. in a rare race between `list_paks` and this call) must not make
+    /// `detect_altered` fail — that case belongs to
+    /// `PakConfig::reconcile`'s `removed`.
     #[test]
     fn detect_altered_skips_a_pak_that_disappeared_since_being_listed() {
         let dir = tempfile::tempdir().unwrap();
@@ -702,12 +697,12 @@ mod tests {
         assert!(report.altered.is_empty());
     }
 
-    // --- last_known_position: Option statt usize (Review-Punkt 4) --------
+    // --- last_known_position: Option instead of usize (review item 4) ----
 
-    /// Ein `library.json` von vor `last_known_position` lässt das Feld ganz
-    /// weg – nicht nur mit dem Wert 0. Deserialisiert es zu `Some(0)` statt
-    /// `None`, würde ein solcher Alt-Eintrag beim nächsten `reconcile` nach
-    /// einem Wiederauftauchen fälschlich an die erste Position springen.
+    /// A `library.json` from before `last_known_position` omits the field
+    /// entirely — it does not merely carry the value 0. If it deserialized
+    /// to `Some(0)` instead of `None`, such a legacy entry would wrongly
+    /// jump to the first position on the next `reconcile` after reappearing.
     #[test]
     fn legacy_json_without_last_known_position_yields_none_not_zero() {
         let dir = tempfile::tempdir().unwrap();
@@ -722,7 +717,7 @@ mod tests {
 
         assert_eq!(
             lib.mods["a.pak"].last_known_position, None,
-            "fehlende Historie darf nicht als Position 0 erscheinen"
+            "a missing history must not show up as position 0"
         );
         assert!(!lib.mods["a.pak"].last_known_disabled);
     }

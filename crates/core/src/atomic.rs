@@ -2,9 +2,9 @@ use crate::error::{Error, Result};
 use std::io::Write;
 use std::path::Path;
 
-/// Schreibt `contents` nach `path`, ohne dass ein Abbruch eine
-/// unvollständige Datei hinterlassen kann: temporäre Datei im selben
-/// Verzeichnis, fsync, dann rename. Rename ist auf POSIX atomar.
+/// Writes `contents` to `path` in a way that an abort cannot leave an
+/// incomplete file behind: a temporary file in the same directory, fsync,
+/// then rename. Rename is atomic on POSIX.
 pub fn write_atomic(path: &Path, contents: &str) -> Result<()> {
     let dir = path.parent().ok_or_else(|| {
         Error::io(path, std::io::Error::new(
@@ -36,7 +36,7 @@ mod tests {
 
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "- pak: a.pak\n");
         let entries: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
-        assert_eq!(entries.len(), 1, "temporäre Datei wurde nicht aufgeräumt");
+        assert_eq!(entries.len(), 1, "the temporary file was not cleaned up");
     }
 
     #[test]
