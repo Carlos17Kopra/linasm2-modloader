@@ -42,6 +42,7 @@ mod top_bar;
 mod widgets;
 
 use crate::app_state::{self, AppState};
+use sm2_core::i18n::Language;
 use sm2_core::launch;
 use sm2_core::library::ModInfo;
 use sm2_core::pak_config::PakEntry;
@@ -105,20 +106,24 @@ impl LaunchChoice {
 /// An open modal window.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Dialog {
-    /// "Wiederherstellen, obwohl Steam läuft?" — this is the only dialog
-    /// that can overwrite savegames, which is why it hangs off a
-    /// confirmation toggle of its own.
+    /// The "restore despite Steam running?" dialog
+    /// (`gui.dialog.restore_title`) — this is the only dialog that can
+    /// overwrite savegames, which is why it hangs off a confirmation
+    /// toggle of its own.
     Restore { index: usize, force: bool },
-    /// "Ohne Mods starten?"
+    /// The "launch without mods?" dialog (`gui.dialog.vanilla_title`).
     Vanilla,
-    /// "Steam-Nutzerprofil wählen"
+    /// The "choose Steam user profile" dialog
+    /// (`gui.dialog.steam_user_title`).
     SteamUser { picked: Option<String> },
-    /// "Profil löschen?"
+    /// The "choose language" dialog (`gui.dialog.language_title`).
+    Language { picked: Option<Language> },
+    /// The "delete profile?" dialog (`gui.dialog.delete_profile_title`).
     DeleteProfile { name: String },
-    /// "Backup umbenennen" — the label is what lets you recognise a backup
-    /// again later on.
+    /// The "rename backup" dialog (`gui.dialog.rename_backup_title`) — the
+    /// label is what lets you recognise a backup again later on.
     RenameBackup { index: usize, label: String },
-    /// "Backup löschen?"
+    /// The "delete backup?" dialog (`gui.dialog.delete_backup_title`).
     DeleteBackup { index: usize },
 }
 
@@ -211,6 +216,9 @@ pub enum Action {
     OpenSteamUserDialog,
     PickSteamUser(String),
     ConfirmSteamUser,
+    OpenLanguageDialog,
+    PickLanguage(Language),
+    ConfirmLanguage,
     ToggleAutoBackup,
     CloseDialog,
     DismissNotice(usize),
@@ -562,6 +570,15 @@ impl App {
                 }
             }
             Action::ConfirmSteamUser => self.confirm_steam_user(),
+            Action::OpenLanguageDialog => {
+                self.dialog = Some(Dialog::Language { picked: Some(self.settings().language()) });
+            }
+            Action::PickLanguage(language) => {
+                if let Some(Dialog::Language { picked }) = &mut self.dialog {
+                    *picked = Some(language);
+                }
+            }
+            Action::ConfirmLanguage => self.confirm_language(),
             Action::ToggleAutoBackup => self.toggle_auto_backup(),
             Action::CloseDialog => self.dialog = None,
             Action::DismissToast(id) => self.toasts.dismiss(id),
@@ -706,6 +723,14 @@ impl App {
 fn drop_target(from: usize, before: usize) -> Option<usize> {
     let to = if from < before { before.checked_sub(1)? } else { before };
     (to != from).then_some(to)
+}
+
+/// Writes the chosen language into the settings and switches the running
+/// program over. Separate from the dialog so that it can be tested
+/// without a window.
+fn apply_language(settings: &mut Settings, language: Language) {
+    settings.language = Some(language.code().to_string());
+    sm2_core::i18n::set_language(language);
 }
 
 impl eframe::App for App {
@@ -1031,5 +1056,19 @@ mod tests {
         // Seven entries, the first pak going to the end: the marker sits
         // at 7.
         assert_eq!(drop_target(0, 7), Some(6));
+    }
+
+    /// The picker's job in one line: remember the choice and switch the
+    /// program over. Everything else about it is painting.
+    #[test]
+    fn confirming_a_language_stores_the_code_and_switches_over() {
+        let _held = language_test_lock();
+        let mut settings = Settings::default();
+
+        apply_language(&mut settings, Language::German);
+
+        assert_eq!(settings.language.as_deref(), Some("de"));
+        assert_eq!(sm2_core::i18n::language(), Language::German);
+        sm2_core::i18n::set_language(Language::English);
     }
 }

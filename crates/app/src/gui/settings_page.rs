@@ -188,7 +188,7 @@ fn path_rows(app: &App) -> Vec<PathRow> {
 }
 
 fn behaviour(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
-    let height = 44.0 + 56.0 + 56.0 + 62.0;
+    let height = 44.0 + 56.0 + 56.0 + 56.0 + 62.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
     super::draw_card(ui, rect);
     card_title(ui, rect, &t!("gui.settings.behaviour_title"));
@@ -288,9 +288,40 @@ fn behaviour(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         actions.push(Action::OpenSteamUserDialog);
     }
 
+    // Language of the interface.
+    let language = Rect::from_min_size(
+        Pos2::new(rect.left(), user.bottom()),
+        Vec2::new(rect.width(), 56.0),
+    );
+    ui.painter().hline(language.x_range(), language.bottom(), Stroke::new(1.0, color::BORDER_ROW));
+    let inner = language.shrink2(Vec2::new(metric::CARD_PADDING, 0.0));
+    ui.painter().text(
+        Pos2::new(inner.left(), inner.center().y),
+        Align2::LEFT_CENTER,
+        t!("gui.settings.language"),
+        sans(12.5),
+        color::TEXT_STRONG,
+    );
+    let mut language_button = ui.new_child(
+        UiBuilder::new()
+            .max_rect(inner)
+            .layout(egui::Layout::right_to_left(egui::Align::Center)),
+    );
+    if widgets::button(
+        &mut language_button,
+        &ButtonStyle::ghost().small(),
+        None,
+        app.settings().language().native_name(),
+        true,
+    )
+    .clicked()
+    {
+        actions.push(Action::OpenLanguageDialog);
+    }
+
     // Availability of the start without EAC.
     let eac = Rect::from_min_size(
-        Pos2::new(rect.left(), user.bottom()),
+        Pos2::new(rect.left(), language.bottom()),
         Vec2::new(rect.width(), 62.0),
     );
     let inner = eac.shrink2(Vec2::new(metric::CARD_PADDING, 0.0));

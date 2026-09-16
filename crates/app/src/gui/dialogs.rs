@@ -11,6 +11,7 @@ use super::{Action, App, Dialog};
 use egui::{
     Align2, Color32, CornerRadius, Frame, Margin, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2,
 };
+use sm2_core::i18n::Language;
 use sm2_core::t;
 
 pub fn show(app: &App, ctx: &egui::Context, actions: &mut Vec<Action>) {
@@ -20,6 +21,7 @@ pub fn show(app: &App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         Dialog::Restore { .. } => 580.0,
         Dialog::Vanilla => 540.0,
         Dialog::SteamUser { .. } => 490.0,
+        Dialog::Language { .. } => 490.0,
         Dialog::DeleteProfile { .. } => 450.0,
         Dialog::RenameBackup { .. } => 460.0,
         Dialog::DeleteBackup { .. } => 470.0,
@@ -45,6 +47,7 @@ pub fn show(app: &App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                 Dialog::Restore { index, force } => restore(app, ui, *index, *force, actions),
                 Dialog::Vanilla => vanilla(app, ui, actions),
                 Dialog::SteamUser { picked } => steam_user(app, ui, picked.as_deref(), actions),
+                Dialog::Language { picked } => language(ui, *picked, actions),
                 Dialog::DeleteProfile { name } => delete_profile(ui, name, actions),
                 Dialog::RenameBackup { index, label } => {
                     rename_backup(app, ui, *index, label, actions)
@@ -295,6 +298,58 @@ fn steam_user(app: &App, ui: &mut Ui, picked: Option<&str>, actions: &mut Vec<Ac
                 .clicked()
             {
                 actions.push(Action::ConfirmSteamUser);
+            }
+            if widgets::button(ui, &ButtonStyle::neutral(), None, &t!("gui.dialog.cancel"), true)
+                .clicked()
+            {
+                actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
+/// The "choose language" dialog (`gui.dialog.language_title`).
+fn language(ui: &mut Ui, picked: Option<Language>, actions: &mut Vec<Action>) {
+    header(ui, &t!("gui.dialog.language_title"), false, actions);
+    body(ui, |ui| {
+        paragraph(ui, &t!("gui.dialog.language_body"));
+
+        ui.spacing_mut().item_spacing.y = 6.0;
+        for candidate in Language::ALL {
+            let selected = picked == Some(candidate);
+            let (rect, response) =
+                ui.allocate_exact_size(Vec2::new(ui.available_width(), 38.0), Sense::click());
+
+            let painter = ui.painter();
+            let radius = CornerRadius::same(9);
+            painter.rect_filled(rect, radius, if selected { color::SELECTED } else { color::INPUT });
+            let border = if selected || response.hovered() { color::ACCENT } else { color::BORDER };
+            painter.rect_stroke(rect, radius, Stroke::new(1.0, border), StrokeKind::Inside);
+
+            super::icons::radio(
+                painter,
+                Pos2::new(rect.left() + 12.0 + 7.0, rect.center().y),
+                if selected { color::ACCENT } else { color::BORDER_HOVER },
+                if selected { color::ACCENT } else { Color32::TRANSPARENT },
+            );
+            painter.text(
+                Pos2::new(rect.left() + 12.0 + 14.0 + 11.0, rect.center().y),
+                Align2::LEFT_CENTER,
+                candidate.native_name(),
+                sans(12.5),
+                color::TEXT_STRONG,
+            );
+
+            if response.clicked() {
+                actions.push(Action::PickLanguage(candidate));
+            }
+        }
+
+        footer(ui, |ui| {
+            if widgets::button(ui, &ButtonStyle::primary(), None, &t!("gui.dialog.apply"), picked.is_some())
+                .clicked()
+            {
+                actions.push(Action::ConfirmLanguage);
             }
             if widgets::button(ui, &ButtonStyle::neutral(), None, &t!("gui.dialog.cancel"), true)
                 .clicked()

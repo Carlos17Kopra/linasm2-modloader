@@ -248,6 +248,23 @@ impl App {
         self.set_status(t!("gui.message.steam_user_set", user = &user));
     }
 
+    /// Both settings copies get the new value, the same way
+    /// `confirm_steam_user` and `toggle_auto_backup` do it — otherwise a
+    /// later `load()` would read the pre-switch language back out of
+    /// `state.settings` and undo the switch on the next redraw.
+    pub(super) fn confirm_language(&mut self) {
+        let Some(Dialog::Language { picked }) = self.dialog.clone() else { return };
+        self.dialog = None;
+        let Some(language) = picked else { return };
+
+        super::apply_language(&mut self.fallback_settings, language);
+        if let Some(state) = &mut self.state {
+            state.settings.language = Some(language.code().to_string());
+        }
+        self.save_settings();
+        self.set_status(t!("gui.message.language_changed", name = language.native_name()));
+    }
+
     pub(super) fn toggle_auto_backup(&mut self) {
         let next = !self.settings().auto_backup;
         self.fallback_settings.auto_backup = next;
