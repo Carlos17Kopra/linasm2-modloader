@@ -1,9 +1,11 @@
 //! Command line interface: definition and execution of all subcommands.
 
 use crate::app_state::{AppState, NoticeKind};
+use crate::cli_help;
 use crate::vanilla;
 use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use sm2_core::i18n::{self, Language};
 use sm2_core::launch::{launch, no_eac_available, LaunchMode};
 use sm2_core::pak_config::PakEntry;
 use sm2_core::paths::GamePaths;
@@ -15,43 +17,65 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "sm2-modloader", about = "Mod-Loader für Space Marine 2", version)]
+#[command(name = "sm2-modloader", version)]
 pub struct Cli {
+    /// Language for this run (en, de); overrides the setting
+    #[arg(long, global = true, value_name = "CODE")]
+    lang: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
-    /// Zeigt alle Mods in Ladereihenfolge
+    /// Lists every mod in load order
     List,
-    /// Aktiviert einen Mod
-    Enable { pak: String },
-    /// Deaktiviert einen Mod
-    Disable { pak: String },
-    /// Setzt die Ladereihenfolge; nicht genannte Mods behalten ihre Position dahinter
-    Order { paks: Vec<String> },
-    /// Importiert Mods aus .pak, .zip, .7z oder .rar
-    Install { files: Vec<PathBuf> },
-    /// Zeigt die erkannten Verzeichnisse
+    /// Enables a mod
+    Enable {
+        /// Name of the mod's .pak file
+        pak: String,
+    },
+    /// Disables a mod
+    Disable {
+        /// Name of the mod's .pak file
+        pak: String,
+    },
+    /// Sets the load order; mods not named keep their relative position
+    /// behind the named ones
+    Order {
+        /// Paks in the desired order, first named = loaded first
+        paks: Vec<String>,
+    },
+    /// Imports mods from .pak, .zip, .7z or .rar
+    Install {
+        /// Files to import
+        files: Vec<PathBuf>,
+    },
+    /// Shows the detected directories
     Paths,
-    /// Öffnet ein Verzeichnis im Dateimanager
+    /// Opens a directory in the file manager
     Open {
+        /// Directory to open
         #[arg(value_enum)]
         target: OpenTarget,
     },
-    /// Profile verwalten
+    /// Manages profiles
     #[command(subcommand)]
     Profile(ProfileCommand),
-    /// Savegames sichern und wiederherstellen
+    /// Backs up and restores savegames
     #[command(subcommand)]
     Save(SaveCommand),
-    /// Startet das Spiel
+    /// Shows or sets the language
+    Lang {
+        /// Language code (en, de); without one the current setting is shown
+        code: Option<String>,
+    },
+    /// Starts the game
     Play {
-        /// Alle Mods deaktivieren
+        /// Disables every mod
         #[arg(long)]
         vanilla: bool,
-        /// Ohne EAC starten (kein Multiplayer)
+        /// Starts without EAC (no multiplayer)
         #[arg(long)]
         no_eac: bool,
     },
@@ -59,98 +83,127 @@ enum Command {
 
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum OpenTarget {
-    /// Spielverzeichnis
+    /// Game directory
     Game,
-    /// Mods-Verzeichnis
+    /// Mods directory
     Mods,
-    /// Savegame-Verzeichnis im Proton-Prefix
+    /// Savegame directory in the Proton prefix
     Saves,
-    /// Backup-Verzeichnis des Loaders
+    /// The loader's backup directory
     Backups,
 }
 
 #[derive(Subcommand)]
 enum ProfileCommand {
+    /// Lists the saved profiles
     List,
-    /// Speichert den aktuellen Zustand als Profil
-    Save { name: String },
-    /// Wendet ein Profil an
-    Apply { name: String },
-    /// Löscht ein Profil
-    Delete { name: String },
+    /// Saves the current state as a profile
+    Save {
+        /// Profile name
+        name: String,
+    },
+    /// Applies a profile
+    Apply {
+        /// Profile name
+        name: String,
+    },
+    /// Deletes a profile
+    Delete {
+        /// Profile name
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]
 enum SaveCommand {
-    /// Legt ein Backup an
+    /// Creates a backup
     Backup {
+        /// Label for the backup
         #[arg(long)]
         tag: Option<String>,
     },
+    /// Lists the backups present
     List,
-    /// Stellt ein Backup wieder her (Standard: das neueste)
+    /// Restores a backup (default: the newest one)
     Restore {
-        /// 1-basierter Index aus `save list` (Standard: 1, das neueste)
+        /// 1-based index from `save list` (default: 1, the newest)
         #[arg(long)]
         index: Option<usize>,
         // `--index` shifts with every restore because `restore` itself
         // creates a new "before restore" backup (see `run_save_command`'s
         // doc comment). `--at`, by contrast, stays unambiguous no matter
         // how often you restore.
-        /// Exakter Zeitstempel aus `save list` – eindeutig, verschiebt sich
-        /// anders als `--index` nicht durch spätere Wiederherstellungen
+        /// Exact timestamp from `save list` – unambiguous, unlike
+        /// `--index` it does not shift with later restores
         #[arg(long, conflicts_with = "index")]
         at: Option<String>,
         // Spec §6.5/§9 R2: cloud synchronization can overwrite the restored
         // state in the background. Refusing is therefore the default,
         // `--force` is the deliberate exception.
-        /// Erzwingt die Wiederherstellung trotz laufendem Steam (Risiko:
-        /// Cloud-Synchronisation kann den Stand überschreiben)
+        /// Forces the restore despite Steam running (risk: cloud
+        /// synchronisation can overwrite the state)
         #[arg(long)]
         force: bool,
     },
-    /// Importiert ein Backup aus einem anderen Launcher: eine ZIP-Datei
-    /// mit den Savegame-Dateien darin
+    /// Imports a backup from another launcher: a ZIP holding the
+    /// savegame files
     Import {
-        /// Pfad zur ZIP-Datei
+        /// Path to the ZIP file
         archive: PathBuf,
-        /// Etikett für das importierte Backup; ohne Angabe wird der
-        /// Dateiname des Archivs verwendet
+        /// Label for the imported backup; without one the archive's file
+        /// name is used
         #[arg(long)]
         tag: Option<String>,
     },
-    /// Ändert das Etikett eines Backups (Standard: das neueste)
+    /// Changes a backup's label (default: the newest one)
     Rename {
-        /// 1-basierter Index aus `save list` (Standard: 1, das neueste)
+        /// 1-based index from `save list` (default: 1, the newest)
         #[arg(long)]
         index: Option<usize>,
-        /// Exakter Zeitstempel aus `save list`
+        /// Exact timestamp from `save list`
         #[arg(long, conflicts_with = "index")]
         at: Option<String>,
-        /// Neues Etikett; ohne Angabe wird das Etikett entfernt
+        /// New label; without one the label is removed
         #[arg(long)]
         tag: Option<String>,
     },
-    /// Löscht ein Backup endgültig (Standard: das neueste)
+    /// Deletes a backup for good (default: the newest one)
     Delete {
-        /// 1-basierter Index aus `save list` (Standard: 1, das neueste)
+        /// 1-based index from `save list` (default: 1, the newest)
         #[arg(long)]
         index: Option<usize>,
-        /// Exakter Zeitstempel aus `save list`
+        /// Exact timestamp from `save list`
         #[arg(long, conflicts_with = "index")]
         at: Option<String>,
         // A deleted backup is gone for good. Unlike `restore`, there is no
         // backup here that could undo the step. That is why even the
         // non-interactive path requires an explicit confirmation.
-        /// Bestätigt das endgültige Löschen (erforderlich)
+        /// Confirms the permanent deletion (required)
         #[arg(long)]
         yes: bool,
     },
 }
 
 pub fn run() -> Result<()> {
-    let cli = Cli::parse();
+    let args: Vec<String> = std::env::args().collect();
+
+    // The language has to be right *before* parsing, because `--help` is
+    // answered during it. `--lang` wins over the setting. The settings
+    // file is read here and again in `AppState::open()` below: reading a
+    // small TOML file twice is cheaper than parsing the arguments twice,
+    // which is the only other way to learn about `--lang` this early.
+    let stored = crate::app_state::load_dirs_and_settings()
+        .map(|(_, settings)| settings.language())
+        .unwrap_or_default();
+    let effective = cli_help::language_from_args(&args).unwrap_or(stored);
+    i18n::set_language(effective);
+
+    let cli = Cli::from_arg_matches(&cli_help::localize(Cli::command(), "cli").get_matches_from(args))?;
+
     let mut state = AppState::open()?;
+    // `AppState::open` applies the language from the settings file; `--lang`
+    // wins over it for this run.
+    i18n::set_language(effective);
     // Notices from the reconciliation first, so they come before the actual
     // command's own output — just as before, when `AppState::open()` still
     // wrote them to stderr itself.
@@ -237,6 +290,8 @@ fn run_command(state: &mut AppState, command: Command) -> Result<()> {
 
         Command::Profile(cmd) => run_profile_command(state, cmd)?,
         Command::Save(cmd) => run_save_command(state, cmd)?,
+
+        Command::Lang { code } => run_lang_command(state, code)?,
 
         Command::Play { vanilla, no_eac } => run_play(state, vanilla, no_eac)?,
     }
@@ -546,6 +601,30 @@ fn run_save_command_with(state: &AppState, cmd: SaveCommand, steam_running: impl
     Ok(())
 }
 
+/// Shows the active language and every option (no code given), or switches
+/// to the given one and persists it to `settings.toml` so later runs keep
+/// using it.
+fn run_lang_command(state: &mut AppState, code: Option<String>) -> Result<()> {
+    match code {
+        None => {
+            println!("{}", t!("cli.lang.current", name = i18n::language().native_name()));
+            for language in Language::ALL {
+                println!("  {}  {}", language.code(), language.native_name());
+            }
+        }
+        Some(code) => {
+            let Some(language) = Language::from_code(&code) else {
+                bail!(t!("cli.lang.unknown", code = code));
+            };
+            state.settings.language = Some(language.code().to_string());
+            state.settings.save(&state.dirs.config.join("settings.toml"))?;
+            i18n::set_language(language);
+            println!("{}", t!("cli.lang.set", name = language.native_name()));
+        }
+    }
+    Ok(())
+}
+
 /// Resolves the 1-based backup index supplied by the user (omitted: the
 /// newest backup, i.e. 1) to a 0-based vector index.
 ///
@@ -687,7 +766,7 @@ fn run_play_with(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_state::test_fixture;
+    use crate::app_state::{language_test_lock, test_fixture};
     use clap::CommandFactory;
 
     #[test]
@@ -735,10 +814,12 @@ mod tests {
 
     #[test]
     fn run_order_rejects_a_repeated_name() {
-        // `language_test_lock` is not reachable from this crate (it stays
-        // `pub(crate)` to sm2-core) — safe without it regardless, because no
-        // other test in this binary ever flips the language away from the
-        // default.
+        // `sm2_core::i18n::language_test_lock` is not reachable from this
+        // crate (it stays `pub(crate)` to sm2-core); this crate's own
+        // `language_test_lock` guards every language-flipping test here
+        // instead, since `CURRENT` is one process-wide static shared by the
+        // whole test binary.
+        let _held = language_test_lock();
         sm2_core::i18n::set_language(sm2_core::i18n::Language::English);
         let tmp = tempfile::tempdir().unwrap();
         let mut state = test_fixture(tmp.path());
@@ -753,6 +834,7 @@ mod tests {
 
     #[test]
     fn run_order_rejects_an_unknown_pak() {
+        let _held = language_test_lock();
         sm2_core::i18n::set_language(sm2_core::i18n::Language::English);
         let tmp = tempfile::tempdir().unwrap();
         let mut state = test_fixture(tmp.path());
@@ -1134,6 +1216,7 @@ mod tests {
 
     #[test]
     fn profile_delete_reports_a_clear_error_for_an_unknown_name() {
+        let _held = language_test_lock();
         sm2_core::i18n::set_language(sm2_core::i18n::Language::English);
         let tmp = tempfile::tempdir().unwrap();
         let mut state = test_fixture(tmp.path());
@@ -1142,6 +1225,53 @@ mod tests {
             .unwrap_err();
 
         assert!(err.to_string().contains("not found"), "{err}");
+    }
+
+    // --- run_lang_command --------------------------------------------------
+
+    #[test]
+    fn run_lang_command_without_a_code_leaves_settings_untouched() {
+        let _held = language_test_lock();
+        sm2_core::i18n::set_language(sm2_core::i18n::Language::English);
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+
+        run_lang_command(&mut state, None).unwrap();
+
+        assert!(state.settings.language.is_none(), "listing the languages must not change the setting");
+        assert!(!state.dirs.config.join("settings.toml").exists(), "nothing must be written to disk");
+    }
+
+    #[test]
+    fn run_lang_command_switches_and_persists_the_chosen_language() {
+        let _held = language_test_lock();
+        sm2_core::i18n::set_language(sm2_core::i18n::Language::English);
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+
+        run_lang_command(&mut state, Some("de".into())).unwrap();
+
+        assert_eq!(state.settings.language.as_deref(), Some("de"));
+        assert_eq!(i18n::language(), Language::German);
+        let saved =
+            sm2_core::settings::Settings::load(&state.dirs.config.join("settings.toml")).unwrap();
+        assert_eq!(saved.language.as_deref(), Some("de"), "the choice must survive a reload");
+
+        // Leave the global language as every other test here expects it.
+        sm2_core::i18n::set_language(sm2_core::i18n::Language::English);
+    }
+
+    #[test]
+    fn run_lang_command_rejects_an_unknown_code() {
+        let _held = language_test_lock();
+        sm2_core::i18n::set_language(sm2_core::i18n::Language::English);
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = test_fixture(tmp.path());
+
+        let err = run_lang_command(&mut state, Some("xx".into())).unwrap_err();
+
+        assert!(err.to_string().contains("xx"), "{err}");
+        assert!(!state.dirs.config.join("settings.toml").exists(), "an unknown code must not be persisted");
     }
 
     // --- run_play_with (2c/2f: auto backup for --vanilla, injectable -----

@@ -1,5 +1,6 @@
 mod app_state;
 mod cli;
+mod cli_help;
 mod gui;
 mod vanilla;
 

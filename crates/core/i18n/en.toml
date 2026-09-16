@@ -1,3 +1,13 @@
+[cli]
+about = "Mod loader for Space Marine 2"
+
+[cli.arg]
+lang = "Language for this run (en, de); overrides the setting"
+
+[cli.built_in]
+help = "Print help"
+version = "Print version"
+
 [app.notice]
 unknown_language = "Unknown language '{code}' in the settings – falling back to English"
 
@@ -17,25 +27,43 @@ delete_failed = "{path} could not be deleted"
 tmp_dir_failed = "temporary directory could not be created"
 
 [cli.list]
+about = "Lists every mod in load order"
 none_installed = "No mods installed."
 
 [cli.enable]
+about = "Enables a mod"
 done = "✓ {pak} enabled"
 
+[cli.enable.arg]
+pak = "Name of the mod's .pak file"
+
 [cli.disable]
+about = "Disables a mod"
 done = "✓ {pak} disabled"
 
+[cli.disable.arg]
+pak = "Name of the mod's .pak file"
+
 [cli.order]
+about = "Sets the load order; mods not named keep their relative position behind the named ones"
 none_given = "No paks given."
 duplicate_name = "{name} was named more than once"
 done = "✓ Load order set"
 
+[cli.order.arg]
+paks = "Paks in the desired order, first named = loaded first"
+
 [cli.install]
+about = "Imports mods from .pak, .zip, .7z or .rar"
 none_given = "No files given."
 duplicate = "– {pak} is identical to {existing}, skipped"
 done = "✓ {pak} imported (disabled)"
 
+[cli.install.arg]
+files = "Files to import"
+
 [cli.paths]
+about = "Shows the detected directories"
 game = "Game:    {path}"
 mods = "Mods:    {path}"
 config = "Config:  {path}"
@@ -43,7 +71,14 @@ saves = "Saves:   {path}"
 saves_unavailable = "Saves:   not available – {detail}"
 backups = "Backups: {path}"
 
+[cli.open]
+about = "Opens a directory in the file manager"
+
+[cli.open.arg]
+target = "Directory to open"
+
 [cli.profile]
+about = "Manages profiles"
 none_saved = "No profiles saved."
 list_entry = "{name}  ({active} active of {total})"
 saved = "✓ Profile '{name}' saved: {path}"
@@ -53,7 +88,29 @@ deleted = "✓ Profile '{name}' deleted ({path})"
 not_found = "Profile '{name}' not found"
 ambiguous = "several profiles match '{name}' and differ only in capitalization ({names}). Please give the exact name."
 
+[cli.profile.list]
+about = "Lists the saved profiles"
+
+[cli.profile.save]
+about = "Saves the current state as a profile"
+
+[cli.profile.save.arg]
+name = "Profile name"
+
+[cli.profile.apply]
+about = "Applies a profile"
+
+[cli.profile.apply.arg]
+name = "Profile name"
+
+[cli.profile.delete]
+about = "Deletes a profile"
+
+[cli.profile.delete.arg]
+name = "Profile name"
+
 [cli.save]
+about = "Backs up and restores savegames"
 backup_done = "✓ Backup: {path}"
 none_present = "No backups present."
 no_backups = "no backups present"
@@ -71,7 +128,57 @@ index_too_low = "index must be at least 1 (1 = newest backup)"
 index_out_of_range = "backup {requested} does not exist ({count} present)"
 timestamp_not_found = "no backup with timestamp '{timestamp}' found"
 
+[cli.save.backup]
+about = "Creates a backup"
+
+[cli.save.backup.arg]
+tag = "Label for the backup"
+
+[cli.save.list]
+about = "Lists the backups present"
+
+[cli.save.restore]
+about = "Restores a backup (default: the newest one)"
+
+[cli.save.restore.arg]
+index = "1-based index from `save list` (default: 1, the newest)"
+at = "Exact timestamp from `save list` – unambiguous, unlike `--index` it does not shift with later restores"
+force = "Forces the restore despite Steam running (risk: cloud synchronisation can overwrite the state)"
+
+[cli.save.import]
+about = "Imports a backup from another launcher: a ZIP holding the savegame files"
+
+[cli.save.import.arg]
+archive = "Path to the ZIP file"
+tag = "Label for the imported backup; without one the archive's file name is used"
+
+[cli.save.rename]
+about = "Changes a backup's label (default: the newest one)"
+
+[cli.save.rename.arg]
+index = "1-based index from `save list` (default: 1, the newest)"
+at = "Exact timestamp from `save list`"
+tag = "New label; without one the label is removed"
+
+[cli.save.delete]
+about = "Deletes a backup for good (default: the newest one)"
+
+[cli.save.delete.arg]
+index = "1-based index from `save list` (default: 1, the newest)"
+at = "Exact timestamp from `save list`"
+yes = "Confirms the permanent deletion (required)"
+
+[cli.lang]
+about = "Shows or sets the language"
+current = "Current language: {name}"
+unknown = "Unknown language code: {code}"
+set = "✓ Language set to {name}"
+
+[cli.lang.arg]
+code = "Language code (en, de); without one the current setting is shown"
+
 [cli.play]
+about = "Starts the game"
 no_eac_unavailable = "Starting without EAC is not possible on this system – umu-launcher was not found (https://github.com/Open-Wine-Components/umu-launcher)."
 vanilla_snapshot = "Note: previous state saved as profile '{name}' ({path})."
 vanilla_snapshot_hint = "  Restore with `profile apply \"{name}\"`."
@@ -83,6 +190,10 @@ no_save_backup_possible = "Warning: no save backup possible – {detail}"
 persist_failed = "Warning: configuration could not be saved – {detail}"
 no_eac_notice = "Note: starting without EAC – multiplayer is not possible this way."
 started = "✓ Game started"
+
+[cli.play.arg]
+vanilla = "Disables every mod"
+no_eac = "Starts without EAC (no multiplayer)"
 
 [error]
 steam_not_found = "Steam installation not found"

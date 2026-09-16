@@ -385,6 +385,18 @@ fn check_write_permission(dir: &Path) -> Result<()> {
     }
 }
 
+/// Serialises every test in this crate that flips the global language.
+/// `sm2_core::i18n::language_test_lock` does the same job one crate over,
+/// but stays `pub(crate)` there and so is unreachable from here — this is
+/// the same lock, scoped to `sm2-modloader`'s own test binary, needed
+/// because `CURRENT` in `sm2-core` is one process-wide static that every
+/// test in this binary shares.
+#[cfg(test)]
+pub(crate) fn language_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    GUARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Builds an `AppState` directly from the public fields, without `open()`
 /// (which requires a real game installation via `discover()` or
 /// `settings.toml`). A minimal, valid game directory is enough for tests.
