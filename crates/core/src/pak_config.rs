@@ -1,5 +1,5 @@
 use crate::atomic::write_atomic;
-use crate::error::{Error, Result};
+use crate::error::{Error, PakConfigDefect, Result};
 use std::collections::HashMap;
 use std::path::Path;
 use yaml_rust2::{Yaml, YamlLoader};
@@ -32,11 +32,10 @@ impl PakConfig {
 
         let docs = YamlLoader::load_from_str(text).map_err(|e| {
             let marker = e.marker();
-            Error::PakConfig(format!(
-                "die YAML-Syntax ist ungültig (Zeile {}, Spalte {})",
-                marker.line(),
-                marker.col() + 1,
-            ))
+            Error::PakConfig(PakConfigDefect::InvalidYaml {
+                line: marker.line(),
+                column: marker.col() + 1,
+            })
         })?;
 
         let Some(doc) = docs.first() else {
@@ -46,35 +45,27 @@ impl PakConfig {
         let items = match doc {
             Yaml::Array(items) => items,
             Yaml::Null => return Ok(Self::default()),
-            _ => return Err(Error::PakConfig(
-                "die Wurzel muss eine Liste von Einträgen sein".into(),
-            )),
+            _ => return Err(Error::PakConfig(PakConfigDefect::RootNotAList)),
         };
 
         let mut entries = Vec::with_capacity(items.len());
         for (i, item) in items.iter().enumerate() {
             let Yaml::Hash(map) = item else {
-                return Err(Error::PakConfig(format!(
-                    "Eintrag {} ist kein Objekt mit 'pak'-Schlüssel", i + 1
-                )));
+                return Err(Error::PakConfig(PakConfigDefect::EntryNotAnObject { index: i + 1 }));
             };
 
             let pak = map
                 .get(&Yaml::String("pak".into()))
                 .and_then(Yaml::as_str)
-                .ok_or_else(|| Error::PakConfig(format!(
-                    "Eintrag {} hat keinen gültigen 'pak'-Schlüssel", i + 1
-                )))?;
+                .ok_or(Error::PakConfig(PakConfigDefect::EntryMissingPakKey { index: i + 1 }))?;
 
             let disabled = match map.get(&Yaml::String("disabled".into())) {
                 None => false,
                 Some(value) => value.as_bool().ok_or_else(|| {
-                    Error::PakConfig(format!(
-                        "Eintrag {} hat einen ungültigen Wert für 'disabled': {} \
-                         (erwartet: true oder false)",
-                        i + 1,
-                        describe_yaml_scalar(value),
-                    ))
+                    Error::PakConfig(PakConfigDefect::EntryInvalidDisabledValue {
+                        index: i + 1,
+                        value: describe_yaml_scalar(value),
+                    })
                 })?,
             };
 
@@ -293,8 +284,8 @@ fn describe_yaml_scalar(value: &Yaml) -> String {
         Yaml::Real(s) => s.clone(),
         Yaml::Boolean(b) => b.to_string(),
         Yaml::Null => "null".to_string(),
-        Yaml::Array(_) => "eine Liste".to_string(),
-        Yaml::Hash(_) => "ein Objekt".to_string(),
+        Yaml::Array(_) => crate::t!("error.pak_config_defect.scalar_list"),
+        Yaml::Hash(_) => crate::t!("error.pak_config_defect.scalar_object"),
         other => format!("{other:?}"),
     }
 }
@@ -512,13 +503,16 @@ mod tests {
     #[test]
     fn rejects_non_list_root() {
         let error = PakConfig::parse("pak: a.pak\n").unwrap_err();
-        assert!(matches!(error, Error::PakConfig(_)));
+        assert!(matches!(error, Error::PakConfig(PakConfigDefect::RootNotAList)));
     }
 
     #[test]
     fn rejects_entry_without_pak_key() {
         let error = PakConfig::parse("- disabled: true\n").unwrap_err();
-        assert!(matches!(error, Error::PakConfig(_)));
+        assert!(matches!(
+            error,
+            Error::PakConfig(PakConfigDefect::EntryMissingPakKey { index: 1 })
+        ));
     }
 
     #[test]
@@ -528,26 +522,36 @@ mod tests {
         assert_eq!(names, vec!["a.pak", "c.pak"]);
     }
 
+    /// The syntax error carries a structured position instead of a
+    /// ready-made sentence (see `PakConfigDefect`), so that `Display` can
+    /// render it in either language and never leaks yaml-rust2's own
+    /// (English) scanner wording, in whichever language is active.
     #[test]
-    fn reports_yaml_syntax_error_in_german_with_position() {
+    fn reports_yaml_syntax_error_with_position() {
         // A duplicate key in the same mapping is, per the YAML specification,
         // a scanner error in yaml-rust2, not merely an overwrite.
         let text = "- pak: a.pak\n  pak: b.pak\n";
         let error = PakConfig::parse(text).unwrap_err();
-        let Error::PakConfig(message) = error else {
-            panic!("expected Error::PakConfig, got {error:?}");
+        let Error::PakConfig(PakConfigDefect::InvalidYaml { line, column }) = &error else {
+            panic!("expected Error::PakConfig(InvalidYaml), got {error:?}");
         };
+        assert!(*line >= 1 && *column >= 1, "line/column should be 1-based: {line}:{column}");
+
+        let _guard = crate::i18n::language_test_lock();
+        crate::i18n::set_language(crate::i18n::Language::English);
+        let english = error.to_string();
+        crate::i18n::set_language(crate::i18n::Language::German);
+        let german = error.to_string();
+        crate::i18n::set_language(crate::i18n::Language::English);
+
         for english_fragment in ["duplicated key", "mapping", "byte", "at byte"] {
             assert!(
-                !message.contains(english_fragment),
-                "the message must not carry raw English scanner text \
-                 (found: {english_fragment:?}): {message:?}"
+                !english.contains(english_fragment),
+                "the message must not carry raw scanner text from yaml-rust2 \
+                 (found: {english_fragment:?}): {english:?}"
             );
         }
-        assert!(
-            message.contains("Zeile") && message.contains("Spalte"),
-            "the message should name the position: {message:?}"
-        );
+        assert!(german.contains("Zeile") && german.contains("Spalte"), "{german:?}");
     }
 
     #[test]
@@ -559,13 +563,11 @@ mod tests {
             "- pak: a.pak\n  disabled: \"true\"\n",
         ] {
             let error = PakConfig::parse(text).unwrap_err();
-            let Error::PakConfig(message) = error else {
-                panic!("expected Error::PakConfig for {text:?}, got {error:?}");
+            let Error::PakConfig(PakConfigDefect::EntryInvalidDisabledValue { index, .. }) = error
+            else {
+                panic!("expected Error::PakConfig(EntryInvalidDisabledValue) for {text:?}, got {error:?}");
             };
-            assert!(
-                message.contains("Eintrag 1") && message.contains("disabled"),
-                "the message should name the entry: {message:?} (input: {text:?})"
-            );
+            assert_eq!(index, 1, "the message should name the entry (input: {text:?})");
         }
     }
 

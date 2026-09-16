@@ -7,10 +7,10 @@ use std::path::Path;
 /// then rename. Rename is atomic on POSIX.
 pub fn write_atomic(path: &Path, contents: &str) -> Result<()> {
     let dir = path.parent().ok_or_else(|| {
-        Error::io(path, std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "Pfad hat kein Elternverzeichnis",
-        ))
+        Error::io(
+            path,
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, crate::t!("error.path_without_parent")),
+        )
     })?;
 
     std::fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;

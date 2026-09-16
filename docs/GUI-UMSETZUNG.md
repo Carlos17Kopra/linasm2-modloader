@@ -36,6 +36,15 @@ dieselben Zahlen wie der Entwurf. Alle vier Bereiche, alle vier Dialoge, die
 Hinweisleiste, die Detailkarte, der Erstlauf-Bildschirm und der leere
 Zustand sind vorhanden.
 
+**Texte kommen aus dem Katalog, nicht mehr aus dem Quelltext.** Was der
+Entwurf als feste Beschriftung zeigt – Statusmerker wie „ÜBERNOMMEN" und
+„GEÄNDERT", die Zustandskarte, jede Meldung in der Hinweisleiste – steht
+seit der Mehrsprachigkeit in `crates/core/i18n/{en,de}.toml` und wird über
+`t!` nachgeschlagen. Die Oberfläche zeigt den Text in der eingestellten
+Sprache; die oben genannten Spaltenbreiten sind deshalb nicht auf eine der
+beiden Fassungen allein zugeschnitten, sondern auf die jeweils längere von
+beiden.
+
 ## Ergänzungen, die der Entwurf offengelassen hat
 
 **Symbole sind gezeichnet, nicht gesetzt.** Der Entwurf benutzt Zeichen wie

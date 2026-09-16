@@ -622,6 +622,14 @@ pub fn restore(entry: &BackupEntry, save_dir: &Path, backup_root: &Path) -> Resu
     // very archive before it has been read completely.
     // `unique_backup_name` additionally makes sure two backups never share
     // a file name.
+    //
+    // The label stays German by decision, like
+    // `vanilla::VANILLA_SNAPSHOT_PREFIX`: it is matched by prefix and
+    // already written into existing backup names on users' disks, so
+    // translating it would rename data that is already there. It is shown
+    // even in an English interface — a known limitation, not an
+    // oversight — and splitting stored from displayed form is an open
+    // question left for later.
     let safety_backup = backup(save_dir, backup_root, Some("vor Wiederherstellung"))?;
 
     restore_after_safety_backup(entry, save_dir, &safety_backup).map_err(|e| {

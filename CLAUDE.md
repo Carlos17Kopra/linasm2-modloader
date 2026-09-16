@@ -9,19 +9,24 @@ A mod loader for Space Marine 2 on Linux. Rust workspace, two crates:
 
 ## Language
 
-**Code comments are English. User-facing text is German.**
+**Code and comments are English. User-facing text lives in the message
+catalogue, never in the code.**
 
-That split is deliberate and applies to everything you write here:
+- English: `//`, `///`, `//!`, test names, `assert!` messages — anything
+  only a developer reads.
+- The catalogue: every sentence a user sees. `crates/core/i18n/en.toml`
+  is the source of truth, `de.toml` the translation; both carry exactly
+  the same keys. Reach for a text with `t!("area.key")`, or
+  `t!("area.key", name = value)` when it has placeholders.
 
-- English: `//`, `///`, `//!` and block comments, test function names,
-  `assert!` messages, and anything else only a developer reads.
-- German: GUI labels, status and notice messages, `Error` variants'
-  `#[error("…")]` strings, `bail!`/`println!` output, and the clap `///` doc
-  comments that become `--help` text. The program speaks German to its users.
+Adding a language: copy `en.toml`, translate it, add a `Language`
+variant and name it in `Language::ALL`. `cargo test` then says whether
+the translation is complete.
 
-Note the trap in `crates/app/src/cli.rs` and `crates/core/src/error.rs`: doc
-comments on clap items and strings inside `#[error(...)]` are *program output*
-despite looking like ordinary Rust. They stay German.
+Three tests keep this honest and are worth knowing about before you add
+a string: every language has exactly the English key set, every key used
+in the sources exists, and no German sentence is left in the code
+(`crates/app/tests/no_german_literals.rs`).
 
 Comment prose is wrapped at 78 columns including the `///` prefix.
 
@@ -45,7 +50,7 @@ of filesystem operations is the entire safety argument.
 
 ## Working on it
 
-    cargo test                  # 240 tests across both crates
+    cargo test                  # 277 tests across both crates
     cargo clippy --all-targets  # kept clean
     cargo run                   # GUI
     cargo run -- <subcommand>   # CLI

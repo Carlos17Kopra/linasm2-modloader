@@ -31,7 +31,7 @@ pub fn launch(paths: &GamePaths, mode: LaunchMode) -> Result<()> {
                     &exe,
                     std::io::Error::new(
                         std::io::ErrorKind::NotFound,
-                        "Retail.exe nicht gefunden – Spielverzeichnis prüfen",
+                        crate::t!("error.retail_exe_not_found"),
                     ),
                 ));
             }

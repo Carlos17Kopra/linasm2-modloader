@@ -234,6 +234,17 @@ altered_check_failed = "{pak}: Prüfung auf Veränderung übersprungen ({source}
 app_dirs_not_found = "Basisverzeichnisse des Systems nicht ermittelbar"
 archive_unpack_failed = "Archiv konnte nicht entpackt werden – ist es beschädigt?"
 invalid_pak_filename = "ungültiger Dateiname"
+retail_exe_not_found = "Retail.exe nicht gefunden – Spielverzeichnis prüfen"
+umu_run_not_found = "umu-run nicht im PATH gefunden – für den Start ohne Steam wird umu-launcher benötigt (https://github.com/Open-Wine-Components/umu-launcher)"
+
+[error.pak_config_defect]
+invalid_yaml = "die YAML-Syntax ist ungültig (Zeile {line}, Spalte {column})"
+root_not_a_list = "die Wurzel muss eine Liste von Einträgen sein"
+entry_not_an_object = "Eintrag {index} ist kein Objekt mit 'pak'-Schlüssel"
+entry_missing_pak_key = "Eintrag {index} hat keinen gültigen 'pak'-Schlüssel"
+entry_invalid_disabled_value = "Eintrag {index} hat einen ungültigen Wert für 'disabled': {value} (erwartet: true oder false)"
+scalar_list = "eine Liste"
+scalar_object = "ein Objekt"
 
 [error.backup_defect]
 not_a_zip = "Archiv lässt sich nicht als ZIP öffnen: {path}"

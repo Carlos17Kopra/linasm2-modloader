@@ -55,11 +55,7 @@ impl Platform for Unix {
         let umu = Self::umu_launcher().ok_or_else(|| {
             Error::io(
                 exe,
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "umu-run nicht im PATH gefunden – für den Start ohne Steam wird \
-                     umu-launcher benötigt (https://github.com/Open-Wine-Components/umu-launcher)",
-                ),
+                std::io::Error::new(std::io::ErrorKind::NotFound, crate::t!("error.umu_run_not_found")),
             )
         })?;
 

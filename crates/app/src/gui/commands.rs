@@ -102,8 +102,11 @@ impl App {
         }
         // These two backup labels stay German by decision: they are
         // matched by prefix and already written into existing backup
-        // names on disk, so translating them would rename user data (see
-        // `vanilla::VANILLA_SNAPSHOT_PREFIX`).
+        // names on users' disks, so translating them would rename data
+        // that is already there (see `vanilla::VANILLA_SNAPSHOT_PREFIX`).
+        // They are shown even in an English interface — a known
+        // limitation, not an oversight — and splitting stored from
+        // displayed form is an open question left for later.
         let label = if vanilla_start { "vor Vanilla-Start" } else { "vor Modded-Start" };
         let Some(state) = &self.state else { return };
         let Some(backups) = self.backups_dir() else { return };

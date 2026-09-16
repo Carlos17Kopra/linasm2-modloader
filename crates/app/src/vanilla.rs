@@ -18,6 +18,13 @@ use std::path::PathBuf;
 /// appends a timestamp (see `snapshot_and_disable_all`) so that two vanilla
 /// launches in a row can never hit the same profile name — and therefore
 /// the same file, see `Profile::file_stem` — and overwrite each other.
+///
+/// Stays German by decision, unlike every other user-facing string in this
+/// program: it is matched by prefix and already written into existing
+/// profile names on users' disks, so translating it would rename data that
+/// is already there. It is shown to the user even in an English interface
+/// — a known limitation, not an oversight — and whether to eventually
+/// split the stored form from the displayed form is left open for later.
 pub const VANILLA_SNAPSHOT_PREFIX: &str = "vor Vanilla-Start";
 
 /// What the backup created.

@@ -10,7 +10,7 @@ pub enum Error {
     NoSaveUser(PathBuf),
     AmbiguousSaveUser(Vec<String>),
     UnknownSaveUser { requested: String, available: Vec<String> },
-    PakConfig(String),
+    PakConfig(PakConfigDefect),
     CorruptBackup(BackupDefect),
     UnsafeSaveDir(PathBuf),
     RestoreFailedAfterBackup { safety_backup: PathBuf, source: Box<Error> },
@@ -48,6 +48,21 @@ pub enum ArchiveDefect {
     InvalidPath { name: String },
     DuplicateName { name: String },
     TooLarge { limit: u64 },
+}
+
+/// Why `PakConfig::parse` rejected the input — same idea as `BackupDefect`.
+/// `pak_config.rs` used to build these sentences itself with `format!`;
+/// that made every one of them permanently German, no matter the active
+/// language, because a `String` payload has already frozen its wording by
+/// the time `Display` runs. Structured data lets `PakConfigDefect::text`
+/// look the sentence up in the catalogue instead.
+#[derive(Debug)]
+pub enum PakConfigDefect {
+    InvalidYaml { line: usize, column: usize },
+    RootNotAList,
+    EntryNotAnObject { index: usize },
+    EntryMissingPakKey { index: usize },
+    EntryInvalidDisabledValue { index: usize, value: String },
 }
 
 impl BackupDefect {
@@ -103,6 +118,30 @@ impl ArchiveDefect {
     }
 }
 
+impl PakConfigDefect {
+    fn text(&self) -> String {
+        match self {
+            PakConfigDefect::InvalidYaml { line, column } => i18n::format(
+                "error.pak_config_defect.invalid_yaml",
+                &[("line", line.to_string()), ("column", column.to_string())],
+            ),
+            PakConfigDefect::RootNotAList => i18n::lookup("error.pak_config_defect.root_not_a_list"),
+            PakConfigDefect::EntryNotAnObject { index } => i18n::format(
+                "error.pak_config_defect.entry_not_an_object",
+                &[("index", index.to_string())],
+            ),
+            PakConfigDefect::EntryMissingPakKey { index } => i18n::format(
+                "error.pak_config_defect.entry_missing_pak_key",
+                &[("index", index.to_string())],
+            ),
+            PakConfigDefect::EntryInvalidDisabledValue { index, value } => i18n::format(
+                "error.pak_config_defect.entry_invalid_disabled_value",
+                &[("index", index.to_string()), ("value", value.clone())],
+            ),
+        }
+    }
+}
+
 /// A byte count for an error message: whole MiB once it is worth it, plain
 /// bytes below that — a limit shown as "0 MiB" would tell the user nothing.
 /// Lives here rather than in `saves.rs` because it is exclusively error
@@ -148,7 +187,9 @@ impl std::fmt::Display for Error {
                 "error.unknown_save_user",
                 &[("requested", requested.clone()), ("available", available.join(", "))],
             ),
-            Error::PakConfig(detail) => i18n::format("error.pak_config", &[("detail", detail.clone())]),
+            Error::PakConfig(defect) => {
+                i18n::format("error.pak_config", &[("detail", defect.text())])
+            }
             Error::CorruptBackup(defect) => {
                 i18n::format("error.corrupt_backup", &[("detail", defect.text())])
             }
