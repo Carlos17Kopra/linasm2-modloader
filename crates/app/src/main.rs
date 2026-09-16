@@ -1,5 +1,7 @@
 mod app_state;
 mod cli;
+mod gui;
+mod vanilla;
 
 fn main() {
     tracing_subscriber::fmt()
@@ -9,11 +11,14 @@ fn main() {
         .with_writer(std::io::stderr)
         .init();
 
-    // Ohne Argumente startet später die GUI (Plan 2). Bis dahin: Hilfe zeigen.
+    // Ohne Argumente die grafische Oberfläche, mit Argumenten die
+    // Kommandozeile – eine einzige Binary für beides.
     if std::env::args().len() == 1 {
-        eprintln!("Die grafische Oberfläche folgt in Plan 2.\n");
-        eprintln!("Verfügbare Kommandos: sm2-modloader --help");
-        std::process::exit(2);
+        if let Err(e) = gui::run() {
+            eprintln!("Fehler: die Oberfläche konnte nicht gestartet werden – {e}");
+            std::process::exit(1);
+        }
+        return;
     }
 
     if let Err(e) = cli::run() {

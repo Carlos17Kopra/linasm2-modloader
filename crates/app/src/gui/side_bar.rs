@@ -1,0 +1,187 @@
+//! Die Seitenleiste: Navigation oben, Zustandskarte unten.
+
+use super::theme::{color, medium, mono, sans};
+use super::widgets::Icon;
+use super::{Action, App, Section};
+use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
+
+pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
+    let items = [
+        (Section::Mods, Icon::NavMods, "Mods", mods_count(app)),
+        (Section::Profiles, Icon::NavProfiles, "Profile", app.profiles.len().to_string()),
+        (Section::Saves, Icon::NavSaves, "Savegames", saves_count(app)),
+        (Section::Settings, Icon::NavSettings, "Einstellungen", String::new()),
+    ];
+
+    // Die Zustandskarte sitzt am unteren Rand und bekommt ihren Platz
+    // zuerst: ihre Höhe hängt davon ab, wie oft der Text umbricht, und eine
+    // nachträglich eingeschobene Lücke würde sie bei drei umbrechenden
+    // Zeilen unten aus dem Fenster schieben.
+    ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+        status_card(app, ui);
+        ui.add_space(12.0);
+
+        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            for (section, icon, label, count) in items {
+                if nav_item(app, ui, section, icon, label, &count) {
+                    actions.push(Action::ShowSection(section));
+                }
+            }
+        });
+    });
+}
+
+fn mods_count(app: &App) -> String {
+    match &app.state {
+        Some(state) => state.config.entries.len().to_string(),
+        None => String::from("—"),
+    }
+}
+
+/// Bei gesperrten Savegame-Funktionen steht im Zähler ein Warnzeichen statt
+/// einer Zahl – gezeichnet, nicht gesetzt (siehe `icons`).
+fn saves_count(app: &App) -> String {
+    if app.saves_blocked.is_some() {
+        String::new()
+    } else {
+        app.backups.len().to_string()
+    }
+}
+
+fn nav_item(
+    app: &App,
+    ui: &mut Ui,
+    section: Section,
+    icon: Icon,
+    label: &str,
+    count: &str,
+) -> bool {
+    let width = ui.available_width();
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 36.0), Sense::click());
+
+    let active = app.section == section;
+    let background = if active {
+        if response.hovered() { color::SELECTED_HOVER } else { color::SELECTED }
+    } else if response.hovered() {
+        color::HOVER
+    } else {
+        Color32::TRANSPARENT
+    };
+
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(8), background);
+    if active {
+        painter.rect_filled(
+            Rect::from_min_size(rect.min, Vec2::new(2.0, rect.height())),
+            CornerRadius::same(1),
+            color::ACCENT,
+        );
+    }
+
+    let icon_color = if active { color::ACCENT } else { color::TEXT_FAINT };
+    icon.paint(painter, Pos2::new(rect.left() + 10.0 + 7.0, rect.center().y), 12.0, icon_color);
+
+    let (font, text_color) = if active {
+        (medium(13.0), color::TEXT_STRONG)
+    } else {
+        (sans(13.0), color::TEXT_DIM)
+    };
+    painter.text(
+        Pos2::new(rect.left() + 10.0 + 14.0 + 10.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        font,
+        text_color,
+    );
+
+    // Zählerpille am rechten Rand.
+    let blocked = section == Section::Saves && app.saves_blocked.is_some();
+    if blocked || !count.is_empty() {
+        let (pill_fg, pill_bg) = if active {
+            (color::ACCENT, color::ACCENT_SOFT)
+        } else {
+            (color::TEXT_MUTED, color::CONTROL)
+        };
+        let content_width = if blocked {
+            11.0
+        } else {
+            painter.layout_no_wrap(count.to_owned(), mono(10.5), pill_fg).size().x
+        };
+        let pill = Rect::from_center_size(
+            Pos2::new(rect.right() - 10.0 - content_width / 2.0 - 7.0, rect.center().y),
+            Vec2::new(content_width + 14.0, 16.0),
+        );
+        painter.rect_filled(pill, CornerRadius::same(8), pill_bg);
+        if blocked {
+            super::icons::warning(painter, pill.center(), 11.0, color::WARN);
+        } else {
+            painter.text(pill.center(), Align2::CENTER_CENTER, count, mono(10.5), pill_fg);
+        }
+    }
+
+    response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
+/// Die drei Zustandszeilen am unteren Rand: Spiel, Schreibrecht, EAC.
+fn status_card(app: &App, ui: &mut Ui) {
+    let rows = [
+        game_row(app),
+        write_row(app),
+        eac_row(app),
+    ];
+
+    let width = ui.available_width();
+    let painter_rows: Vec<_> = rows
+        .iter()
+        .map(|(_, _, text)| ui.painter().layout(
+            (*text).to_owned(),
+            sans(11.0),
+            color::TEXT_DIM2,
+            width - 20.0 - 8.0 - 12.0,
+        ))
+        .collect();
+    let content_height: f32 =
+        painter_rows.iter().map(|g| g.size().y).sum::<f32>() + 7.0 * (rows.len() - 1) as f32;
+    let height = content_height + 20.0;
+
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let painter = ui.painter();
+    let radius = CornerRadius::same(10);
+    painter.rect_filled(rect, radius, color::CARD);
+    painter.rect_stroke(rect, radius, Stroke::new(1.0, color::BORDER_SOFT), StrokeKind::Inside);
+
+    let mut y = rect.top() + 10.0;
+    for ((icon, icon_color, _), galley) in rows.iter().zip(painter_rows) {
+        icon.paint(painter, Pos2::new(rect.left() + 10.0 + 6.0, y + 7.0), 11.0, *icon_color);
+        let text_height = galley.size().y;
+        painter.galley(Pos2::new(rect.left() + 10.0 + 12.0 + 8.0, y), galley, color::TEXT_DIM2);
+        y += text_height + 7.0;
+    }
+}
+
+fn game_row(app: &App) -> (Icon, Color32, &'static str) {
+    if app.state.is_some() {
+        (Icon::Check, color::OK, "Spiel erkannt")
+    } else {
+        (Icon::Warning, color::WARN, "Spiel nicht gefunden")
+    }
+}
+
+fn write_row(app: &App) -> (Icon, Color32, &'static str) {
+    if app.state.is_none() {
+        (Icon::Ring, color::TEXT_FAINT, "Schreibrecht noch nicht geprüft")
+    } else if app.writable {
+        (Icon::Check, color::OK, "pak_config.yaml beschreibbar")
+    } else {
+        (Icon::Warning, color::WARN, "Mods-Verzeichnis schreibgeschützt")
+    }
+}
+
+fn eac_row(app: &App) -> (Icon, Color32, &'static str) {
+    if app.no_eac_available {
+        (Icon::Check, color::OK, "umu-run gefunden – Start ohne EAC möglich")
+    } else {
+        (Icon::Ring, color::TEXT_FAINT, "umu-run fehlt – „Ohne EAC“ ausgeblendet")
+    }
+}

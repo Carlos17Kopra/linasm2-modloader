@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@300;400;500&family=Ubuntu+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; padding: 0; background: #0e0e0e; }
+  * { box-sizing: border-box; }
+  a { color: #5aaaff; text-decoration: none; }
+  a:hover { color: #8cc6ff; text-decoration: underline; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #3c3c3c; border-radius: 5px; border: 2px solid #1b1b1b; }
+  ::-webkit-scrollbar-thumb:hover { background: #575757; }
+</style>
+</helmet>
+
+<div style="min-height:100vh;background:#0e0e0e;font-family:Ubuntu, sans-serif;font-weight:300;color:#b4b4b4;overflow-x:auto">
+ <div style="width:max-content;margin:0 auto;padding:26px 20px 40px;display:flex;flex-direction:column;align-items:flex-start;gap:16px">
+
+  <div style="width:1100px;max-width:100%;display:flex;flex-direction:column;gap:10px">
+    <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+      <div style="font-size:15px;color:#f0f0f0;font-weight:400">SM2 Mod Loader — GUI-Entwurf</div>
+      <div style="font-size:12px;color:#6e6e6e">egui/eframe, dunkel, 1100 × 700 · klickbar: Haken, Reihenfolge, Auswahl, Bereiche, Dialoge</div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+      <div style="font-size:11px;color:#6e6e6e;letter-spacing:.08em;margin-right:4px">ZUSTAND</div>
+      <sc-for list="{{ scenarios }}" as="s" hint-placeholder-count="12">
+        <div onClick="{{ s.onSelect }}" style="font-size:11.5px;padding:4px 9px;border-radius:3px;cursor:pointer;background:{{ s.bg }};color:{{ s.fg }};border:1px solid {{ s.border }}" style-hover="border-color:#6e6e6e">{{ s.label }}</div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- ===================== Anwendungsfenster ===================== -->
+  <div style="width:1100px;height:700px;flex:none;border:1px solid #3c3c3c;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 18px 50px rgba(0,0,0,.55);position:relative;font-size:13px;color:#b4b4b4;background:#1b1b1b">
+
+    <!-- Fenstertitelleiste (Systemdekoration) -->
+    <div style="height:30px;flex:none;background:#242424;border-bottom:1px solid #131313;display:flex;align-items:center;padding:0 10px;gap:8px">
+      <div style="font-size:12px;color:#c8c8c8;font-weight:400">SM2 Mod Loader</div>
+      <div style="flex:1"></div>
+      <div style="display:flex;gap:6px;color:#8c8c8c;font-size:11px">
+        <div style="width:16px;height:16px;border-radius:8px;background:#3c3c3c;display:flex;align-items:center;justify-content:center">–</div>
+        <div style="width:16px;height:16px;border-radius:8px;background:#3c3c3c;display:flex;align-items:center;justify-content:center">□</div>
+        <div style="width:16px;height:16px;border-radius:8px;background:#3c3c3c;display:flex;align-items:center;justify-content:center">✕</div>
+      </div>
+    </div>
+
+    <!-- TopBottomPanel::top -->
+    <div style="height:44px;flex:none;background:#1b1b1b;border-bottom:1px solid #3c3c3c;display:flex;align-items:center;padding:0 10px;gap:12px">
+      <div style="display:flex;flex-direction:column;gap:1px;min-width:0">
+        <div style="font-size:13px;color:#f0f0f0;font-weight:400">{{ headline }}</div>
+        <div style="font-family:'Ubuntu Mono', monospace;font-size:11px;color:#6e6e6e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ headlinePath }}</div>
+      </div>
+      <div style="flex:1"></div>
+
+      <div style="position:relative;display:flex;align-items:center;gap:6px">
+        <div onClick="{{ toggleLaunchCombo }}" style="height:24px;min-width:214px;display:flex;align-items:center;gap:8px;padding:0 8px;background:#3c3c3c;border-radius:2px;color:#b4b4b4;cursor:pointer;font-size:12.5px" style-hover="background:#464646;color:#f0f0f0">
+          <span style="flex:1;white-space:nowrap">{{ launchLabel }}</span>
+          <span style="font-size:9px;color:#8c8c8c">⏷</span>
+        </div>
+        <div onClick="{{ onLaunch }}" style="height:24px;display:flex;align-items:center;gap:6px;padding:0 14px;background:#005c80;border-radius:2px;color:#dceaff;cursor:pointer;font-size:12.5px;font-weight:400" style-hover="background:#00749f;color:#ffffff">
+          <span style="font-size:10px">▶</span><span>Starten</span>
+        </div>
+        <sc-if value="{{ launchComboOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute;top:28px;right:96px;min-width:236px;background:#1b1b1b;border:1px solid #3c3c3c;border-radius:4px;box-shadow:0 10px 26px rgba(0,0,0,.6);padding:4px;z-index:30">
+            <sc-for list="{{ launchModes }}" as="o" hint-placeholder-count="3">
+              <div onClick="{{ o.onSelect }}" style="padding:5px 8px;border-radius:2px;font-size:12.5px;color:{{ o.fg }};background:{{ o.bg }};cursor:pointer" style-hover="background:#2f2f2f;color:#f0f0f0">{{ o.label }}</div>
+            </sc-for>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+
+    <div style="flex:1;min-height:0;display:flex">
+
+      <!-- SidePanel::left -->
+      <div style="width:192px;flex:none;border-right:1px solid #3c3c3c;background:#1b1b1b;display:flex;flex-direction:column;padding:8px 8px 10px">
+        <sc-for list="{{ navItems }}" as="n" hint-placeholder-count="4">
+          <div onClick="{{ n.onSelect }}" style="height:27px;display:flex;align-items:center;gap:8px;padding:0 8px;border-radius:2px;background:{{ n.bg }};color:{{ n.fg }};cursor:pointer;font-size:13px" style-hover="background:{{ n.bgHover }}">
+            <span style="width:13px;text-align:center;font-size:11px;color:{{ n.iconFg }}">{{ n.icon }}</span>
+            <span style="flex:1">{{ n.label }}</span>
+            <span style="font-family:'Ubuntu Mono', monospace;font-size:11px;color:{{ n.countFg }}">{{ n.count }}</span>
+          </div>
+        </sc-for>
+
+        <div style="flex:1"></div>
+        <div style="height:1px;background:#3c3c3c;margin:8px 0"></div>
+        <div style="display:flex;flex-direction:column;gap:5px;font-size:11px">
+          <div style="display:flex;gap:6px;align-items:flex-start;color:{{ gameStateFg }}">
+            <span>{{ gameStateIcon }}</span><span style="flex:1;line-height:1.35">{{ gameStateText }}</span>
+          </div>
+          <div style="display:flex;gap:6px;align-items:flex-start;color:{{ writeStateFg }}">
+            <span>{{ writeStateIcon }}</span><span style="flex:1;line-height:1.35">{{ writeStateText }}</span>
+          </div>
+          <div style="display:flex;gap:6px;align-items:flex-start;color:{{ eacStateFg }}">
+            <span>{{ eacStateIcon }}</span><span style="flex:1;line-height:1.35">{{ eacStateText }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- CentralPanel -->
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;background:#1b1b1b">
+
+        <sc-if value="{{ isMods }}" hint-placeholder-val="{{ true }}">
+          <div style="flex:1;min-height:0;display:flex;flex-direction:column">
+
+            <!-- Hinweisbanner (Abgleich beim Start) -->
+            <sc-if value="{{ hasNotices }}" hint-placeholder-val="{{ false }}">
+              <div style="flex:none;padding:8px 10px 0;display:flex;flex-direction:column;gap:4px">
+                <sc-for list="{{ notices }}" as="h" hint-placeholder-count="2">
+                  <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:2px;background:{{ h.bg }};border:1px solid {{ h.border }};font-size:12px;color:#c8c8c8">
+                    <span style="color:{{ h.color }};flex:none">{{ h.icon }}</span>
+                    <span style="flex:1;line-height:1.35">{{ h.text }}</span>
+                    <sc-if value="{{ h.hasAction }}" hint-placeholder-val="{{ false }}">
+                      <div onClick="{{ h.onAction }}" style="flex:none;height:21px;display:flex;align-items:center;padding:0 8px;background:#3c3c3c;border-radius:2px;color:#b4b4b4;cursor:pointer;font-size:11.5px" style-hover="background:#464646;color:#f0f0f0">{{ h.actionLabel }}</div>
+                    </sc-if>
+                    <div onClick="{{ h.onDismiss }}" style="flex:none;color:#6e6e6e;cursor:pointer;font-size:11px;padding:0 2px" style-hover="color:#f0f0f0">✕</div>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <!-- Werkzeugleiste -->
+            <div style="flex:none;height:42px;display:flex;align-items:center;gap:8px;padding:0 10px">
+              <div onClick="{{ onImport }}" style="height:24px;display:flex;align-items:center;gap:6px;padding:0 10px;background:{{ importBg }};border-radius:2px;color:{{ importFg }};cursor:{{ importCursor }};font-size:12.5px" style-hover="background:#464646">
+                <span style="font-size:11px">＋</span><span>Importieren …</span>
+              </div>
+              <div style="height:24px;width:210px;display:flex;align-items:center;gap:6px;padding:0 8px;background:#0a0a0a;border:1px solid #3c3c3c;border-radius:2px">
+                <span style="font-size:11px;color:#6e6e6e">⌕</span>
+                <input value="{{ filter }}" onInput="{{ onFilter }}" placeholder="Filtern" style="flex:1;min-width:0;background:transparent;border:none;outline:none;color:#c8c8c8;font-family:Ubuntu, sans-serif;font-weight:300;font-size:12.5px">
+              </div>
+              <div style="font-size:11px;color:#6e6e6e">oder Dateien aufs Fenster ziehen</div>
+              <div style="flex:1"></div>
+              <div style="font-size:11.5px;color:#8c8c8c">{{ countLabel }}</div>
+            </div>
+
+            <!-- Spaltenkopf -->
+            <div style="flex:none;display:grid;grid-template-columns:26px 1fr 66px 112px 52px;align-items:center;gap:8px;padding:0 10px;height:22px;font-size:11px;color:#6e6e6e;border-bottom:1px solid #3c3c3c;letter-spacing:.04em">
+              <div>An</div>
+              <div>Mod — in Ladereihenfolge, oben gewinnt bei Konflikten</div>
+              <div>Version</div>
+              <div>Status</div>
+              <div style="text-align:center">Rang</div>
+            </div>
+
+            <!-- ScrollArea mit Mod-Liste -->
+            <div style="flex:1;min-height:0;overflow-y:auto">
+              <sc-if value="{{ showEmptyMods }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:46px 10px;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center">
+                  <div style="font-size:17px;color:#f0f0f0;font-weight:400">Noch keine Mods installiert</div>
+                  <div style="max-width:470px;font-size:12.5px;color:#8c8c8c;line-height:1.5;text-wrap:pretty">Lade den Mod bei Nexus herunter und importiere die Datei hier. Der Loader nimmt <span style="font-family:'Ubuntu Mono', monospace;font-size:11.5px;color:#b4b4b4">.pak</span>, <span style="font-family:'Ubuntu Mono', monospace;font-size:11.5px;color:#b4b4b4">.zip</span>, <span style="font-family:'Ubuntu Mono', monospace;font-size:11.5px;color:#b4b4b4">.7z</span> und <span style="font-family:'Ubuntu Mono', monospace;font-size:11.5px;color:#b4b4b4">.rar</span> — auch mehrere auf einmal. Er kopiert das Pak ins Mods-Verzeichnis des Spiels und trägt es <span style="color:#c8c8c8">deaktiviert</span> ans Ende der Ladereihenfolge ein; ein Import verändert dein laufendes Setup nicht.</div>
+                  <div style="display:flex;gap:8px;align-items:center;margin-top:2px">
+                    <div onClick="{{ onImport }}" style="height:26px;display:flex;align-items:center;padding:0 14px;background:#005c80;border-radius:2px;color:#dceaff;cursor:pointer;font-size:12.5px" style-hover="background:#00749f;color:#ffffff">Dateien wählen …</div>
+                    <div style="font-size:11.5px;color:#6e6e6e">oder Dateien aufs Fenster ziehen</div>
+                  </div>
+                </div>
+              </sc-if>
+
+              <sc-for list="{{ rows }}" as="m" hint-placeholder-count="7">
+                <div onClick="{{ m.onSelect }}" style="display:grid;grid-template-columns:26px 1fr 66px 112px 52px;align-items:center;gap:8px;padding:0 10px;height:{{ m.rowH }};background:{{ m.bg }};cursor:default" style-hover="background:{{ m.bgHover }}">
+                  <div onClick="{{ m.onToggle }}" style="display:flex;align-items:center;justify-content:flex-start;cursor:{{ m.toggleCursor }}">
+                    <div style="width:14px;height:14px;border-radius:2px;background:{{ m.boxBg }};border:1px solid {{ m.boxBorder }};display:flex;align-items:center;justify-content:center;font-size:10px;line-height:1;color:{{ m.checkFg }}">{{ m.check }}</div>
+                  </div>
+                  <div style="display:flex;align-items:baseline;gap:8px;min-width:0">
+                    <span style="color:{{ m.nameFg }};font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-decoration:{{ m.nameDeco }}">{{ m.name }}</span>
+                    <sc-if value="{{ showFilenames }}" hint-placeholder-val="{{ true }}">
+                      <span style="font-family:'Ubuntu Mono', monospace;font-size:11px;color:{{ m.pakFg }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ m.pak }}</span>
+                    </sc-if>
+                  </div>
+                  <div style="font-family:'Ubuntu Mono', monospace;font-size:11.5px;color:{{ m.dimFg }}">{{ m.version }}</div>
+                  <div style="display:flex;align-items:center">
+                    <sc-if value="{{ m.hasBadge }}" hint-placeholder-val="{{ false }}">
+                      <span style="display:inline-flex;align-items:center;gap:4px;border:1px solid {{ m.badgeColor }};color:{{ m.badgeColor }};font-size:10px;letter-spacing:.06em;padding:1px 5px;border-radius:2px;white-space:nowrap">{{ m.badgeIcon }} {{ m.badge }}</span>
+                    </sc-if>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:center;gap:2px">
+                    <div onClick="{{ m.onUp }}" style="width:20px;height:18px;display:flex;align-items:center;justify-content:center;background:#3c3c3c;border-radius:2px;color:#b4b4b4;font-size:10px;cursor:pointer" style-hover="background:#464646;color:#f0f0f0">▲</div>
+                    <div onClick="{{ m.onDown }}" style="width:20px;height:18px;display:flex;align-items:center;justify-content:center;background:#3c3c3c;border-radius:2px;color:#b4b4b4;font-size:10px;cursor:pointer" style-hover="background:#464646;color:#f0f0f0">▼</div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+
+            <!-- Detailbereich zur Auswahl -->
+            <sc-if value="{{ hasSelection }}" hint-placeholder-val="{{ false }}">
+              <div style="flex:none;border-top:1px solid #3c3c3c;background:#1b1b1b;padding:9px 10px 10px;display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:baseline;gap:8px">
+                  <div style="font-size:13px;color:#f0f0f0;font-weight:400">{{ selName }}</div>
+                  <div style="font-family:'Ubuntu Mono', monospace;font-size:11px;color:#6e6e6e;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ selPak }}</div>
+                  <div onClick="{{ onClearSelection }}" style="font-size:11px;color:#6e6e6e;cursor:pointer" style-hover="color:#f0f0f0">✕</div>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(4, minmax(0,1fr));gap:7px 16px;font-size:11.5px">
+                  <div style="display:flex;flex-direction:column;gap:1px"><span style="color:#6e6e6e">Autor</span><span style="color:#c8c8c8">{{ selAuthor }}</span></div>
+                  <div style="display:flex;flex-direction:column;gap:1px"><span style="color:#6e6e6e">Version</span><span style="color:#c8c8c8">{{ selVersion }}</span></div>
+                  <div style="display:flex;flex-direction:column;gap:1px"><span style="color:#6e6e6e">Größe</span><span style="color:#c8c8c8">{{ selSize }}</span></div>
+                  <div style="display:flex;flex-direction:column;gap:1px"><span style="color:#6e6e6e">Importiert</span><span style="color:#c8c8c8">{{ selImported }}</span></div>
+                  <div style="display:flex;flex-direction:column;gap:1px"><span style="color:#6e6e6e">Nexus-ID</span><span style="color:#c8c8c8">{{ selNexus }}</span></div>
+                  <div style="display:flex;flex-direction:column;gap:1px;grid-column:span 2"><span style="color:#6e6e6e">Herkunft</span><span style="font-family:'Ubuntu Mono', monospace;font-size:11px;color:#c8c8c8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ selSource }}</span></div>
+                  <div style="display:flex;flex-direction:column;gap:1px"><span style="color:#6e6e6e">Hash (blake3)</span><span style="font-family:'Ubuntu Mono', monospace;font-size:11px;color:#c8c8c8">{{ selHash }}</span></div>
+                  <div style="display:flex;flex-direction:column;gap:1px;grid-column:span 4"><span style="color:#6e6e6e">Notizen</span><span style="color:#c8c8c8;line-height:1.35">{{ selNotes }}</span></div>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+        </sc-if>
+
+        <!-- Erstlauf: Spiel nicht gefunden -->
+        <sc-if value="{{ isNoGame }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:0 40px;text-align:center">
+            <div style="font-size:17px;color:#f0f0f0;font-weight:400">Space Marine 2 nicht gefunden</div>
+            <div style="max-width:520px;font-size:12.5px;color:#8c8c8c;line-height:1.5;text-wrap:pretty">Der Loader hat die Steam-Bibliotheken durchsucht und keine Installation gefunden. Alles andere funktioniert weiter — sobald das Spielverzeichnis bekannt ist, liest er Mods und Ladereihenfolge ein.</div>
+            <div style="width:520px;max-width:100%;text-align:left;background:#0a0a0a;border:1px solid #3c3c3c;border-radius:3px;padding:8px 10px;display:flex;flex-direction:column;gap:3px">
+              <div style="font-size:11px;color:#6e6e6e;margin-bottom:2px">Gesucht wurde in</div>
+              <div style="font-family:'Ubuntu Mono', monospace;font-size:11px;color:#8c8c8c">~/.local/share/Steam/steamapps/common/Space Marine 2</div>
+              <div style="font-family:'Ubuntu Mono', monospace;font-size:11px;color:#8c8c8c">~/.steam/root/steamapps/common/Space Marine 2</div>
+              <div style="font-family:'Ubuntu Mono', monospace;font-size:11px;color:#8c8c8c">~/.var/app/com.valvesoftware.Steam/.local/share/Steam/…</div>
+              <div style="font-family:'Ubuntu Mono', monospace;font-size:11px;color:#8c8c8c">sowie alle Bibliotheken aus libraryfolders.vdf</div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <div onClick="{{ onPickGameDir }}" style="height:26px;display:flex;align-items:center;padding:0 14px;background:#005c80;border-radius:2px;color:#dceaff;cursor:pointer;font-size:12.5px" style-hover="background:#00749f;color:#ffffff">Spielverzeichnis wählen …</div>
+              <div onClick="{{ onRetryDiscover }}" style="height:26px;display:flex;align-items:center;padding:0 12px;background:#3c3c3c;border-radius:2px;color:#b4b4b4;cursor:pointer;font-size:12.5px" style-hover="background:#464646;color:#f0f0f0">Erneut suchen</div>
+            </div>
+            <div style="font-size:11px;color:#6e6e6e">Das Verzeichnis muss <span style="font-family:'Ubuntu Mono', monospace">client_pc/root/mods</span> enthalten.</div>
+          </div>
+        </sc-if>
+
+        <!-- Profile -->
+        <sc-if value="{{ isProfiles }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:1;min-height:0;display:flex;flex-direction:column">
+            <div style="flex:none;padding:10px 10px 0;display:flex;flex-direction:column;gap:3px">
+              <div style="font-size:13px;color:#f0f0f0;font-weight:400">Profile</div>
+              <div style="font-size:11.5px;color:#8c8c8c;max-width:640px;line-height:1.4">Ein Profil hält Aktivierung und Reihenfolge fest. Anwenden ersetzt den aktuellen Zustand; Mods, die das Profil kennt, die aber fehlen, werden übersprungen und gemeldet.</div>
+            </div>
+            <div style="flex:none;height:42px;display:flex;align-items:center;gap:8px;padding:0 10px">
+              <div style="height:24px;width:240px;display:flex;align-items:center;padding:0 8px;background:#0a0a0a;border:1px solid #3c3c3c;border-radius:2px">
+                <input value="{{ profileName }}" onInput="{{ onProfileName }}" placeholder="Name des neuen Profils" style="flex:1;min-width:0;background:transparent;border:none;outline:none;color:#c8c8c8;font-family:Ubuntu, sans-serif;font-weight:300;font-size:12.5px">
+              </div>
+              <div onClick="{{ onSaveProfile }}" style="height:24px;display:flex;align-items:center;padding:0 10px;background:#3c3c3c;border-radius:2px;color:#b4b4b4;cursor:pointer;font-size:12.5px" style-hover="background:#464646;color:#f0f0f0">Aktuellen Zustand speichern</div>
+            </div>
+            <div style="flex:none;display:grid;grid-template-columns:1fr 120px 132px 168px;align-items:center;gap:8px;padding:0 10px;height:22px;font-size:11px;color:#6e6e6e;border-bottom:1px solid #3c3c3c">
+              <div>Name</div><div>Aktiv</div><div>Gespeichert</div><div></div>
+            </div>
+            <div style="flex:1;min-height:0;overflow-y:auto">
+              <sc-for list="{{ profiles }}" as="p" hint-placeholder-count="3">
+                <div style="display:grid;grid-template-columns:1fr 120px 132px 168px;align-items:center;gap:8px;padding:0 10px;height:30px;background:{{ p.bg }}" style-hover="background:#2a2a2a">
+                  <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                    <span style="color:#c8c8c8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ p.name }}</span>
+                    <sc-if value="{{ p.auto }}" hint-placeholder-val="{{ false }}">
+                      <span style="flex:none;border:1px solid #b4b4b4;color:#b4b4b4;font-size:10px;letter-spacing:.06em;padding:1px 5px;border-radius:2px">AUTOMATISCH</span>
+                    </sc-if>
+                  </div>
+                  <div style="font-family:'Ubuntu Mono', monospace;font-size:11.5px;color:#8c8c8c">{{ p.activeLabel }}</div>
+                  <div style="font-family:'Ubuntu Mono', monospace;font-size:11.5px;color:#8c8c8c">{{ p.saved }}</div>
+                  <div style="display:flex;gap:6px;justify-content:flex-end">
+                    <div onClick="{{ p.onApply }}" style="height:21px;display:flex;align-items:center;padding:0 9px;background:#3c3c3c;border-radius:2px;color:#b4b4b4;cursor:pointer;font-size:11.5px" style-hover="background:#464646;color:#f0f0f0">Anwenden</div>
+                    <div onClick="{{ p.onDelete }}" style="height:21px;display:flex;align-items:center;padding:0 9px;background:#3c3c3c;border-radius:2px;color:#b4b4b4;cursor:pointer;font-size:11.5px" style-hover="background:#5a2a2a;color:#ffc9c9">Löschen</div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- Savegames -->
+        <sc-if value="{{ isSaves }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:1;min-height:0;display:flex;flex-direction:column">
+            <div style="flex:none;padding:10px 10px 0;display:flex;flex-direction:column;gap:3px">
+              <div style="font-size:13px;color:#f0f0f0;font-weight:400">Savegame-Backups</div>
+              <div style="font-size:11.5px;color:#8c8c8c;max-width:660px;line-height:1.4">Wiederherstellen überschreibt die echten Spielstände. Der Loader sichert den aktuellen Stand davor <span style="color:#c8c8c8">immer automatisch</span> — das ist nicht abschaltbar.</div>
+            </div>
+
+            <sc-if value="{{ savesBlocked }}" hint-placeholder-val="{{ false }}">
+              <div style="flex:none;margin:10px 10px 0;padding:9px 10px;background:#2a2317;border:1px solid #6b5420;border-radius:2px;display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#c8c8c8">
+                  <span style="color:#ff8f00">⚠</span>
+                  <span style="flex:1;line-height:1.4">Im Proton-Prefix liegen zwei Steam-Nutzerprofile. Der Loader kann nicht entscheiden, welche Spielstände gemeint sind — bis zur Auswahl sind alle Savegame-Funktionen gesperrt.</span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;padding-left:20px">
+                  <div onClick="{{ onOpenSteamUser }}" style="height:23px;display:flex;align-items:center;padding:0 10px;background:#3c3c3c;border-radius:2px;color:#b4b4b4;cursor:pointer;font-size:12px" style-hover="background:#464646;color:#f0f0f0">Nutzerprofil wählen …</div>
+                  <div style="font-family:'Ubuntu Mono', monospace;font-size:11px;color:#8c8c8c">…/storage/steam/user/</div>
+                </div>
+              </div>
+            </sc-if>
+
+            <div style="flex:none;height:42px;display:flex;align-items:center;gap:8px;padding:0 10px">
+              <div style="height:24px;width:220px;display:flex;align-items:center;padding:0 8px;background:#0a0a0a;border:1px solid #3c3c3c;border-radius:2px;opacity:{{ savesOpacity }}">
+                <input value="{{ backupLabel }}" onInput="{{ onBackupLabel }}" placeholder="Etikett (optional)" style="flex:1;min-width:0;background:transparent;border:none;outline:none;color:#c8c8c8;font-family:Ubuntu, sans-serif;font-weight:300;font-size:12.5px">
+              </div>
+              <div onClick="{{ onBackup }}" style="height:24px;display:flex;align-items:center;padding:0 10px;background:#3c3c3c;border-radius:2px;color:{{ savesFg }};cursor:{{ savesCursor }};font-size:12.5px;opacity:{{ savesOpacity }}" style-hover="background:#464646">Backup anlegen</div>
+              <div style="flex:1"></div>
+              <div style="font-size:11.5px;color:#8c8c8c">{{ backupsCountLabel }}</div>
+            </div>
+
+            <div style="flex:none;display:grid;grid-template-columns:150px 1fr 86px 190px;align-items:center;gap:8px;padding:0 10px;height:22px;font-size:11px;color:#6e6e6e;border-bottom:1px solid #3c3c3c">
+              <div>Erstellt</div><div>Etikett</div><div>Größe</div><div></div>
+            </div>
+            <div style="flex:1;min-height:0;overflow-y:auto;opacity:{{ savesOpacity }}">
+              <sc-for list="{{ backups }}" as="b" hint-placeholder-count="5">
+                <div style="display:grid;grid-template-columns:150px 1fr 86px 190px;align-items:center;gap:8px;padding:0 10px;height:30px;background:{{ b.bg }}" style-hover="background:#2a2a2a">
+                  <div style="font-family:'Ubuntu Mono', monospace;font-size:11.5px;color:#c8c8c8">{{ b.at }}</div>
+                  <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                    <span style="color:#b4b4b4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ b.label }}</span>
+                    <sc-if value="{{ b.verified }}" hint-placeholder-val="{{ false }}">
+                      <span style="flex:none;color:#7ec27e;font-size:11px">✓ {{ b.verifiedText }}</span>
+                    </sc-if>
+                  </div>
+                  <div style="font-family:'Ubuntu Mono', monospace;font-size:11.5px;color:#8c8c8c">{{ b.size }}</div>
+                  <div style="display:flex;gap:6px;justify-content:flex-end">
+                    <div onClick="{{ b.onVerify }}" style="height:21px;display:flex;align-items:center;padding:0 9px;background:#3c3c3c;border-radius:2px;color:#b4b4b4;cursor:pointer;font-size:11.5px" style-hover="background:#464646;color:#f0f0f0">Prüfen</div>
+                    <div onClick="{{ b.onRestore }}" style="height:21px;display:flex;align-items:center;gap:5px;padding:0 9px;background:#3c3c3c;border-radius:2px;color:#e8c07a;cursor:pointer;font-size:11.5px" style-hover="background:#5a4a24;color:#ffe2ad">⚠ Wiederherstellen</div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- Einstellungen -->
+        <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:1;min-height:0;overflow-y:auto;padding:10px 10px 14px;display:flex;flex-direction:column;gap:12px">
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="font-size:13px;color:#f0f0f0;font-weight:400">Erkannte Verzeichnisse</div>
+              <sc-for list="{{ paths }}" as="p" hint-placeholder-count="5">
+                <div style="display:grid;grid-template-columns:150px 1fr auto auto;align-items:center;gap:8px;min-height:26px;padding:3px 6px;background:{{ p.bg }};border-radius:2px">
+                  <div style="font-size:12px;color:#8c8c8c">{{ p.label }}</div>
+                  <div style="font-family:'Ubuntu Mono', monospace;font-size:11px;color:{{ p.valueFg }};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.value }}</div>
+                  <div onClick="{{ p.onOpen }}" style="height:21px;display:flex;align-items:center;padding:0 9px;background:#3c3c3c;border-radius:2px;color:#b4b4b4;cursor:pointer;font-size:11.5px" style-hover="background:#464646;color:#f0f0f0">Öffnen</div>
+                  <sc-if value="{{ p.hasChange }}" hint-placeholder-val="{{ false }}">
+                    <div onClick="{{ p.onChange }}" style="height:21px;display:flex;align-items:center;padding:0 9px;background:#3c3c3c;border-radius:2px;color:#b4b4b4;cursor:pointer;font-size:11.5px" style-hover="background:#464646;color:#f0f0f0">Ändern …</div>
+                  </sc-if>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="height:1px;background:#3c3c3c"></div>
+
+            <div style="display:flex;flex-direction:column;gap:9px">
+              <div style="font-size:13px;color:#f0f0f0;font-weight:400">Verhalten</div>
+              <div onClick="{{ onToggleAutoBackup }}" style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;max-width:660px">
+                <div style="width:14px;height:14px;margin-top:2px;flex:none;border-radius:2px;background:#3c3c3c;display:flex;align-items:center;justify-content:center;font-size:10px;line-height:1;color:#f0f0f0">{{ autoBackupCheck }}</div>
+                <div style="display:flex;flex-direction:column;gap:1px">
+                  <span style="font-size:12.5px;color:#c8c8c8">Vor dem Start automatisch ein Savegame-Backup anlegen</span>
+                  <span style="font-size:11px;color:#6e6e6e">Etikett „vor Modded-Start“. Schlägt es fehl, startet das Spiel trotzdem — mit Warnung.</span>
+                </div>
+              </div>
+
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:150px;font-size:12px;color:#8c8c8c">Steam-Nutzerprofil</div>
+                <div onClick="{{ onOpenSteamUser }}" style="height:24px;min-width:230px;display:flex;align-items:center;gap:8px;padding:0 8px;background:#3c3c3c;border-radius:2px;color:{{ steamUserFg }};cursor:pointer;font-size:12.5px" style-hover="background:#464646;color:#f0f0f0">
+                  <span style="flex:1;font-family:'Ubuntu Mono', monospace;font-size:11.5px">{{ steamUserLabel }}</span>
+                  <span style="font-size:9px;color:#8c8c8c">⏷</span>
+                </div>
+                <div style="font-size:11px;color:#6e6e6e">nötig, wenn mehrere Profile im Prefix liegen</div>
+              </div>
+
+              <div style="display:flex;align-items:flex-start;gap:8px;max-width:660px">
+                <span style="color:{{ eacStateFg }};margin-top:1px">{{ eacStateIcon }}</span>
+                <div style="display:flex;flex-direction:column;gap:1px">
+                  <span style="font-size:12.5px;color:#c8c8c8">{{ eacSettingTitle }}</span>
+                  <span style="font-size:11px;color:#6e6e6e;line-height:1.4">{{ eacSettingBody }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+      </div>
+    </div>
+
+    <!-- TopBottomPanel::bottom -->
+    <div style="height:26px;flex:none;border-top:1px solid #3c3c3c;background:#1b1b1b;display:flex;align-items:center;gap:10px;padding:0 10px;font-size:11px">
+      <sc-if value="{{ importing }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:center;gap:8px;flex:none">
+          <div style="width:180px;height:10px;background:#0a0a0a;border:1px solid #3c3c3c;border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:{{ progressPct }};background:#005c80"></div>
+          </div>
+          <span style="color:#c8c8c8">{{ progressLabel }}</span>
+        </div>
+        <div onClick="{{ onCancelImport }}" style="flex:none;height:18px;display:flex;align-items:center;padding:0 7px;background:#3c3c3c;border-radius:2px;color:#b4b4b4;cursor:pointer" style-hover="background:#464646;color:#f0f0f0">Abbrechen</div>
+      </sc-if>
+      <div style="color:{{ statusFg }};flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ status }}</div>
+      <div style="font-family:'Ubuntu Mono', monospace;color:#6e6e6e;white-space:nowrap">{{ statusRight }}</div>
+    </div>
+
+    <!-- ===================== Modale Fenster ===================== -->
+    <sc-if value="{{ hasDialog }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50">
+
+        <sc-if value="{{ dlgRestore }}" hint-placeholder-val="{{ false }}">
+          <div style="width:560px;background:#1b1b1b;border:1px solid #6b5420;border-radius:6px;box-shadow:0 22px 60px rgba(0,0,0,.7);overflow:hidden">
+            <div style="height:30px;display:flex;align-items:center;gap:8px;padding:0 10px;background:#242424;border-bottom:1px solid #3c3c3c">
+              <span style="color:#ff8f00;font-size:12px">⚠</span>
+              <span style="font-size:12.5px;color:#f0f0f0">Wiederherstellen, obwohl Steam läuft?</span>
+              <div style="flex:1"></div>
+              <div onClick="{{ onCloseDialog }}" style="color:#8c8c8e;cursor:pointer;font-size:11px" style-hover="color:#f0f0f0">✕</div>
+            </div>
+            <div style="padding:12px 14px;display:flex;flex-direction:column;gap:10px">
+              <div style="font-size:12.5px;color:#c8c8c8;line-height:1.5">Steam läuft. Die Cloud-Synchronisation kann den wiederhergestellten Stand überschreiben, sobald das Spiel wieder startet. Bitte Steam beenden und erneut versuchen — oder ausdrücklich bestätigen, falls der erkannte Prozess sicher nicht mehr synchronisiert (hängender Client, Container).</div>
+              <div style="background:#0a0a0a;border:1px solid #3c3c3c;border-radius:3px;padding:8px 10px;display:flex;flex-direction:column;gap:4px">
+                <div style="display:flex;gap:10px;font-size:11.5px"><span style="width:150px;color:#6e6e6e">Wiederherstellen</span><span style="font-family:'Ubuntu Mono', monospace;color:#c8c8c8">{{ restoreAt }} · {{ restoreLabel }}</span></div>
+                <div style="display:flex;gap:10px;font-size:11.5px"><span style="width:150px;color:#6e6e6e">Ziel</span><span style="font-family:'Ubuntu Mono', monospace;color:#c8c8c8">…/storage/steam/user/76561198042…/Main</span></div>
+                <div style="display:flex;gap:10px;font-size:11.5px"><span style="width:150px;color:#6e6e6e">Davor gesichert</span><span style="color:#7ec27e">automatisch, als „vor Wiederherstellung“</span></div>
+              </div>
+              <div onClick="{{ onToggleForce }}" style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <div style="width:14px;height:14px;margin-top:2px;flex:none;border-radius:2px;background:#3c3c3c;display:flex;align-items:center;justify-content:center;font-size:10px;line-height:1;color:#f0f0f0">{{ forceCheck }}</div>
+                <span style="font-size:12px;color:#c8c8c8;line-height:1.4">Mir ist klar, dass Steams Cloud-Synchronisation den zurückgespielten Stand überschreiben kann.</span>
+              </div>
+              <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center">
+                <div onClick="{{ onCloseDialog }}" style="height:25px;display:flex;align-items:center;padding:0 12px;background:#3c3c3c;border-radius:2px;color:#f0f0f0;cursor:pointer;font-size:12.5px;border:1px solid #969696" style-hover="background:#464646">Abbrechen</div>
+                <div onClick="{{ onConfirmRestore }}" style="height:25px;display:flex;align-items:center;padding:0 12px;background:{{ forceBg }};border-radius:2px;color:{{ forceFg }};cursor:{{ forceCursor }};font-size:12.5px;opacity:{{ forceOpacity }}">Trotzdem wiederherstellen</div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ dlgVanilla }}" hint-placeholder-val="{{ false }}">
+          <div style="width:520px;background:#1b1b1b;border:1px solid #3c3c3c;border-radius:6px;box-shadow:0 22px 60px rgba(0,0,0,.7);overflow:hidden">
+            <div style="height:30px;display:flex;align-items:center;gap:8px;padding:0 10px;background:#242424;border-bottom:1px solid #3c3c3c">
+              <span style="font-size:12.5px;color:#f0f0f0">Ohne Mods starten?</span>
+              <div style="flex:1"></div>
+              <div onClick="{{ onCloseDialog }}" style="color:#8c8c8c;cursor:pointer;font-size:11px" style-hover="color:#f0f0f0">✕</div>
+            </div>
+            <div style="padding:12px 14px;display:flex;flex-direction:column;gap:10px">
+              <div style="font-size:12.5px;color:#c8c8c8;line-height:1.5">Das deaktiviert alle Mods. Damit die Auswahl nicht verloren geht, sichert der Loader sie vorher als Profil:</div>
+              <div style="background:#0a0a0a;border:1px solid #3c3c3c;border-radius:3px;padding:8px 10px;font-family:'Ubuntu Mono', monospace;font-size:11.5px;color:#c8c8c8">vor Vanilla-Start {{ vanillaStamp }}</div>
+              <div style="font-size:11.5px;color:#8c8c8c;line-height:1.45">Zurück geht es über <span style="color:#c8c8c8">Profile → Anwenden</span>. Scheitert die Sicherung, wird nichts verändert und nichts gestartet.</div>
+              <div style="display:flex;gap:8px;justify-content:flex-end">
+                <div onClick="{{ onCloseDialog }}" style="height:25px;display:flex;align-items:center;padding:0 12px;background:#3c3c3c;border-radius:2px;color:#f0f0f0;cursor:pointer;font-size:12.5px;border:1px solid #969696" style-hover="background:#464646">Abbrechen</div>
+                <div onClick="{{ onConfirmVanilla }}" style="height:25px;display:flex;align-items:center;padding:0 12px;background:#005c80;border-radius:2px;color:#dceaff;cursor:pointer;font-size:12.5px" style-hover="background:#00749f;color:#ffffff">Sichern und ohne Mods starten</div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ dlgSteamUser }}" hint-placeholder-val="{{ false }}">
+          <div style="width:470px;background:#1b1b1b;border:1px solid #3c3c3c;border-radius:6px;box-shadow:0 22px 60px rgba(0,0,0,.7);overflow:hidden">
+            <div style="height:30px;display:flex;align-items:center;gap:8px;padding:0 10px;background:#242424;border-bottom:1px solid #3c3c3c">
+              <span style="font-size:12.5px;color:#f0f0f0">Steam-Nutzerprofil wählen</span>
+              <div style="flex:1"></div>
+              <div onClick="{{ onCloseDialog }}" style="color:#8c8c8c;cursor:pointer;font-size:11px" style-hover="color:#f0f0f0">✕</div>
+            </div>
+            <div style="padding:12px 14px;display:flex;flex-direction:column;gap:10px">
+              <div style="font-size:12.5px;color:#c8c8c8;line-height:1.5">Im Proton-Prefix liegen mehrere Profile. Die Auswahl bestimmt, welche Spielstände gesichert und wiederhergestellt werden.</div>
+              <div style="display:flex;flex-direction:column;gap:4px">
+                <sc-for list="{{ steamUsers }}" as="u" hint-placeholder-count="2">
+                  <div onClick="{{ u.onSelect }}" style="display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:2px;background:{{ u.bg }};cursor:pointer" style-hover="background:#2f2f2f">
+                    <div style="width:13px;height:13px;flex:none;border-radius:7px;border:1px solid #969696;display:flex;align-items:center;justify-content:center">
+                      <div style="width:7px;height:7px;border-radius:4px;background:{{ u.dot }}"></div>
+                    </div>
+                    <span style="font-family:'Ubuntu Mono', monospace;font-size:12px;color:#c8c8c8;flex:1">{{ u.id }}</span>
+                    <span style="font-size:11px;color:#6e6e6e">{{ u.hint }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="display:flex;gap:8px;justify-content:flex-end">
+                <div onClick="{{ onCloseDialog }}" style="height:25px;display:flex;align-items:center;padding:0 12px;background:#3c3c3c;border-radius:2px;color:#b4b4b4;cursor:pointer;font-size:12.5px" style-hover="background:#464646;color:#f0f0f0">Abbrechen</div>
+                <div onClick="{{ onConfirmSteamUser }}" style="height:25px;display:flex;align-items:center;padding:0 12px;background:#005c80;border-radius:2px;color:#dceaff;cursor:pointer;font-size:12.5px" style-hover="background:#00749f;color:#ffffff">Übernehmen</div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ dlgDeleteProfile }}" hint-placeholder-val="{{ false }}">
+          <div style="width:430px;background:#1b1b1b;border:1px solid #3c3c3c;border-radius:6px;box-shadow:0 22px 60px rgba(0,0,0,.7);overflow:hidden">
+            <div style="height:30px;display:flex;align-items:center;gap:8px;padding:0 10px;background:#242424;border-bottom:1px solid #3c3c3c">
+              <span style="font-size:12.5px;color:#f0f0f0">Profil löschen?</span>
+              <div style="flex:1"></div>
+              <div onClick="{{ onCloseDialog }}" style="color:#8c8c8c;cursor:pointer;font-size:11px" style-hover="color:#f0f0f0">✕</div>
+            </div>
+            <div style="padding:12px 14px;display:flex;flex-direction:column;gap:10px">
+              <div style="font-size:12.5px;color:#c8c8c8;line-height:1.5">„{{ deleteTarget }}“ wird gelöscht. Aktivierung und Reihenfolge der Mods bleiben, wie sie sind.</div>
+              <div style="display:flex;gap:8px;justify-content:flex-end">
+                <div onClick="{{ onCloseDialog }}" style="height:25px;display:flex;align-items:center;padding:0 12px;background:#3c3c3c;border-radius:2px;color:#f0f0f0;cursor:pointer;font-size:12.5px;border:1px solid #969696" style-hover="background:#464646">Abbrechen</div>
+                <div onClick="{{ onConfirmDelete }}" style="height:25px;display:flex;align-items:center;padding:0 12px;background:#5a2a2a;border-radius:2px;color:#ffc9c9;cursor:pointer;font-size:12.5px" style-hover="background:#6e3333;color:#ffffff">Löschen</div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+      </div>
+    </sc-if>
+  </div>
+
+  <div style="width:1100px;max-width:100%;font-size:11.5px;color:#6e6e6e;line-height:1.55;text-wrap:pretty">
+    Reihenfolge über ▲ ▼ pro Zeile (Ziehen kommt zusätzlich, Tastatur: Alt + ↑/↓). Farbe trägt nie allein die Bedeutung — jeder Statusmarker hat Wort und Zeichen. Der Import blockiert das Fenster nicht: Fortschritt läuft in der Statusleiste.
+  </div>
+ </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;umuAvailable&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Verfügbarkeit&quot;,&quot;label&quot;:&quot;umu-run vorhanden („Ohne EAC“ sichtbar)&quot;},&quot;showFilenames&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Mod-Liste&quot;,&quot;label&quot;:&quot;Dateinamen in der Zeile zeigen&quot;},&quot;rowDensity&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;normal&quot;,&quot;kompakt&quot;],&quot;default&quot;:&quot;normal&quot;,&quot;tsType&quot;:&quot;'normal' | 'kompakt'&quot;,&quot;section&quot;:&quot;Mod-Liste&quot;,&quot;label&quot;:&quot;Zeilendichte&quot;}}">
+class Component extends DCLogic {
+  static baseMods() {
+    return [
+      {pak:'astartes_overhaul.pak',name:'Astartes Overhaul',version:'2.4.1',author:'Malleus_Dev',size:'3,8 GB',imported:'30.08.2026 19:12',source:'~/Downloads/AstartesOverhaul-2.4.1.zip',notes:'Ersetzt Rüstungs- und Waffenmeshes aller Kapitel.',nexus:'1184',hash:'b1f4c9a0…7e22',off:false,status:null},
+      {pak:'custodes_overhaul.pak',name:'Custodes Overhaul',version:'1.9',author:'AureaLegio',size:'2,1 GB',imported:'02.09.2026 21:40',source:'~/Downloads/CustodesOverhaul_19.7z',notes:'Setzt Astartes Overhaul voraus.',nexus:'1402',hash:'4c07de55…9a10',off:false,status:null},
+      {pak:'bolter_sound_rework.pak',name:'Bolter-Sound Rework',version:'3.2',author:'Vox_Caster',size:'640 MB',imported:'12.08.2026 11:05',source:'~/Downloads/BolterSounds32.zip',notes:'',nexus:'908',hash:'aa91b30f…c471',off:false,status:null},
+      {pak:'no_intro_videos.pak',name:'Keine Intro-Videos',version:'1.0',author:'kmr',size:'12,4 MB',imported:'12.08.2026 11:06',source:'~/Downloads/no_intro.pak',notes:'Überspringt Publisher-Logos.',nexus:'—',hash:'7d0e1188…3fb9',off:false,status:null},
+      {pak:'ultramarines_heraldik.pak',name:'Ultramarines-Heraldik-Pack',version:'1.4',author:'Tetrarch',size:'880 MB',imported:'05.07.2026 22:18',source:'~/Downloads/Heraldik14.rar',notes:'',nexus:'655',hash:'e3ab77c2…0d84',off:true,status:null},
+      {pak:'hud_declutter.pak',name:'HUD entschlackt',version:'0.8',author:'lorn_v',size:'4,2 MB',imported:'05.07.2026 22:19',source:'~/Downloads/hud_declutter.pak',notes:'',nexus:'—',hash:'12fd6a41…bb07',off:true,status:null},
+      {pak:'tyraniden_dichte.pak',name:'Tyranidenschwarm dichter',version:'1.1',author:'Hive_Mind',size:'96 MB',imported:'28.06.2026 16:44',source:'~/Downloads/SwarmDensity11.zip',notes:'',nexus:'1071',hash:'55c0ffee…41a2',off:true,status:null}
+    ];
+  }
+
+  static badges() {
+    return {
+      fremd:      {t:'ÜBERNOMMEN', i:'⚠', c:'#ff8f00'},
+      veraendert: {t:'GEÄNDERT',   i:'⚠', c:'#ff8f00'},
+      fehlt:      {t:'FEHLT',      i:'✕', c:'#ff5f5f'},
+      neu:        {t:'NEU',        i:'●', c:'#5aaaff'},
+      zurueck:    {t:'ZURÜCK',     i:'↩', c:'#b4b4b4'}
+    };
+  }
+
+  static scenarioList() {
+    return [
+      ['normal', 'Normalbetrieb'],
+      ['no-game', 'Spiel nicht gefunden'],
+      ['no-mods', 'Keine Mods'],
+      ['importing', 'Import läuft'],
+      ['markers', 'Statusmarker'],
+      ['restore-warn', 'Steam läuft (4.3)'],
+      ['vanilla', 'Vanilla-Start (4.4)'],
+      ['readonly', 'Schreibgeschützt'],
+      ['steam-users', 'Mehrere Steam-Profile'],
+      ['profiles', 'Profile'],
+      ['backups', 'Savegame-Backups'],
+      ['settings', 'Einstellungen']
+    ];
+  }
+
+  static scenarioState(id) {
+    const mods = Component.baseMods();
+    const s = {
+      scenario: id, section: 'mods', dialog: null, gameFound: true, writable: true,
+      importing: false, savesBlocked: false, mods, sel: null, notices: [], force: false,
+      steamUser: '76561198042', steamUserPick: '76561198042', deleteTarget: '',
+      status: 'Bereit.', verified: {}
+    };
+    if (id === 'no-game') {
+      return Object.assign(s, {gameFound: false, mods: [], status: 'Spielverzeichnis unbekannt — Mods und Ladereihenfolge nicht lesbar.'});
+    }
+    if (id === 'no-mods') {
+      return Object.assign(s, {mods: [], status: 'Mods-Verzeichnis leer — pak_config.yaml hat keine Einträge.'});
+    }
+    if (id === 'importing') {
+      return Object.assign(s, {importing: true, status: 'Import läuft — das Fenster bleibt bedienbar.'});
+    }
+    if (id === 'markers') {
+      const m = Component.baseMods();
+      m[0].status = 'veraendert';
+      m[2].status = 'fehlt';
+      m[4].status = 'zurueck';
+      m.unshift({pak:'zz_ancient_armour.pak',name:'zz_ancient_armour.pak',version:'—',author:'—',size:'1,2 GB',imported:'—',source:'von Hand ins Mods-Verzeichnis gelegt',notes:'Nicht über den Loader importiert — Metadaten unbekannt.',nexus:'—',hash:'noch nicht gebildet',off:false,status:'fremd'});
+      m.push({pak:'chaos_texturen_4k.pak',name:'Chaos-Texturen 4K',version:'2.0',author:'Ferrum',size:'5,4 GB',imported:'14.09.2026 21:31',source:'~/Downloads/ChaosTextures4K_20.7z',notes:'Gerade importiert.',nexus:'1520',hash:'9b21ad07…ef58',off:true,status:'neu'});
+      return Object.assign(s, {
+        mods: m, sel: 'chaos_texturen_4k.pak',
+        status: 'Abgleich mit dem Mods-Verzeichnis abgeschlossen — 4 Abweichungen.',
+        notices: [
+          {kind:'warn', text:'zz_ancient_armour.pak stand nicht in pak_config.yaml und wurde aktiv übernommen — eine Datei im Mods-Verzeichnis lädt ohnehin, ungesteuert und zuerst.'},
+          {kind:'warn', text:'astartes_overhaul.pak wurde außerhalb des Loaders verändert (Hash weicht ab).'},
+          {kind:'error', text:'bolter_sound_rework.pak steht in pak_config.yaml, die Datei fehlt aber — etwa nach einem Steam-Update.'},
+          {kind:'info', text:'ultramarines_heraldik.pak war zwischenzeitlich verschwunden und wurde mit vorherigem Zustand und vorheriger Position zurückgestellt.'},
+          {kind:'info', text:'Chaos-Texturen 4K importiert — deaktiviert, am Ende der Ladereihenfolge.'}
+        ]
+      });
+    }
+    if (id === 'restore-warn') {
+      return Object.assign(s, {section: 'saves', dialog: 'restore', status: 'Steam-Prozess erkannt.'});
+    }
+    if (id === 'vanilla') {
+      const m = Component.baseMods().map(x => Object.assign({}, x, {off: true}));
+      return Object.assign(s, {
+        mods: m, status: 'Ohne Mods gestartet — alle Einträge deaktiviert.',
+        notices: [{kind:'info', text:'Bisheriger Zustand als Profil „vor Vanilla-Start 2026-09-14 21:40“ gesichert. Darüber kommst du zurück.', action:'Profil anwenden'}]
+      });
+    }
+    if (id === 'readonly') {
+      return Object.assign(s, {
+        writable: false, status: 'Nur Lesen möglich — Änderungen werden nicht gespeichert.',
+        notices: [{kind:'warn', text:'Das Mods-Verzeichnis ist schreibgeschützt. Aktivieren, Reihenfolge und Import sind deshalb gesperrt — Lesen und Starten gehen weiter.', action:'Verzeichnis öffnen'}]
+      });
+    }
+    if (id === 'steam-users') {
+      return Object.assign(s, {section: 'saves', savesBlocked: true, steamUser: null, status: 'Savegame-Funktionen gesperrt: Nutzerprofil nicht eindeutig.'});
+    }
+    if (id === 'profiles') return Object.assign(s, {section: 'profiles'});
+    if (id === 'backups') return Object.assign(s, {section: 'saves'});
+    if (id === 'settings') return Object.assign(s, {section: 'settings'});
+    return s;
+  }
+
+  state = Object.assign(Component.scenarioState('normal'), {
+    filter: '', launchMode: 'steam', launchComboOpen: false, autoBackup: true,
+    profileName: '', backupLabel: '',
+    profiles: [
+      {name:'Kampagne mit Overhaul', active:4, total:7, saved:'02.09.2026 21:55', auto:false},
+      {name:'Multiplayer-tauglich', active:2, total:7, saved:'21.08.2026 18:03', auto:false},
+      {name:'vor Vanilla-Start 2026-09-14 21:40', active:4, total:7, saved:'14.09.2026 21:40', auto:true}
+    ],
+    backups: [
+      {at:'14.09.2026 21:38', label:'vor Modded-Start', size:'18,4 MB'},
+      {at:'12.09.2026 20:11', label:'Kapitel 3 abgeschlossen', size:'18,1 MB'},
+      {at:'09.09.2026 23:02', label:'vor Wiederherstellung', size:'17,9 MB'},
+      {at:'05.09.2026 19:47', label:'—', size:'17,2 MB'},
+      {at:'31.08.2026 16:20', label:'vor Modded-Start', size:'16,8 MB'}
+    ],
+    restoreIndex: 0
+  });
+
+  componentDidMount() {
+    this.onKey = (e) => {
+      if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+      if (!this.state.sel) return;
+      e.preventDefault();
+      this.move(this.state.sel, e.key === 'ArrowUp' ? -1 : 1);
+    };
+    window.addEventListener('keydown', this.onKey);
+  }
+
+  componentWillUnmount() { window.removeEventListener('keydown', this.onKey); }
+
+  setScenario(id) {
+    this.setState(Object.assign(Component.scenarioState(id), {filter: '', launchComboOpen: false, launchMode: id === 'vanilla' ? 'vanilla' : 'steam'}));
+  }
+
+  move(pak, delta) {
+    if (!this.state.writable) { this.setState({status: 'Verschieben nicht möglich — Mods-Verzeichnis ist schreibgeschützt.'}); return; }
+    this.setState(s => {
+      const mods = s.mods.slice();
+      const i = mods.findIndex(m => m.pak === pak);
+      const j = i + delta;
+      if (i < 0 || j < 0 || j >= mods.length) return {};
+      const tmp = mods[i]; mods[i] = mods[j]; mods[j] = tmp;
+      return {mods, sel: pak, status: 'Ladereihenfolge geändert — Position ' + (j + 1) + ' von ' + mods.length + '.'};
+    });
+  }
+
+  toggle(pak) {
+    if (!this.state.writable) { this.setState({status: 'Änderung nicht möglich — Mods-Verzeichnis ist schreibgeschützt.'}); return; }
+    this.setState(s => {
+      const mods = s.mods.map(m => m.pak === pak ? Object.assign({}, m, {off: !m.off}) : m);
+      const m = mods.find(x => x.pak === pak);
+      return {mods, status: m.name + (m.off ? ' deaktiviert' : ' aktiviert') + ' — in pak_config.yaml geschrieben.'};
+    });
+  }
+
+  renderVals() {
+    const s = this.state;
+    const B = Component.badges();
+    const total = s.mods.length;
+    const active = s.mods.filter(m => !m.off).length;
+    const umu = this.props.umuAvailable ?? true;
+    const dense = (this.props.rowDensity ?? 'normal') === 'kompakt';
+
+    const gameDir = '~/.local/share/Steam/steamapps/common/Space Marine 2';
+    const modsDir = gameDir + '/client_pc/root/mods';
+
+    const filter = s.filter.trim().toLowerCase();
+    const visible = filter ? s.mods.filter(m => (m.name + ' ' + m.pak).toLowerCase().includes(filter)) : s.mods;
+
+    const rows = visible.map((m, i) => {
+      const bd = m.status ? B[m.status] : null;
+      const selected = s.sel === m.pak;
+      const stripe = i % 2 === 1;
+      return {
+        pak: m.pak, name: m.name, version: m.version, rowH: dense ? '22px' : '28px',
+        bg: selected ? '#005c80' : (stripe ? '#232323' : '#1b1b1b'),
+        bgHover: selected ? '#00668d' : '#2a2a2a',
+        nameFg: m.status === 'fehlt' ? '#8c8c8c' : (selected ? '#ffffff' : (m.off ? '#8c8c8c' : '#dcdcdc')),
+        nameDeco: m.status === 'fehlt' ? 'line-through' : 'none',
+        pakFg: selected ? '#c0deff' : '#6e6e6e',
+        dimFg: selected ? '#c0deff' : '#8c8c8c',
+        boxBg: m.off ? '#3c3c3c' : '#0a0a0a',
+        boxBorder: m.off ? '#3c3c3c' : '#969696',
+        check: m.off ? '' : '✔',
+        checkFg: '#f0f0f0',
+        toggleCursor: s.writable ? 'pointer' : 'not-allowed',
+        hasBadge: !!bd, badge: bd ? bd.t : '', badgeIcon: bd ? bd.i : '', badgeColor: bd ? bd.c : '#8c8c8c',
+        onSelect: () => this.setState({sel: m.pak}),
+        onToggle: (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.toggle(m.pak); },
+        onUp: (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.move(m.pak, -1); },
+        onDown: (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.move(m.pak, 1); }
+      };
+    });
+
+    const noticeStyle = {
+      info: {bg:'#17232a', border:'#2d4f60', color:'#5aaaff', icon:'●'},
+      warn: {bg:'#2a2317', border:'#6b5420', color:'#ff8f00', icon:'⚠'},
+      error:{bg:'#2a1a1a', border:'#6b2626', color:'#ff5f5f', icon:'✕'}
+    };
+    const notices = s.notices.map((n, i) => {
+      const st = noticeStyle[n.kind];
+      return {
+        text: n.text, bg: st.bg, border: st.border, color: st.color, icon: st.icon,
+        hasAction: !!n.action, actionLabel: n.action || '',
+        onAction: () => {
+          if (n.action === 'Profil anwenden') this.setState({section: 'profiles', status: 'Profil „vor Vanilla-Start 2026-09-14 21:40“ — mit Anwenden zurückstellen.'});
+          else this.setState({status: modsDir + ' im Dateimanager geöffnet.'});
+        },
+        onDismiss: () => this.setState(st2 => ({notices: st2.notices.filter((x, j) => j !== i)}))
+      };
+    });
+
+    const modeLabels = {steam: 'Mit Mods (über Steam)', vanilla: 'Ohne Mods (Vanilla)', noeac: 'Ohne EAC (kein Multiplayer)'};
+    const modeIds = umu ? ['steam', 'vanilla', 'noeac'] : ['steam', 'vanilla'];
+    const launchModes = modeIds.map(id => ({
+      label: modeLabels[id],
+      bg: s.launchMode === id ? '#005c80' : 'transparent',
+      fg: s.launchMode === id ? '#ffffff' : '#b4b4b4',
+      onSelect: () => this.setState({launchMode: id, launchComboOpen: false})
+    }));
+
+    const nav = [
+      {id:'mods', label:'Mods', icon:'●', count: s.gameFound ? String(total) : '—'},
+      {id:'profiles', label:'Profile', icon:'▤', count: String(s.profiles.length)},
+      {id:'saves', label:'Savegames', icon:'▣', count: s.savesBlocked ? '⚠' : String(s.backups.length)},
+      {id:'settings', label:'Einstellungen', icon:'⚙', count: ''}
+    ];
+    const navItems = nav.map(n => {
+      const on = s.section === n.id;
+      return {
+        label: n.label, icon: n.icon, count: n.count,
+        bg: on ? '#005c80' : 'transparent', bgHover: on ? '#00668d' : '#2a2a2a',
+        fg: on ? '#ffffff' : '#b4b4b4', iconFg: on ? '#c0deff' : '#6e6e6e',
+        countFg: on ? '#c0deff' : '#6e6e6e',
+        onSelect: () => this.setState({section: n.id, launchComboOpen: false})
+      };
+    });
+
+    const selMod = s.mods.find(m => m.pak === s.sel) || null;
+    const restore = s.backups[s.restoreIndex] || s.backups[0];
+
+    const paths = [
+      {label:'Spiel', value: s.gameFound ? gameDir : 'nicht erkannt', change: true},
+      {label:'Mods', value: s.gameFound ? modsDir : '—'},
+      {label:'pak_config.yaml', value: s.gameFound ? modsDir + '/pak_config.yaml' : '—'},
+      {label:'Savegames', value: s.steamUser ? '…/compatdata/2183900/pfx/…/Saber/Space Marine 2/storage/steam/user/' + s.steamUser + '/Main' : 'nicht eindeutig — Nutzerprofil wählen'},
+      {label:'Backups', value:'~/.local/share/sm2-modloader/backups/saves'},
+      {label:'Profile', value:'~/.local/share/sm2-modloader/profiles'}
+    ].map((p, i) => ({
+      label: p.label, value: p.value, bg: i % 2 === 1 ? '#202020' : '#1b1b1b',
+      valueFg: (p.value.indexOf('nicht') === 0 || p.value.indexOf('nicht eindeutig') > -1) ? '#ff8f00' : '#c8c8c8',
+      hasChange: !!p.change,
+      onOpen: () => this.setState({status: p.label + ' im Dateimanager geöffnet (xdg-open).'}),
+      onChange: () => this.setState({status: 'Systemdialog: Spielverzeichnis wählen — muss client_pc/root/mods enthalten.'})
+    }));
+
+    return {
+      scenarios: Component.scenarioList().map(([id, label]) => ({
+        label, bg: s.scenario === id ? '#005c80' : '#1b1b1b',
+        fg: s.scenario === id ? '#ffffff' : '#8c8c8c',
+        border: s.scenario === id ? '#005c80' : '#333333',
+        onSelect: () => this.setScenario(id)
+      })),
+
+      headline: s.gameFound ? (total + ' Mods · ' + active + ' aktiv') : 'Kein Spielverzeichnis',
+      headlinePath: s.gameFound ? modsDir : 'Erkennung fehlgeschlagen — Verzeichnis manuell wählen',
+
+      launchLabel: modeLabels[s.launchMode] || modeLabels.steam,
+      launchModes, launchComboOpen: s.launchComboOpen,
+      toggleLaunchCombo: () => this.setState(st => ({launchComboOpen: !st.launchComboOpen})),
+      onLaunch: () => {
+        if (!s.gameFound) { this.setState({status: 'Start nicht möglich — Spielverzeichnis unbekannt.'}); return; }
+        if (s.launchMode === 'vanilla') this.setState({dialog: 'vanilla'});
+        else if (s.launchMode === 'noeac') this.setState({status: 'Start ohne EAC über umu-run — Multiplayer ist damit nicht möglich.'});
+        else this.setState({status: s.autoBackup ? 'Savegame gesichert („vor Modded-Start“), Spiel über Steam gestartet.' : 'Spiel über Steam gestartet.'});
+      },
+
+      navItems,
+      isMods: s.section === 'mods' && s.gameFound,
+      isNoGame: s.section === 'mods' && !s.gameFound,
+      isProfiles: s.section === 'profiles',
+      isSaves: s.section === 'saves',
+      isSettings: s.section === 'settings',
+
+      gameStateIcon: s.gameFound ? '✓' : '⚠',
+      gameStateFg: s.gameFound ? '#7ec27e' : '#ff8f00',
+      gameStateText: s.gameFound ? 'Spiel erkannt' : 'Spiel nicht gefunden',
+      writeStateIcon: s.writable ? '✓' : '⚠',
+      writeStateFg: s.writable ? '#7ec27e' : '#ff8f00',
+      writeStateText: s.writable ? 'pak_config.yaml beschreibbar' : 'Mods-Verzeichnis schreibgeschützt',
+      eacStateIcon: umu ? '✓' : '○',
+      eacStateFg: umu ? '#7ec27e' : '#6e6e6e',
+      eacStateText: umu ? 'umu-run gefunden — Start ohne EAC möglich' : 'umu-run fehlt — „Ohne EAC“ ausgeblendet',
+      eacSettingTitle: umu ? 'Start ohne EAC verfügbar' : 'Start ohne EAC nicht verfügbar',
+      eacSettingBody: umu
+        ? 'umu-run liegt im PATH. Die Option erscheint in der Startauswahl; Multiplayer ist damit nicht möglich.'
+        : 'umu-launcher wurde nicht im PATH gefunden. Die Option wird ausgeblendet, statt beim Start mit einem Fehler zu enden.',
+
+      hasNotices: notices.length > 0, notices,
+      showFilenames: this.props.showFilenames ?? true,
+      rows, showEmptyMods: total === 0,
+      filter: s.filter,
+      onFilter: (e) => this.setState({filter: e.target.value}),
+      countLabel: active + ' von ' + total + ' aktiv',
+      importBg: s.writable ? '#3c3c3c' : '#2b2b2b',
+      importFg: s.writable ? '#b4b4b4' : '#6e6e6e',
+      importCursor: s.writable ? 'pointer' : 'not-allowed',
+      onImport: () => {
+        if (!s.writable) { this.setState({status: 'Import nicht möglich — Mods-Verzeichnis ist schreibgeschützt.'}); return; }
+        this.setScenario('importing');
+      },
+
+      hasSelection: !!selMod,
+      selName: selMod ? selMod.name : '', selPak: selMod ? selMod.pak : '',
+      selAuthor: selMod ? selMod.author : '', selVersion: selMod ? selMod.version : '',
+      selSize: selMod ? selMod.size : '', selImported: selMod ? selMod.imported : '',
+      selNexus: selMod ? selMod.nexus : '', selSource: selMod ? selMod.source : '',
+      selHash: selMod ? selMod.hash : '', selNotes: selMod ? (selMod.notes || '—') : '',
+      onClearSelection: () => this.setState({sel: null}),
+
+      profiles: s.profiles.map((p, i) => ({
+        name: p.name, auto: p.auto, activeLabel: p.active + ' von ' + p.total,
+        saved: p.saved, bg: i % 2 === 1 ? '#232323' : '#1b1b1b',
+        onApply: () => this.setState({status: 'Profil „' + p.name + '“ angewendet — ' + p.active + ' Mods aktiv.'}),
+        onDelete: () => this.setState({dialog: 'deleteProfile', deleteTarget: p.name})
+      })),
+      profileName: s.profileName,
+      onProfileName: (e) => this.setState({profileName: e.target.value}),
+      onSaveProfile: () => this.setState(st => ({
+        status: st.profileName ? 'Profil „' + st.profileName + '“ gespeichert.' : 'Bitte einen Namen für das Profil eingeben.'
+      })),
+
+      savesBlocked: s.savesBlocked,
+      savesOpacity: s.savesBlocked ? '0.45' : '1',
+      savesFg: s.savesBlocked ? '#6e6e6e' : '#b4b4b4',
+      savesCursor: s.savesBlocked ? 'not-allowed' : 'pointer',
+      backupsCountLabel: s.backups.length + ' Backups · neueste zuerst',
+      backupLabel: s.backupLabel,
+      onBackupLabel: (e) => this.setState({backupLabel: e.target.value}),
+      onBackup: () => this.setState(st => ({
+        status: st.savesBlocked ? 'Kein Backup möglich — Steam-Nutzerprofil nicht gewählt.' : 'Backup angelegt: 41 Dateien, 18,5 MB.'
+      })),
+      backups: s.backups.map((b, i) => ({
+        at: b.at, label: b.label, size: b.size, bg: i % 2 === 1 ? '#232323' : '#1b1b1b',
+        verified: !!s.verified[b.at], verifiedText: 'geprüft, 41 Dateien',
+        onVerify: () => this.setState(st => {
+          if (st.savesBlocked) return {status: 'Prüfen nicht möglich — Steam-Nutzerprofil nicht gewählt.'};
+          const v = Object.assign({}, st.verified); v[b.at] = true;
+          return {verified: v, status: 'Backup ' + b.at + ' geprüft — alle Hashes stimmen mit dem Manifest überein.'};
+        }),
+        onRestore: () => this.setState(st => st.savesBlocked
+          ? {status: 'Wiederherstellen nicht möglich — Steam-Nutzerprofil nicht gewählt.'}
+          : {dialog: 'restore', restoreIndex: i, force: false})
+      })),
+
+      paths,
+      autoBackupCheck: s.autoBackup ? '✔' : '',
+      onToggleAutoBackup: () => this.setState(st => ({autoBackup: !st.autoBackup, status: 'Automatisches Backup vor dem Start ' + (st.autoBackup ? 'aus' : 'ein') + '.'})),
+      steamUserLabel: s.steamUser ? s.steamUser : 'nicht gewählt — 2 Profile gefunden',
+      steamUserFg: s.steamUser ? '#c8c8c8' : '#ff8f00',
+      onOpenSteamUser: () => this.setState({dialog: 'steamUser'}),
+
+      importing: s.importing,
+      progressPct: '64%',
+      progressLabel: 'Entpacken: CustodesOverhaul_19.7z — 1,4 GB von 2,1 GB (2 von 3 Dateien)',
+      onCancelImport: () => this.setScenario('normal'),
+
+      status: s.status,
+      statusFg: (s.status.indexOf('nicht') > -1 || s.status.indexOf('gesperrt') > -1) ? '#ff8f00' : '#8c8c8c',
+      statusRight: s.gameFound ? 'pak_config.yaml · ' + total + ' Einträge' : 'kein Spielverzeichnis',
+
+      hasDialog: !!s.dialog,
+      dlgRestore: s.dialog === 'restore',
+      dlgVanilla: s.dialog === 'vanilla',
+      dlgSteamUser: s.dialog === 'steamUser',
+      dlgDeleteProfile: s.dialog === 'deleteProfile',
+      onCloseDialog: () => this.setState({dialog: null, force: false}),
+
+      restoreAt: restore ? restore.at : '', restoreLabel: restore ? restore.label : '',
+      forceCheck: s.force ? '✔' : '',
+      onToggleForce: () => this.setState(st => ({force: !st.force})),
+      forceBg: s.force ? '#5a2a2a' : '#2b2b2b',
+      forceFg: s.force ? '#ffc9c9' : '#6e6e6e',
+      forceCursor: s.force ? 'pointer' : 'not-allowed',
+      forceOpacity: s.force ? '1' : '0.6',
+      onConfirmRestore: () => this.setState(st => st.force
+        ? {dialog: null, force: false, section: 'saves', status: 'Wiederhergestellt: ' + (restore ? restore.at : '') + ' — vorheriger Stand automatisch als „vor Wiederherstellung“ gesichert.'}
+        : {status: 'Bitte zuerst bestätigen, dass die Cloud-Synchronisation den Stand überschreiben kann.'}),
+
+      vanillaStamp: '2026-09-14 21:40',
+      onConfirmVanilla: () => this.setScenario('vanilla'),
+
+      steamUsers: [
+        {id: '76561198042', hint: 'zuletzt gespielt'},
+        {id: '76561198110', hint: '41 Dateien'}
+      ].map(u => ({
+        id: u.id, hint: u.hint,
+        bg: s.steamUserPick === u.id ? '#22333d' : 'transparent',
+        dot: s.steamUserPick === u.id ? '#5aaaff' : 'transparent',
+        onSelect: () => this.setState({steamUserPick: u.id})
+      })),
+      onConfirmSteamUser: () => this.setState(st => ({
+        dialog: null, steamUser: st.steamUserPick, savesBlocked: false,
+        status: 'Steam-Nutzerprofil ' + st.steamUserPick + ' gesetzt — Savegame-Funktionen freigegeben.'
+      })),
+
+      deleteTarget: s.deleteTarget,
+      onConfirmDelete: () => this.setState(st => ({
+        dialog: null, profiles: st.profiles.filter(p => p.name !== st.deleteTarget),
+        status: 'Profil „' + st.deleteTarget + '“ gelöscht.'
+      })),
+
+      onPickGameDir: () => this.setState({status: 'Systemdialog (rfd/GTK): Spielverzeichnis wählen …'}),
+      onRetryDiscover: () => this.setState({status: 'Steam-Bibliotheken erneut durchsucht — nichts gefunden.'})
+    };
+  }
+}
+</script>
+</body>
+</html>

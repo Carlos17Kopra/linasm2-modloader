@@ -11,12 +11,53 @@ use sm2_core::Error;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// Gewicht einer Meldung aus dem Abgleich – bestimmt in der Oberfläche
+/// Farbe und Symbol, auf der Kommandozeile das Präfix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoticeKind {
+    /// Etwas ist geschehen, das der Nutzer wissen sollte, aber nichts fehlt.
+    Info,
+    /// Etwas weicht vom erwarteten Zustand ab und braucht womöglich eine
+    /// Entscheidung.
+    Warning,
+    /// Etwas Erwartetes fehlt.
+    Error,
+}
+
+/// Eine Meldung aus dem Abgleich zwischen Konfiguration und Verzeichnis.
+///
+/// Struktur statt `eprintln!`: die grafische Oberfläche zeigt dieselben
+/// Meldungen als Hinweisleiste über der Mod-Liste an, und ein bereits auf
+/// stderr geschriebener Text ließe sich dort nicht mehr einfärben, gruppieren
+/// oder wegklicken.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notice {
+    pub kind: NoticeKind,
+    pub text: String,
+}
+
+impl Notice {
+    fn info(text: impl Into<String>) -> Self {
+        Self { kind: NoticeKind::Info, text: text.into() }
+    }
+
+    fn warning(text: impl Into<String>) -> Self {
+        Self { kind: NoticeKind::Warning, text: text.into() }
+    }
+
+    fn error(text: impl Into<String>) -> Self {
+        Self { kind: NoticeKind::Error, text: text.into() }
+    }
+}
+
 pub struct AppState {
     pub paths: GamePaths,
     pub settings: Settings,
     pub dirs: AppDirs,
     pub library: Library,
     pub config: PakConfig,
+    /// Seit dem letzten Abholen angefallene Meldungen – siehe `Notice`.
+    pub notices: Vec<Notice>,
 }
 
 impl AppState {
@@ -31,14 +72,18 @@ impl AppState {
     /// abgeglichene Konfiguration landet erst auf der Platte, wenn ohnehin
     /// ein verändernder Befehl `persist()` aufruft.
     pub fn open() -> Result<Self> {
-        let dirs = app_dirs().context("Basisverzeichnisse nicht ermittelbar")?;
-        std::fs::create_dir_all(&dirs.config)
-            .with_context(|| format!("{} konnte nicht angelegt werden", dirs.config.display()))?;
-        std::fs::create_dir_all(&dirs.data)
-            .with_context(|| format!("{} konnte nicht angelegt werden", dirs.data.display()))?;
+        let (dirs, settings) = load_dirs_and_settings()?;
+        Self::open_with(dirs, settings)
+    }
 
-        let settings = Settings::load(&dirs.config.join("settings.toml"))?;
-
+    /// Wie `open()`, aber mit bereits geladenen Basisverzeichnissen und
+    /// Einstellungen.
+    ///
+    /// Eigener Einstiegspunkt für die grafische Oberfläche: schlägt die
+    /// Spielerkennung fehl, zeigt sie den Erstlauf-Bildschirm und muss das
+    /// vom Nutzer gewählte Verzeichnis in dieselben Einstellungen schreiben
+    /// können – die also den fehlgeschlagenen Versuch überleben müssen.
+    pub fn open_with(dirs: AppDirs, settings: Settings) -> Result<Self> {
         let paths = match &settings.game_dir {
             Some(dir) => {
                 // Bei manueller Angabe die Bibliothek aus dem Pfad ableiten.
@@ -57,12 +102,25 @@ impl AppState {
         let library_path = dirs.data.join("library.json");
         let mut library = Library::load(&library_path)?;
         let mut config = PakConfig::load(&paths.pak_config_path())?;
-        let cache_refreshed = reconcile_and_report(&mut library, &mut config, &paths)?;
+        let (cache_refreshed, mut notices) = reconcile_and_collect(&mut library, &mut config, &paths)?;
         if cache_refreshed {
-            save_library_cache_best_effort(&library, &library_path);
+            save_library_cache_best_effort(&library, &library_path, &mut notices);
         }
 
-        Ok(Self { paths, settings, dirs, library, config })
+        Ok(Self { paths, settings, dirs, library, config, notices })
+    }
+
+    /// Holt alle seit dem letzten Aufruf angefallenen Meldungen ab und leert
+    /// den Puffer – damit dieselbe Meldung nicht zweimal erscheint.
+    pub fn take_notices(&mut self) -> Vec<Notice> {
+        std::mem::take(&mut self.notices)
+    }
+
+    /// Ist das Mods-Verzeichnis beschreibbar? Die Oberfläche fragt das beim
+    /// Laden einmal, um Aktivieren, Sortieren und Import zu sperren, statt
+    /// den Nutzer erst beim Speichern scheitern zu lassen.
+    pub fn mods_dir_is_writable(&self) -> bool {
+        check_write_permission(&self.paths.mods_dir()).is_ok()
     }
 
     /// Schreibt Bibliothek und Konfiguration auf die Platte.
@@ -111,6 +169,7 @@ impl AppState {
     pub fn persist(&mut self) -> Result<()> {
         check_write_permission(&self.paths.mods_dir())?;
         let mods_dir = self.paths.mods_dir();
+        let mut warnings = Vec::new();
         for (position, entry) in self.config.entries.iter().enumerate() {
             match self.library.mods.get_mut(&entry.pak) {
                 Some(mod_info) => {
@@ -121,14 +180,15 @@ impl AppState {
                     Ok(info) => {
                         self.library.mods.insert(entry.pak.clone(), info);
                     }
-                    Err(e) => eprintln!(
-                        "Warnung: {} konnte nicht für die Positions-/Aktivierungshistorie \
+                    Err(e) => warnings.push(Notice::warning(format!(
+                        "{} konnte nicht für die Positions-/Aktivierungshistorie \
                          registriert werden – {e}",
                         entry.pak
-                    ),
+                    ))),
                 },
             }
         }
+        self.notices.append(&mut warnings);
         self.library.save(&self.dirs.data.join("library.json"))?;
         self.config.save(&self.paths.pak_config_path())?;
         Ok(())
@@ -173,7 +233,12 @@ impl AppState {
 /// schreibt `library.json` dann sofort neu (siehe Review-Punkt 2), damit ein
 /// veraltetes oder fehlendes `mtime` nicht bei jedem weiteren – auch rein
 /// lesenden – Aufruf erneut zu einem vollständigen Hash führt.
-fn reconcile_and_report(library: &mut Library, config: &mut PakConfig, paths: &GamePaths) -> Result<bool> {
+fn reconcile_and_collect(
+    library: &mut Library,
+    config: &mut PakConfig,
+    paths: &GamePaths,
+) -> Result<(bool, Vec<Notice>)> {
+    let mut notices = Vec::new();
     let present = paths.list_paks()?;
 
     let known_state: HashMap<String, KnownState> = library
@@ -190,18 +255,21 @@ fn reconcile_and_report(library: &mut Library, config: &mut PakConfig, paths: &G
         reconciliation.restored.iter().map(String::as_str).collect();
     for pak in &reconciliation.added {
         if restored.contains(pak.as_str()) {
-            eprintln!(
-                "Hinweis: {pak} war zwischenzeitlich nicht vorhanden und wurde mit \
-                 vorherigem Aktivierungszustand und vorheriger Position wiederhergestellt."
-            );
+            notices.push(Notice::info(format!(
+                "{pak} war zwischenzeitlich nicht vorhanden und wurde mit vorherigem \
+                 Aktivierungszustand und vorheriger Position wiederhergestellt."
+            )));
         } else {
-            eprintln!(
-                "Hinweis: {pak} war nicht in pak_config.yaml eingetragen und wurde aktiv übernommen."
-            );
+            notices.push(Notice::warning(format!(
+                "{pak} stand nicht in pak_config.yaml und wurde aktiv übernommen – eine Datei \
+                 im Mods-Verzeichnis lädt ohnehin, ungesteuert und zuerst."
+            )));
         }
     }
     for pak in &reconciliation.removed {
-        eprintln!("Hinweis: {pak} steht in pak_config.yaml, die Datei fehlt aber – Eintrag entfernt.");
+        notices.push(Notice::error(format!(
+            "{pak} steht in pak_config.yaml, die Datei fehlt aber – Eintrag entfernt."
+        )));
     }
 
     // Nur Größe/Änderungszeit werden hier standardmäßig geprüft (siehe
@@ -209,16 +277,15 @@ fn reconcile_and_report(library: &mut Library, config: &mut PakConfig, paths: &G
     // läuft nur, wenn dieser billige Vorfilter eine Abweichung anzeigt.
     let report = library.detect_altered(&paths.mods_dir(), &present)?;
     for pak in &report.altered {
-        eprintln!(
-            "Hinweis: {pak} weicht vom zuletzt bekannten Stand ab – vermutlich außerhalb \
-             des Loaders verändert oder ersetzt."
-        );
+        notices.push(Notice::warning(format!(
+            "{pak} wurde außerhalb des Loaders verändert (Hash weicht ab)."
+        )));
     }
     for warning in &report.warnings {
-        eprintln!("Warnung: {warning}");
+        notices.push(Notice::warning(warning.clone()));
     }
 
-    Ok(report.cache_refreshed)
+    Ok((report.cache_refreshed, notices))
 }
 
 /// Schreibt `library.json` nach einer reinen Cache-Auffrischung (siehe
@@ -233,9 +300,11 @@ fn reconcile_and_report(library: &mut Library, config: &mut PakConfig, paths: &G
 /// reine Cache-Pflege, kein Ergebnis, das der Nutzer mit seinem Aufruf
 /// beabsichtigt hat. Eigene Funktion, damit dieses Verhalten (warnen statt
 /// scheitern) unabhängig von einer echten Spielinstallation testbar ist.
-fn save_library_cache_best_effort(library: &Library, library_path: &Path) {
+fn save_library_cache_best_effort(library: &Library, library_path: &Path, notices: &mut Vec<Notice>) {
     if let Err(e) = library.save(library_path) {
-        eprintln!("Warnung: Cache-Auffrischung in library.json konnte nicht gespeichert werden – {e}");
+        notices.push(Notice::warning(format!(
+            "Cache-Auffrischung in library.json konnte nicht gespeichert werden – {e}"
+        )));
     }
 }
 
@@ -290,6 +359,20 @@ fn register_unknown_pak(
 
 /// Stellt fest, ob wir in `dir` schreiben können – bevor ein verändernder
 /// Befehl Änderungen vornimmt, die dann erst beim Speichern scheitern.
+/// Lädt Basisverzeichnisse und Einstellungen – der Teil von `open()`, der
+/// auch ohne erkanntes Spielverzeichnis gelingt. Getrennt, damit die
+/// grafische Oberfläche nach einer gescheiterten Spielerkennung immer noch
+/// weiß, wohin sie ein vom Nutzer gewähltes Verzeichnis schreiben soll.
+pub fn load_dirs_and_settings() -> Result<(AppDirs, Settings)> {
+    let dirs = app_dirs().context("Basisverzeichnisse nicht ermittelbar")?;
+    std::fs::create_dir_all(&dirs.config)
+        .with_context(|| format!("{} konnte nicht angelegt werden", dirs.config.display()))?;
+    std::fs::create_dir_all(&dirs.data)
+        .with_context(|| format!("{} konnte nicht angelegt werden", dirs.data.display()))?;
+    let settings = Settings::load(&dirs.config.join("settings.toml"))?;
+    Ok((dirs, settings))
+}
+
 fn check_write_permission(dir: &Path) -> Result<()> {
     let probe = dir.join(".sm2-modloader-writetest");
     match std::fs::write(&probe, b"") {
@@ -321,6 +404,7 @@ pub(crate) fn test_fixture(base: &Path) -> AppState {
         },
         library: Library::default(),
         config: PakConfig::default(),
+        notices: Vec::new(),
     }
 }
 
@@ -378,7 +462,7 @@ mod tests {
 
         // b.pak verschwindet (z. B. Steam-Update) und wird abgeglichen.
         std::fs::remove_file(mods_dir.join("b.pak")).unwrap();
-        reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+        reconcile_and_collect(&mut state.library, &mut state.config, &state.paths).unwrap();
         assert_eq!(
             state.config.entries.iter().map(|e| e.pak.as_str()).collect::<Vec<_>>(),
             vec!["a.pak", "c.pak"],
@@ -390,7 +474,7 @@ mod tests {
 
         // b.pak taucht wieder auf.
         std::fs::write(mods_dir.join("b.pak"), b"INHALT").unwrap();
-        reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+        reconcile_and_collect(&mut state.library, &mut state.config, &state.paths).unwrap();
 
         let names: Vec<&str> = state.config.entries.iter().map(|e| e.pak.as_str()).collect();
         assert_eq!(names, vec!["a.pak", "b.pak", "c.pak"], "b.pak muss an seine alte Position zurückkehren");
@@ -415,7 +499,7 @@ mod tests {
         std::fs::write(mods_dir.join("hand.pak"), b"VON HAND KOPIERT").unwrap();
         assert!(state.library.mods.is_empty(), "Ausgangslage: der Bibliothek unbekannt");
 
-        reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+        reconcile_and_collect(&mut state.library, &mut state.config, &state.paths).unwrap();
         assert_eq!(
             state.config.entries.iter().map(|e| e.pak.as_str()).collect::<Vec<_>>(),
             vec!["hand.pak"],
@@ -433,13 +517,13 @@ mod tests {
 
         // Steam-Update räumt den Mods-Ordner leer.
         std::fs::remove_file(mods_dir.join("hand.pak")).unwrap();
-        reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+        reconcile_and_collect(&mut state.library, &mut state.config, &state.paths).unwrap();
         assert!(state.config.entries.is_empty());
         state.persist().unwrap();
 
         // Nutzer installiert die exakt gleiche Datei erneut von Hand.
         std::fs::write(mods_dir.join("hand.pak"), b"VON HAND KOPIERT").unwrap();
-        reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+        reconcile_and_collect(&mut state.library, &mut state.config, &state.paths).unwrap();
 
         assert_eq!(state.config.entries.len(), 1);
         assert_eq!(state.config.entries[0].pak, "hand.pak");
@@ -463,7 +547,7 @@ mod tests {
         for name in ["mein_mod.pak", "MOD.PAK", "a.pak.pak"] {
             std::fs::write(mods_dir.join(name), b"x").unwrap();
         }
-        reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+        reconcile_and_collect(&mut state.library, &mut state.config, &state.paths).unwrap();
         state.persist().unwrap();
 
         assert_eq!(state.library.mods["mein_mod.pak"].name, "mein mod");
@@ -533,15 +617,25 @@ mod tests {
             return;
         }
 
-        // Darf nicht abstürzen – die Funktion hat keinen Rückgabewert, der
-        // einen Fehlschlag überhaupt transportieren könnte (siehe deren
-        // Doc-Kommentar); das ist hier bewusst Teil des Vertrags.
-        save_library_cache_best_effort(&Library::default(), &library_path);
+        // Darf nicht abstürzen – die Funktion hat keinen Rückgabewert, über
+        // den ein Aufrufer den Fehlschlag zum Abbruch machen könnte (siehe
+        // deren Doc-Kommentar); das ist hier bewusst Teil des Vertrags. Der
+        // Fehlschlag verschwindet aber nicht, sondern landet als Meldung im
+        // Puffer.
+        let mut notices = Vec::new();
+        save_library_cache_best_effort(&Library::default(), &library_path, &mut notices);
 
         perms.set_mode(0o755);
         std::fs::set_permissions(&data_dir, perms).unwrap();
 
-        assert!(!library_path.exists(), "das Schreiben muss tatsächlich (leise) gescheitert sein");
+        assert!(!library_path.exists(), "das Schreiben muss tatsächlich gescheitert sein");
+        assert_eq!(notices.len(), 1, "der Fehlschlag muss als genau eine Meldung erscheinen");
+        assert_eq!(notices[0].kind, NoticeKind::Warning, "eine Cache-Pflege ist kein Fehler");
+        assert!(
+            notices[0].text.contains("library.json"),
+            "die Meldung muss die betroffene Datei nennen: {}",
+            notices[0].text
+        );
     }
 
     /// Review-Punkt 4: ein `library.json` von vor `last_known_position`
@@ -563,7 +657,7 @@ mod tests {
             state.library.mods.insert(name.to_string(), info);
         }
 
-        reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+        reconcile_and_collect(&mut state.library, &mut state.config, &state.paths).unwrap();
 
         let names: Vec<&str> = state.config.entries.iter().map(|e| e.pak.as_str()).collect();
         assert_eq!(
@@ -594,12 +688,12 @@ mod tests {
         state.library.mods.insert("a.pak".to_string(), legacy);
         state.config.entries = vec![PakEntry { pak: "a.pak".into(), disabled: false }];
 
-        let first_run =
-            reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+        let (first_run, _) =
+            reconcile_and_collect(&mut state.library, &mut state.config, &state.paths).unwrap();
         assert!(first_run, "fehlendes mtime muss beim ersten Lauf als Auffrischung gemeldet werden");
 
-        let second_run =
-            reconcile_and_report(&mut state.library, &mut state.config, &state.paths).unwrap();
+        let (second_run, _) =
+            reconcile_and_collect(&mut state.library, &mut state.config, &state.paths).unwrap();
         assert!(!second_run, "der aufgefrischte Cache muss beim zweiten Lauf bereits greifen");
     }
 

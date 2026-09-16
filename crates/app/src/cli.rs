@@ -1,9 +1,9 @@
 //! Kommandozeilenoberfläche: Definition und Ausführung aller Unterbefehle.
 
-use crate::app_state::AppState;
+use crate::app_state::{AppState, NoticeKind};
+use crate::vanilla;
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
-use sm2_core::import::now_rfc3339;
 use sm2_core::launch::{launch, no_eac_available, LaunchMode};
 use sm2_core::pak_config::PakEntry;
 use sm2_core::paths::GamePaths;
@@ -13,13 +13,6 @@ use sm2_core::saves::BackupEntry;
 use sm2_core::{import, saves};
 use std::collections::HashSet;
 use std::path::PathBuf;
-
-/// Namenspräfix, unter dem `play --vanilla` den bisherigen Zustand sichert,
-/// bevor er überschrieben wird. Jeder Lauf hängt einen Zeitstempel an (siehe
-/// `snapshot_and_disable_all_for_vanilla_start`), damit zwei Vanilla-Starts
-/// hintereinander niemals denselben Profilnamen – und damit dieselbe Datei,
-/// siehe `Profile::file_stem` – treffen und einander überschreiben.
-const VANILLA_SNAPSHOT_PREFIX: &str = "vor Vanilla-Start";
 
 #[derive(Parser)]
 #[command(name = "sm2-modloader", about = "Mod-Loader für Space Marine 2", version)]
@@ -121,8 +114,32 @@ enum SaveCommand {
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
     let mut state = AppState::open()?;
+    // Meldungen aus dem Abgleich zuerst, damit sie vor der Ausgabe des
+    // eigentlichen Befehls stehen – wie zuvor, als `AppState::open()` sie
+    // noch selbst auf stderr schrieb.
+    print_notices(&mut state);
 
-    match cli.command {
+    let result = run_command(&mut state, cli.command);
+    // Und noch einmal danach: `persist()` kann unterwegs weitere Meldungen
+    // angehängt haben, die sonst niemand zu sehen bekäme.
+    print_notices(&mut state);
+    result
+}
+
+/// Schreibt alle aufgelaufenen Meldungen nach stderr und leert den Puffer.
+fn print_notices(state: &mut AppState) {
+    for notice in state.take_notices() {
+        let prefix = match notice.kind {
+            NoticeKind::Info => "Hinweis",
+            NoticeKind::Warning => "Warnung",
+            NoticeKind::Error => "Fehlt",
+        };
+        eprintln!("{prefix}: {}", notice.text);
+    }
+}
+
+fn run_command(state: &mut AppState, command: Command) -> Result<()> {
+    match command {
         Command::List => {
             if state.config.entries.is_empty() {
                 println!("Keine Mods installiert.");
@@ -140,20 +157,20 @@ pub fn run() -> Result<()> {
         }
 
         Command::Enable { pak } => {
-            set_disabled(&mut state, &pak, false)?;
+            set_disabled(state, &pak, false)?;
             state.persist()?;
             println!("✓ {pak} aktiviert");
         }
 
         Command::Disable { pak } => {
-            set_disabled(&mut state, &pak, true)?;
+            set_disabled(state, &pak, true)?;
             state.persist()?;
             println!("✓ {pak} deaktiviert");
         }
 
-        Command::Order { paks } => run_order(&mut state, paks)?,
+        Command::Order { paks } => run_order(state, paks)?,
 
-        Command::Install { files } => run_install(&mut state, &files)?,
+        Command::Install { files } => run_install(state, &files)?,
 
         Command::Paths => {
             println!("Spiel:   {}", state.paths.game_dir.display());
@@ -181,10 +198,10 @@ pub fn run() -> Result<()> {
             Current::open_folder(&path)?;
         }
 
-        Command::Profile(cmd) => run_profile_command(&mut state, cmd)?,
-        Command::Save(cmd) => run_save_command(&state, cmd)?,
+        Command::Profile(cmd) => run_profile_command(state, cmd)?,
+        Command::Save(cmd) => run_save_command(state, cmd)?,
 
-        Command::Play { vanilla, no_eac } => run_play(&mut state, vanilla, no_eac)?,
+        Command::Play { vanilla, no_eac } => run_play(state, vanilla, no_eac)?,
     }
 
     Ok(())
@@ -502,53 +519,22 @@ fn resolve_backup_selection<'a>(
     }
 }
 
-/// Sichert bei `play --vanilla` den aktuellen Zustand als Profil, bevor alle
-/// Einträge deaktiviert werden, und deaktiviert sie anschließend.
-///
-/// Ist bereits kein Eintrag aktiv (z. B. weil dies der zweite
-/// Vanilla-Start in Folge ist), wird kein neuer Schnappschuss angelegt: es
-/// gibt nichts zu schützen, und ein Schnappschuss "alles deaktiviert" würde
-/// über `Profile::file_stem` (Name + Zeitstempel) zwar nie eine frühere
-/// Sicherung überschreiben, wäre aber wertlos und würde `profile list` nur
-/// zumüllen. Ist dagegen mindestens ein Eintrag aktiv, hängt der Profilname
-/// einen Zeitstempel an das Präfix `VANILLA_SNAPSHOT_PREFIX` an – so trifft
-/// niemals ein zweiter Vanilla-Start denselben Dateinamen und überschreibt
-/// die Sicherung, auf die ein späteres `profile apply` sich verlassen soll.
-///
-/// Enthält keine E/A jenseits von `Profile::save` – insbesondere kein
-/// `persist()` und kein `launch()` –, ist also unabhängig vom eigentlichen
-/// Spielstart testbar.
+/// Sichert bei `play --vanilla` den bisherigen Zustand und meldet das
+/// Ergebnis auf der Kommandozeile. Die Regel selbst steht in
+/// `crate::vanilla` – sie gilt für die Oberfläche genauso.
 fn snapshot_and_disable_all_for_vanilla_start(state: &mut AppState) -> Result<()> {
-    if state.config.entries.iter().any(|e| !e.disabled) {
-        let snapshot_name = format!("{VANILLA_SNAPSHOT_PREFIX} {}", timestamp_for_snapshot_name());
-        let snapshot = Profile::from_config(&snapshot_name, &state.config);
-        let path = snapshot.save(&state.profiles_dir()).context(
-            "bisheriger Zustand konnte nicht gesichert werden – Start ohne Sicherung wird verweigert",
-        )?;
-        println!("Hinweis: bisheriger Zustand als Profil '{snapshot_name}' gesichert ({}).", path.display());
-        println!("  Mit `profile apply \"{snapshot_name}\"` wiederherstellen.");
-    } else {
-        eprintln!("Hinweis: bereits vollständig deaktiviert – keine neue Sicherung angelegt.");
-    }
-
-    for entry in &mut state.config.entries {
-        entry.disabled = true;
+    match vanilla::snapshot_and_disable_all(state)? {
+        Some(snapshot) => {
+            println!(
+                "Hinweis: bisheriger Zustand als Profil '{}' gesichert ({}).",
+                snapshot.name,
+                snapshot.path.display()
+            );
+            println!("  Mit `profile apply \"{}\"` wiederherstellen.", snapshot.name);
+        }
+        None => eprintln!("Hinweis: bereits vollständig deaktiviert – keine neue Sicherung angelegt."),
     }
     Ok(())
-}
-
-/// Menschenlesbarer Zeitstempel ("2026-09-14 21:40") für den Namen einer
-/// Vanilla-Sicherung, auf die Minute genau.
-///
-/// Leitet sich aus `sm2_core::import::now_rfc3339` ab (Sekunden und das
-/// `T`/`Z` von RFC-3339 entfernt), statt dessen Kalenderrechnung
-/// ("civil_from_days") ein zweites Mal zu implementieren – genau das war
-/// zuvor hier byte-genau dupliziert.
-fn timestamp_for_snapshot_name() -> String {
-    let rfc3339 = now_rfc3339();
-    let (date, time) = rfc3339.split_once('T').unwrap_or((&rfc3339, ""));
-    let minute_precision = time.get(0..5).unwrap_or(time);
-    format!("{date} {minute_precision}")
 }
 
 /// Startet das Spiel.
@@ -739,7 +725,7 @@ mod tests {
 
         let profiles = list_profiles(&state.profiles_dir()).unwrap();
         assert_eq!(profiles.len(), 1);
-        assert!(profiles[0].name.starts_with(VANILLA_SNAPSHOT_PREFIX));
+        assert!(profiles[0].name.starts_with(vanilla::VANILLA_SNAPSHOT_PREFIX));
         let a = profiles[0].entries.iter().find(|e| e.pak == "a.pak").unwrap();
         assert!(!a.disabled, "die Sicherung muss den Zustand VOR dem Deaktivieren zeigen");
     }
