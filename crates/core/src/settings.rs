@@ -1,5 +1,6 @@
 use crate::atomic::write_atomic;
 use crate::error::{Error, Result};
+use crate::i18n::Language;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -13,11 +14,14 @@ pub struct Settings {
     pub auto_backup: bool,
     /// SteamID64, in case several profiles live in the prefix.
     pub steam_user: Option<String>,
+    /// The language code from `Language::code`, empty until the user
+    /// chooses one. See `Settings::language`.
+    pub language: Option<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { game_dir: None, auto_backup: true, steam_user: None }
+        Self { game_dir: None, auto_backup: true, steam_user: None, language: None }
     }
 }
 
@@ -42,6 +46,13 @@ impl Settings {
             Error::io(path, std::io::Error::new(std::io::ErrorKind::InvalidData, e))
         })?;
         write_atomic(path, &text)
+    }
+
+    /// The chosen language. An unknown code — a settings file edited by
+    /// hand, or one from a newer version — falls back to English rather
+    /// than keeping the program from starting.
+    pub fn language(&self) -> Language {
+        self.language.as_deref().and_then(Language::from_code).unwrap_or_default()
     }
 }
 
@@ -88,6 +99,7 @@ mod tests {
             auto_backup: false,
             // Obviously made-up SteamID64, not a real one.
             steam_user: Some("11111111111111111".into()),
+            language: None,
         };
         settings.save(&path).unwrap();
 
@@ -105,6 +117,33 @@ mod tests {
         Settings::default().save(&path).unwrap();
 
         assert!(path.exists());
+    }
+
+    #[test]
+    fn a_saved_language_survives_a_round_trip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let settings = Settings { language: Some(String::from("de")), ..Settings::default() };
+
+        settings.save(&path).unwrap();
+        let loaded = Settings::load(&path).unwrap();
+
+        assert_eq!(loaded.language.as_deref(), Some("de"));
+        assert_eq!(loaded.language(), Language::German);
+    }
+
+    #[test]
+    fn without_a_setting_the_program_speaks_english() {
+        assert_eq!(Settings::default().language(), Language::English);
+    }
+
+    /// A settings file edited by hand must not keep the program from
+    /// starting: an unknown code falls back instead of failing.
+    #[test]
+    fn an_unknown_language_code_falls_back_to_english() {
+        let settings = Settings { language: Some(String::from("klingon")), ..Settings::default() };
+
+        assert_eq!(settings.language(), Language::English);
     }
 
     #[test]

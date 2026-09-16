@@ -1,3 +1,6 @@
 [demo]
 greeting = "Backup created"
 with_value = "Backup {created_at} verified"
+
+[app.notice]
+unknown_language = "Unknown language '{code}' in the settings – falling back to English"

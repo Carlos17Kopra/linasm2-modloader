@@ -3,11 +3,12 @@
 //! with the directory contents.
 
 use anyhow::{Context, Result};
+use sm2_core::i18n::Language;
 use sm2_core::library::Library;
 use sm2_core::pak_config::{KnownState, PakConfig};
 use sm2_core::paths::{app_dirs, AppDirs, GamePaths};
 use sm2_core::settings::Settings;
-use sm2_core::Error;
+use sm2_core::{t, Error};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -102,6 +103,15 @@ impl AppState {
         let (cache_refreshed, mut notices) = reconcile_and_collect(&mut library, &mut config, &paths)?;
         if cache_refreshed {
             save_library_cache_best_effort(&library, &library_path, &mut notices);
+        }
+
+        // Before anything can report something: every message from here on
+        // goes through the catalogue.
+        sm2_core::i18n::set_language(settings.language());
+        if let Some(code) = settings.language.as_deref() {
+            if Language::from_code(code).is_none() {
+                notices.push(Notice::warning(t!("app.notice.unknown_language", code = code)));
+            }
         }
 
         Ok(Self { paths, settings, dirs, library, config, notices })
