@@ -17,12 +17,16 @@ fn rust_files(dir: &Path, found: &mut Vec<PathBuf>) {
 
 /// Every `t!("…")` in a source text, ignoring the macro definition itself.
 ///
-/// Two things a plain substring search for `t!("` would misread as a
+/// Three things a plain substring search for `t!("` would misread as a
 /// catalogue key: it also lights up inside `format!("`, `print!("` and
 /// `write!("`, all common in this codebase, so the character before the
-/// match must not be part of an identifier; and a `t!("…")` written as a
+/// match must not be part of an identifier; a `t!("…")` written as a
 /// doc-comment example (see the macro's own docs) is documentation, not an
-/// invocation, so whole-line comments are stripped before the scan.
+/// invocation, so whole-line comments are stripped before the scan; and
+/// `rustfmt` wraps a long `t!(` call onto several lines once its argument
+/// list no longer fits one, which puts the key on its own line — so
+/// whitespace, including newlines, between `t!(` and the opening quote has
+/// to be allowed, not just the single space rustfmt happens to use today.
 fn keys_in(text: &str) -> Vec<String> {
     let code: String = text
         .lines()
@@ -31,19 +35,28 @@ fn keys_in(text: &str) -> Vec<String> {
         .join("\n");
     let mut keys = Vec::new();
     let mut offset = 0;
-    while let Some(found) = code[offset..].find("t!(\"") {
+    while let Some(found) = code[offset..].find("t!(") {
         let position = offset + found;
         let starts_word = code[..position]
             .chars()
             .next_back()
             .is_none_or(|c| !c.is_alphanumeric() && c != '_');
-        let after = &code[position + 4..];
-        match after.find('"') {
+        let after_paren = &code[position + 3..];
+        let quote_start = after_paren.find(|c: char| !c.is_whitespace());
+        let Some(quote_start) = quote_start else { break };
+        if !after_paren[quote_start..].starts_with('"') {
+            // Not a `t!("…")` call at all (e.g. the macro's own
+            // `macro_rules!` arms) — move past `t!(` and keep scanning.
+            offset = position + 3;
+            continue;
+        }
+        let after_quote = &after_paren[quote_start + 1..];
+        match after_quote.find('"') {
             Some(end) => {
                 if starts_word {
-                    keys.push(after[..end].to_string());
+                    keys.push(after_quote[..end].to_string());
                 }
-                offset = position + 4 + end + 1;
+                offset = position + 3 + quote_start + 1 + end + 1;
             }
             None => break,
         }

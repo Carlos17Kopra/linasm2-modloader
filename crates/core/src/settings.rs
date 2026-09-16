@@ -147,20 +147,30 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_file_is_reported_with_path_in_german() {
+    fn corrupt_file_error_names_the_path_without_leaking_the_raw_toml_message() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.toml");
-        std::fs::write(&path, b"das ist kein toml : : :").unwrap();
+        let garbage = "das ist kein toml : : :";
+        std::fs::write(&path, garbage).unwrap();
 
         let err = Settings::load(&path).unwrap_err();
         let message = err.to_string();
+        // What `describe_toml_error` is meant to replace: the raw
+        // `toml::de::Error` text for this exact input, English and
+        // multi-line with a `|`-pointer at the offending column. Comparing
+        // against a fixed word like "invalid" only ever tested English
+        // capitalization by accident (see finding M1) — this compares
+        // against the actual wording that must not leak, in whichever
+        // language `describe_toml_error` runs.
+        let raw = toml::from_str::<toml::Value>(garbage).unwrap_err().to_string();
+
         assert!(
             message.contains(path.to_str().unwrap()),
             "the error message must contain the path: {message}"
         );
         assert!(
-            !message.contains("expected") && !message.contains("invalid"),
-            "the error message should be in German, not carry the raw toml message: {message}"
+            !message.contains(&raw),
+            "the message must be composed from the catalogue, not the raw toml::de::Error text: {message}"
         );
     }
 }

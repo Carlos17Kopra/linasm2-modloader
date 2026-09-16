@@ -347,23 +347,29 @@ mod tests {
     }
 
     /// Same as the test of that name in `settings.rs`: `Profile::load` must
-    /// report broken TOML content with the path and in German, not with the
-    /// raw (English, multi-line) `toml::de::Error` message.
+    /// report broken TOML content with the path, not with the raw (English,
+    /// multi-line) `toml::de::Error` message.
     #[test]
-    fn corrupt_file_is_reported_with_path_in_german() {
+    fn corrupt_file_error_names_the_path_without_leaking_the_raw_toml_message() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("kaputt.toml");
-        std::fs::write(&path, b"das ist kein toml : : :").unwrap();
+        let garbage = "das ist kein toml : : :";
+        std::fs::write(&path, garbage).unwrap();
 
         let err = Profile::load(&path).unwrap_err();
         let message = err.to_string();
+        // See the comment on the equivalent assertion in `settings.rs` for
+        // why this compares against the raw message itself rather than a
+        // fixed word.
+        let raw = toml::from_str::<toml::Value>(garbage).unwrap_err().to_string();
+
         assert!(
             message.contains(path.to_str().unwrap()),
             "the error message must contain the path: {message}"
         );
         assert!(
-            !message.contains("expected") && !message.contains("invalid"),
-            "the error message should be in German, not carry the raw toml message: {message}"
+            !message.contains(&raw),
+            "the message must be composed from the catalogue, not the raw toml::de::Error text: {message}"
         );
     }
 

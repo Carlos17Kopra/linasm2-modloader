@@ -40,14 +40,19 @@ fn write_settings(xdg_config_home: &Path, game_dir: &Path, language: &str) {
 /// Runs the built `sm2-modloader` binary with its XDG directories
 /// pointed at `tmp`, and returns its stdout.
 fn run_modloader(tmp: &Path, args: &[&str]) -> String {
-    let output = Command::new(env!("CARGO_BIN_EXE_sm2-modloader"))
+    String::from_utf8(run_modloader_full(tmp, args).stdout).expect("stdout must be valid UTF-8")
+}
+
+/// Same as `run_modloader`, but returns the whole `Output` — for the tests
+/// below that also need stderr and the exit status.
+fn run_modloader_full(tmp: &Path, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_sm2-modloader"))
         .args(args)
         .env("XDG_CONFIG_HOME", tmp.join("config"))
         .env("XDG_DATA_HOME", tmp.join("data"))
         .env("XDG_STATE_HOME", tmp.join("state"))
         .output()
-        .expect("failed to run the sm2-modloader binary");
-    String::from_utf8(output.stdout).expect("stdout must be valid UTF-8")
+        .expect("failed to run the sm2-modloader binary")
 }
 
 #[test]
@@ -79,4 +84,25 @@ fn lang_flag_also_governs_help_text_answered_during_parsing() {
 
     let help = run_modloader(tmp.path(), &["--lang", "en", "--help"]);
     assert!(help.contains("Mod loader for Space Marine 2"), "{help}");
+}
+
+/// Regression test for finding I5: an unrecognised `--lang` code used to
+/// come back from `cli_help::language_from_args` as `None`, indistinguishable
+/// from no `--lang` at all — so `--lang klingon` silently fell back to the
+/// stored setting and exited 0, while the `lang klingon` subcommand already
+/// reported the same typo and exited non-zero. Both now have to behave the
+/// same way.
+#[test]
+fn an_unrecognised_lang_flag_is_reported_like_the_lang_subcommand_is() {
+    let tmp = tempfile::tempdir().unwrap();
+    let game = write_fake_installation(tmp.path());
+    write_settings(&tmp.path().join("config"), &game, "de");
+
+    let via_subcommand = run_modloader_full(tmp.path(), &["lang", "klingon"]);
+    assert!(!via_subcommand.status.success(), "`lang klingon` must fail");
+
+    let via_flag = run_modloader_full(tmp.path(), &["--lang", "klingon", "paths"]);
+    assert!(!via_flag.status.success(), "`--lang klingon` must fail exactly like `lang klingon` does");
+    let stderr = String::from_utf8(via_flag.stderr).expect("stderr must be valid UTF-8");
+    assert!(stderr.contains("klingon"), "the unrecognised code must be named in the error: {stderr}");
 }

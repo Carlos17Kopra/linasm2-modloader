@@ -23,10 +23,15 @@ Adding a language: copy `en.toml`, translate it, add a `Language`
 variant and name it in `Language::ALL`. `cargo test` then says whether
 the translation is complete.
 
-Three tests keep this honest and are worth knowing about before you add
-a string: every language has exactly the English key set, every key used
-in the sources exists, and no German sentence is left in the code
-(`crates/app/tests/no_german_literals.rs`).
+Five tests keep this honest and are worth knowing about before you add
+a string: every language has exactly the English key set
+(`every_language_has_exactly_the_english_keys`), every translation only
+uses placeholders the English original also has
+(`every_translation_uses_only_the_placeholders_of_the_original`), every
+key used in the sources exists, every clap command and argument has a
+key (`every_command_and_argument_has_a_key` — a new clap argument needs
+a `cli.<path>.arg.<name>` key, or this one fails), and no German
+sentence is left in the code (`crates/app/tests/no_german_literals.rs`).
 
 Three identifiers stay German on purpose, the rule's only carve-out:
 `vanilla::VANILLA_SNAPSHOT_PREFIX` (`"vor Vanilla-Start"`), the sibling
@@ -61,7 +66,7 @@ of filesystem operations is the entire safety argument.
 
 ## Working on it
 
-    cargo test                  # 286 tests across both crates
+    cargo test                  # 292 tests across both crates
     cargo clippy --all-targets  # kept clean
     cargo run                   # GUI
     cargo run -- <subcommand>   # CLI
@@ -69,3 +74,16 @@ of filesystem operations is the entire safety argument.
 Write tests first. The existing suite was built that way and the failure modes
 it covers (collisions in the same second, corrupt archives, zip-slip, symlink
 cycles) are the reason this tool can be trusted with real save data.
+
+The active language is one process-wide static (`CURRENT` in
+`crates/core/src/i18n.rs`), and `cargo test` runs a crate's tests
+concurrently by default. Any test anywhere in the workspace whose
+assertion depends on which language is active — not just on
+`set_language`/`lookup` in isolation, but on the wording a call under
+test actually produces — must hold the matching lock for as long as that
+dependency lasts: `sm2_core::i18n::language_test_lock()` inside
+`crates/core`, `crate::app_state::language_test_lock()` inside
+`crates/app` (a second lock there because the first one is `pub(crate)`
+to `sm2-core` and so unreachable from the other crate's test binary).
+Skip it and two such tests running side by side can flip the language
+out from under each other mid-assertion.

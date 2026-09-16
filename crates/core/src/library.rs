@@ -361,20 +361,26 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_json_is_reported_as_an_error() {
+    fn corrupt_json_error_names_the_path_without_leaking_the_raw_serde_json_message() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("library.json");
-        std::fs::write(&path, "{kein json").unwrap();
+        let garbage = "{kein json";
+        std::fs::write(&path, garbage).unwrap();
 
         let err = Library::load(&path).unwrap_err();
         let message = err.to_string();
+        // See the comment on the equivalent assertion in `settings.rs` for
+        // why this compares against the raw message itself rather than a
+        // fixed word.
+        let raw = serde_json::from_str::<serde_json::Value>(garbage).unwrap_err().to_string();
+
         assert!(
             message.contains(path.to_str().unwrap()),
             "the error message must contain the path: {message}"
         );
         assert!(
-            !message.contains("expected") && !message.contains("invalid"),
-            "the error message should be in German, not carry the raw serde_json message: {message}"
+            !message.contains(&raw),
+            "the message must be composed from the catalogue, not the raw serde_json text: {message}"
         );
     }
 

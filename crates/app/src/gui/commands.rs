@@ -275,8 +275,11 @@ impl App {
             state.settings.auto_backup = next;
         }
         self.save_settings();
-        let word = if next { t!("gui.message.word_on") } else { t!("gui.message.word_off") };
-        self.set_status(t!("gui.message.auto_backup_toggled", word = word));
+        if next {
+            self.set_status(t!("gui.message.auto_backup_toggled_on"));
+        } else {
+            self.set_status(t!("gui.message.auto_backup_toggled_off"));
+        }
     }
 
     /// Decides whether a restore runs right away or has to pass through
@@ -418,19 +421,20 @@ mod tests {
         set_language(Language::English);
     }
 
-    /// `toggle_auto_backup` fills `{word}` with `word_on`/`word_off` —
-    /// checks both combinations render as one sentence in both languages.
+    /// `toggle_auto_backup` used to fill a `{word}` slot with `word_on`/
+    /// `word_off` — natural in German ("… Start ein.") but not in English
+    /// ("… launch on."), see finding I4. Two complete sentences per state,
+    /// checked in both languages, replace the composition.
     #[test]
-    fn auto_backup_toggle_message_substitutes_on_and_off_in_both_languages() {
+    fn auto_backup_toggle_message_has_a_complete_sentence_for_on_and_off_in_both_languages() {
         let _held = language_test_lock();
         set_language(Language::English);
-        assert_eq!(
-            t!("gui.message.auto_backup_toggled", word = t!("gui.message.word_on")),
-            "Automatic backup before launch on."
-        );
+        assert_eq!(t!("gui.message.auto_backup_toggled_on"), "Automatic backup before launch turned on.");
+        assert_eq!(t!("gui.message.auto_backup_toggled_off"), "Automatic backup before launch turned off.");
         set_language(Language::German);
+        assert_eq!(t!("gui.message.auto_backup_toggled_on"), "Automatisches Backup vor dem Start ein.");
         assert_eq!(
-            t!("gui.message.auto_backup_toggled", word = t!("gui.message.word_off")),
+            t!("gui.message.auto_backup_toggled_off"),
             "Automatisches Backup vor dem Start aus."
         );
         set_language(Language::English);

@@ -8,17 +8,6 @@ lang = "Sprache für diesen Lauf (en, de); überschreibt die Einstellung"
 help = "Hilfe anzeigen"
 version = "Version anzeigen"
 
-[app.notice]
-unknown_language = "Unbekannte Sprache '{code}' in den Einstellungen – es bleibt bei Englisch"
-game_not_found_context = "Space Marine 2 nicht gefunden – Pfad in settings.toml unter game_dir eintragen"
-registration_failed = "{pak} konnte nicht für die Positions-/Aktivierungshistorie registriert werden – {detail}"
-pak_restored = "{pak} war zwischenzeitlich nicht vorhanden und wurde mit vorherigem Aktivierungszustand und vorheriger Position wiederhergestellt."
-pak_added_unlisted = "{pak} stand nicht in pak_config.yaml und wurde aktiv übernommen – eine Datei im Mods-Verzeichnis lädt ohnehin, ungesteuert und zuerst."
-pak_removed_missing = "{pak} steht in pak_config.yaml, die Datei fehlt aber – Eintrag entfernt."
-pak_altered = "{pak} wurde außerhalb des Loaders verändert (Hash weicht ab)."
-cache_save_failed = "Cache-Auffrischung in library.json konnte nicht gespeichert werden – {detail}"
-base_dirs_context = "Basisverzeichnisse nicht ermittelbar"
-
 [cli.notice]
 info = "Hinweis"
 warning = "Warnung"
@@ -202,6 +191,17 @@ started = "✓ Spiel gestartet"
 [cli.play.arg]
 vanilla = "Alle Mods deaktivieren"
 no_eac = "Ohne EAC starten (kein Multiplayer)"
+
+[app.notice]
+unknown_language = "Unbekannte Sprache '{code}' in den Einstellungen – es bleibt bei Englisch"
+game_not_found_context = "Space Marine 2 nicht gefunden – Pfad in settings.toml unter game_dir eintragen"
+registration_failed = "{pak} konnte nicht für die Positions-/Aktivierungshistorie registriert werden – {detail}"
+pak_restored = "{pak} war zwischenzeitlich nicht vorhanden und wurde mit vorherigem Aktivierungszustand und vorheriger Position wiederhergestellt."
+pak_added_unlisted = "{pak} stand nicht in pak_config.yaml und wurde aktiv übernommen – eine Datei im Mods-Verzeichnis lädt ohnehin, ungesteuert und zuerst."
+pak_removed_missing = "{pak} steht in pak_config.yaml, die Datei fehlt aber – Eintrag entfernt."
+pak_altered = "{pak} wurde außerhalb des Loaders verändert (Hash weicht ab)."
+cache_save_failed = "Cache-Auffrischung in library.json konnte nicht gespeichert werden – {detail}"
+base_dirs_context = "Basisverzeichnisse nicht ermittelbar"
 
 [error]
 steam_not_found = "Steam-Installation nicht gefunden"
@@ -468,9 +468,8 @@ profile_delete_failed = "Profil „{name}“ nicht gelöscht – {detail}"
 pick_game_dir_title = "Verzeichnis von Space Marine 2 wählen"
 no_steam_user_chosen = "Kein Nutzerprofil gewählt."
 steam_user_set = "Steam-Nutzerprofil {user} gesetzt – Savegame-Funktionen freigegeben."
-word_on = "ein"
-word_off = "aus"
-auto_backup_toggled = "Automatisches Backup vor dem Start {word}."
+auto_backup_toggled_on = "Automatisches Backup vor dem Start ein."
+auto_backup_toggled_off = "Automatisches Backup vor dem Start aus."
 language_changed = "Sprache auf {name} umgestellt."
 restore_no_steam_user = "Wiederherstellen nicht möglich – Steam-Nutzerprofil nicht gewählt."
 backup_renamed = "Backup {created_at} heißt jetzt „{label}“."

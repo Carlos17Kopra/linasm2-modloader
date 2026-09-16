@@ -72,7 +72,7 @@ import_button = "Import backup"
 
 ergibt `error.steam_not_found`, `error.game_not_found`, `gui.saves.import_button`.
 
-Namensräume: `error.*` für Fehlertexte, `cli.*` für Kommandozeile (Ausgaben und Hilfe), `gui.*` für die Oberfläche, `format.*` für Zahlen- und Datumsmuster.
+Namensräume: `error.*` für Fehlertexte, `cli.*` für Kommandozeile (Ausgaben und Hilfe), `app.*` für Meldungen aus der gemeinsamen `AppState`-Logik (Reconciliation-Hinweise, die GUI und CLI beide anzeigen), `gui.*` für die Oberfläche, `format.*` für Zahlen- und Datumsmuster.
 
 ### 4.2 Sprachen
 

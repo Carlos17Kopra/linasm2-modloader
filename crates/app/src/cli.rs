@@ -195,7 +195,16 @@ pub fn run() -> Result<()> {
     let stored = crate::app_state::load_dirs_and_settings()
         .map(|(_, settings)| settings.language())
         .unwrap_or_default();
-    let effective = cli_help::language_from_args(&args).unwrap_or(stored);
+    let effective = match cli_help::language_from_args(&args) {
+        Ok(language) => language.unwrap_or(stored),
+        Err(code) => {
+            // An unrecognised `--lang` is reported, not silently dropped in
+            // favour of the stored setting (finding I5) — in the stored
+            // language itself, since parsing has not even started yet.
+            i18n::set_language(stored);
+            bail!(t!("cli.lang.unknown", code = code));
+        }
+    };
     i18n::set_language(effective);
 
     let cli = Cli::from_arg_matches(&cli_help::localize(Cli::command(), "cli").get_matches_from(args))?;

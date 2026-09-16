@@ -1746,7 +1746,7 @@ mod tests {
         assert!(matches!(err, Error::UnusableArchive(_)), "{err:?}");
         assert!(
             !message.contains("invalid") && !message.contains("Invalid"),
-            "the message should be in German, not carry the raw zip message: {message}"
+            "the message must be composed from the catalogue, not carry the raw zip message: {message}"
         );
     }
 

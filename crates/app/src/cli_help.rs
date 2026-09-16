@@ -96,17 +96,29 @@ fn collect_missing_keys(command: &clap::Command, prefix: &str, missing: &mut Vec
 ///
 /// It has to happen this early because `--help` is answered *during*
 /// parsing: by then the tree has to carry the right language already.
-pub fn language_from_args(args: &[String]) -> Option<Language> {
+///
+/// `Ok(None)` means no `--lang` was given at all (fall back to the stored
+/// setting); `Err` carries a code that was given but not recognised, so the
+/// caller can report it instead of quietly discarding it — the two used to
+/// collapse into the same `None`, which made `--lang klingon` behave as if
+/// no flag had been passed at all (see finding I5). A bare trailing
+/// `--lang` with no value after it is left as `Ok(None)` rather than an
+/// error: there is no code to report, and `clap`'s own parsing rejects that
+/// invocation right afterwards anyway.
+pub fn language_from_args(args: &[String]) -> Result<Option<Language>, String> {
     let mut iter = args.iter();
     while let Some(argument) = iter.next() {
         if let Some(code) = argument.strip_prefix("--lang=") {
-            return Language::from_code(code);
+            return Language::from_code(code).map(Some).ok_or_else(|| code.to_string());
         }
         if argument == "--lang" {
-            return iter.next().and_then(|code| Language::from_code(code));
+            return match iter.next() {
+                Some(code) => Language::from_code(code).map(Some).ok_or_else(|| code.clone()),
+                None => Ok(None),
+            };
         }
     }
-    None
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -140,12 +152,34 @@ mod tests {
     #[test]
     fn a_language_option_in_front_of_everything_is_recognised() {
         let args = ["sm2-modloader", "--lang", "de", "save", "list"].map(String::from);
-        assert_eq!(language_from_args(&args), Some(sm2_core::i18n::Language::German));
+        assert_eq!(language_from_args(&args), Ok(Some(sm2_core::i18n::Language::German)));
 
         let joined = ["sm2-modloader", "--lang=de"].map(String::from);
-        assert_eq!(language_from_args(&joined), Some(sm2_core::i18n::Language::German));
+        assert_eq!(language_from_args(&joined), Ok(Some(sm2_core::i18n::Language::German)));
 
         let without = ["sm2-modloader", "save", "list"].map(String::from);
-        assert_eq!(language_from_args(&without), None);
+        assert_eq!(language_from_args(&without), Ok(None));
+    }
+
+    /// Regression test for finding I5: an unrecognised `--lang` code used
+    /// to come back as `None`, indistinguishable from no `--lang` at all,
+    /// so a typo silently fell back to the stored setting instead of being
+    /// reported. Both argument forms (`--lang <code>` and `--lang=<code>`)
+    /// must carry the bad code back to the caller instead of swallowing it.
+    #[test]
+    fn an_unrecognised_language_code_is_reported_instead_of_silently_ignored() {
+        let args = ["sm2-modloader", "--lang", "klingon", "save", "list"].map(String::from);
+        assert_eq!(language_from_args(&args), Err("klingon".to_string()));
+
+        let joined = ["sm2-modloader", "--lang=klingon"].map(String::from);
+        assert_eq!(language_from_args(&joined), Err("klingon".to_string()));
+    }
+
+    /// A trailing `--lang` with nothing after it has no code to report —
+    /// `clap`'s own parsing rejects that invocation right afterwards.
+    #[test]
+    fn a_trailing_lang_flag_without_a_value_is_not_reported_as_an_unrecognised_code() {
+        let args = ["sm2-modloader", "--lang"].map(String::from);
+        assert_eq!(language_from_args(&args), Ok(None));
     }
 }

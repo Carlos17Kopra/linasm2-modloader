@@ -326,7 +326,7 @@ mod tests {
         assert!(message.contains("Zeile 2"), "{message}");
         assert!(
             !message.contains("expected") && !message.contains("invalid"),
-            "the message should be in German, not carry the raw toml message: {message}"
+            "the message must be composed from the catalogue, not carry the raw toml message: {message}"
         );
     }
 
