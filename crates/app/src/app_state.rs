@@ -82,6 +82,20 @@ impl AppState {
     /// picks into those same settings — which therefore have to survive the
     /// failed attempt.
     pub fn open_with(dirs: AppDirs, settings: Settings) -> Result<Self> {
+        // Before anything else — including the `?` below, which returns
+        // early when game detection fails: every message from here on, in
+        // this call and in whatever the caller does with its `Err`, goes
+        // through the catalogue in the stored language. Setting it any
+        // later left a failed detection reporting in English regardless of
+        // `settings.language`.
+        sm2_core::i18n::set_language(settings.language());
+        let mut notices = Vec::new();
+        if let Some(code) = settings.language.as_deref() {
+            if Language::from_code(code).is_none() {
+                notices.push(Notice::warning(t!("app.notice.unknown_language", code = code)));
+            }
+        }
+
         let paths = match &settings.game_dir {
             Some(dir) => {
                 // For a manual path, derive the library from it.
@@ -98,18 +112,11 @@ impl AppState {
         let library_path = dirs.data.join("library.json");
         let mut library = Library::load(&library_path)?;
         let mut config = PakConfig::load(&paths.pak_config_path())?;
-        let (cache_refreshed, mut notices) = reconcile_and_collect(&mut library, &mut config, &paths)?;
+        let (cache_refreshed, mut reconcile_notices) =
+            reconcile_and_collect(&mut library, &mut config, &paths)?;
+        notices.append(&mut reconcile_notices);
         if cache_refreshed {
             save_library_cache_best_effort(&library, &library_path, &mut notices);
-        }
-
-        // Before anything can report something: every message from here on
-        // goes through the catalogue.
-        sm2_core::i18n::set_language(settings.language());
-        if let Some(code) = settings.language.as_deref() {
-            if Language::from_code(code).is_none() {
-                notices.push(Notice::warning(t!("app.notice.unknown_language", code = code)));
-            }
         }
 
         Ok(Self { paths, settings, dirs, library, config, notices })
@@ -810,5 +817,42 @@ mod tests {
             return;
         }
         assert!(result.is_err());
+    }
+
+    /// Regression test for the GUI bug in finding I1: `open_with` used to
+    /// apply `settings.language()` only after the game path lookup, so a
+    /// failed lookup returned through `?` with the global language still at
+    /// whatever it was before the call — English by default, no matter what
+    /// the user had stored. Uses `settings.game_dir` (not `discover()`, which
+    /// depends on a real Steam installation) to fail deterministically: a
+    /// `game_dir` that does not contain `client_pc/root/mods` makes
+    /// `GamePaths::from_game_dir` return `Err` every time, on any machine.
+    #[test]
+    fn open_with_applies_the_stored_language_even_when_the_path_lookup_fails() {
+        let _held = language_test_lock();
+        set_language(Language::English);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let settings = Settings {
+            game_dir: Some(tmp.path().join("not_a_game_dir")),
+            language: Some("de".to_string()),
+            ..Settings::default()
+        };
+        let dirs = AppDirs {
+            config: tmp.path().join("config"),
+            data: tmp.path().join("data"),
+            state: tmp.path().join("state"),
+        };
+
+        let result = AppState::open_with(dirs, settings);
+
+        assert!(result.is_err(), "a nonexistent game_dir must fail the lookup");
+        assert_eq!(
+            sm2_core::i18n::language(),
+            Language::German,
+            "the stored language must already be in effect once open_with returns, even on Err"
+        );
+
+        set_language(Language::English);
     }
 }

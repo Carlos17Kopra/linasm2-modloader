@@ -277,8 +277,13 @@ pub struct App {
 }
 
 impl App {
-    fn new(egui_ctx: egui::Context) -> Self {
-        let mut app = Self {
+    /// Builds the struct with its startup defaults, without loading
+    /// anything — split off from `new()` so a test can call
+    /// `apply_settings()` on the result directly, with a synthetic
+    /// `AppDirs`/`Settings`, instead of going through `load()`'s real
+    /// `app_dirs()` lookup.
+    fn blank(egui_ctx: egui::Context) -> Self {
+        Self {
             egui_ctx,
             dirs: None,
             fallback_settings: Settings::default(),
@@ -305,7 +310,11 @@ impl App {
             drag: None,
             task: None,
             toasts: toasts::Toasts::default(),
-        };
+        }
+    }
+
+    fn new(egui_ctx: egui::Context) -> Self {
+        let mut app = Self::blank(egui_ctx);
         app.load();
         app
     }
@@ -321,6 +330,20 @@ impl App {
                 return;
             }
         };
+        self.apply_settings(dirs, settings);
+    }
+
+    /// The part of `load()` after base directories and settings are in
+    /// hand — split off so a test can drive it with a synthetic `AppDirs`
+    /// and `Settings`, without the real `app_dirs()` this crate's
+    /// `directories::ProjectDirs` lookup depends on.
+    fn apply_settings(&mut self, dirs: AppDirs, settings: Settings) {
+        // Mirrors `cli::run()`'s early `i18n::set_language` call: applied
+        // right after the settings are read, not only inside `open_with`,
+        // so every text this function itself renders below — including the
+        // "game not found" warning in the `Err` arm — already uses the
+        // stored language even if game detection fails.
+        sm2_core::i18n::set_language(settings.language());
         self.dirs = Some(dirs.clone());
         self.fallback_settings = settings.clone();
 
@@ -1070,5 +1093,91 @@ mod tests {
         assert_eq!(settings.language.as_deref(), Some("de"));
         assert_eq!(sm2_core::i18n::language(), Language::German);
         sm2_core::i18n::set_language(Language::English);
+    }
+
+    /// Regression test for finding I1: `App::apply_settings` (the part of
+    /// `load()` after settings are read) used to call `AppState::open_with`
+    /// before applying the stored language, so a failed game detection left
+    /// the interface in whatever language happened to be active before —
+    /// silently ignoring the user's setting for the whole session. Uses an
+    /// `AppDirs`/`Settings` pair built by hand, with a `game_dir` that does
+    /// not exist, so detection fails deterministically without depending on
+    /// a real Steam installation.
+    #[test]
+    fn apply_puts_the_stored_language_into_effect_even_when_game_detection_fails() {
+        let _held = language_test_lock();
+        set_language(Language::English);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = AppDirs {
+            config: tmp.path().join("config"),
+            data: tmp.path().join("data"),
+            state: tmp.path().join("state"),
+        };
+        let settings = Settings {
+            game_dir: Some(tmp.path().join("not_a_game_dir")),
+            language: Some("de".to_string()),
+            ..Settings::default()
+        };
+
+        let mut app = App::blank(egui::Context::default());
+        app.apply_settings(dirs, settings);
+
+        assert!(app.open_error.is_some(), "the nonexistent game_dir must fail detection");
+        assert_eq!(
+            sm2_core::i18n::language(),
+            Language::German,
+            "the stored language must be in effect once apply_settings() returns, even on \
+             failed detection"
+        );
+        assert_eq!(
+            app.status,
+            sm2_core::t!("gui.message.game_dir_unknown"),
+            "the warning shown for the failure must already be in German, not the language \
+             active before apply_settings() was called"
+        );
+
+        set_language(Language::English);
+    }
+
+    /// The unknown-language notice — untested before this finding — must
+    /// actually appear, and in the fallback language English is defined to
+    /// mean, when `settings.toml` names a code `Language::from_code` does
+    /// not recognise.
+    #[test]
+    fn an_unrecognised_stored_language_code_falls_back_to_english_and_is_reported() {
+        let _held = language_test_lock();
+        set_language(Language::German);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = AppDirs {
+            config: tmp.path().join("config"),
+            data: tmp.path().join("data"),
+            state: tmp.path().join("state"),
+        };
+        let game = tmp.path().join("game");
+        std::fs::create_dir_all(game.join("client_pc/root/mods")).unwrap();
+        let settings = Settings {
+            game_dir: Some(game),
+            language: Some("klingon".to_string()),
+            ..Settings::default()
+        };
+
+        let mut app = App::blank(egui::Context::default());
+        app.apply_settings(dirs, settings);
+
+        assert_eq!(
+            sm2_core::i18n::language(),
+            Language::English,
+            "an unrecognised code must fall back to English, not keep whatever was active before"
+        );
+        let expected = sm2_core::t!("app.notice.unknown_language", code = "klingon");
+        assert!(
+            app.notices.iter().any(|n| n.text == expected),
+            "the unrecognised code must be reported as a notice: {:?}",
+            app.notices
+        );
+
+        set_language(Language::English);
     }
 }
