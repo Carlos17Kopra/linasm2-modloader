@@ -11,6 +11,7 @@ use crate::app_state::AppState;
 use anyhow::{Context, Result};
 use sm2_core::import::now_rfc3339;
 use sm2_core::profile::Profile;
+use sm2_core::t;
 use std::path::PathBuf;
 
 /// The name prefix under which the previous state is backed up. Every run
@@ -40,9 +41,7 @@ pub fn snapshot_and_disable_all(state: &mut AppState) -> Result<Option<Snapshot>
     let snapshot = if state.config.entries.iter().any(|e| !e.disabled) {
         let name = format!("{VANILLA_SNAPSHOT_PREFIX} {}", timestamp_for_snapshot_name());
         let profile = Profile::from_config(&name, &state.config);
-        let path = profile.save(&state.profiles_dir()).context(
-            "bisheriger Zustand konnte nicht gesichert werden – Start ohne Sicherung wird verweigert",
-        )?;
+        let path = profile.save(&state.profiles_dir()).context(t!("cli.play.vanilla_backup_failed"))?;
         Some(Snapshot { name, path })
     } else {
         None

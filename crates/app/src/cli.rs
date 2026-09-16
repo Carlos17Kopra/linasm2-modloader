@@ -10,7 +10,7 @@ use sm2_core::paths::GamePaths;
 use sm2_core::platform::{Current, Platform};
 use sm2_core::profile::{list_profiles, Profile};
 use sm2_core::saves::BackupEntry;
-use sm2_core::{import, saves};
+use sm2_core::{import, saves, t};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -167,9 +167,9 @@ pub fn run() -> Result<()> {
 fn print_notices(state: &mut AppState) {
     for notice in state.take_notices() {
         let prefix = match notice.kind {
-            NoticeKind::Info => "Hinweis",
-            NoticeKind::Warning => "Warnung",
-            NoticeKind::Error => "Fehlt",
+            NoticeKind::Info => t!("cli.notice.info"),
+            NoticeKind::Warning => t!("cli.notice.warning"),
+            NoticeKind::Error => t!("cli.notice.error"),
         };
         eprintln!("{prefix}: {}", notice.text);
     }
@@ -179,7 +179,7 @@ fn run_command(state: &mut AppState, command: Command) -> Result<()> {
     match command {
         Command::List => {
             if state.config.entries.is_empty() {
-                println!("Keine Mods installiert.");
+                println!("{}", t!("cli.list.none_installed"));
             }
             for (i, entry) in state.config.entries.iter().enumerate() {
                 let marker = if entry.disabled { "○" } else { "●" };
@@ -196,13 +196,13 @@ fn run_command(state: &mut AppState, command: Command) -> Result<()> {
         Command::Enable { pak } => {
             set_disabled(state, &pak, false)?;
             state.persist()?;
-            println!("✓ {pak} aktiviert");
+            println!("{}", t!("cli.enable.done", pak = pak));
         }
 
         Command::Disable { pak } => {
             set_disabled(state, &pak, true)?;
             state.persist()?;
-            println!("✓ {pak} deaktiviert");
+            println!("{}", t!("cli.disable.done", pak = pak));
         }
 
         Command::Order { paks } => run_order(state, paks)?,
@@ -210,14 +210,14 @@ fn run_command(state: &mut AppState, command: Command) -> Result<()> {
         Command::Install { files } => run_install(state, &files)?,
 
         Command::Paths => {
-            println!("Spiel:   {}", state.paths.game_dir.display());
-            println!("Mods:    {}", state.paths.mods_dir().display());
-            println!("Config:  {}", state.paths.pak_config_path().display());
+            println!("{}", t!("cli.paths.game", path = state.paths.game_dir.display()));
+            println!("{}", t!("cli.paths.mods", path = state.paths.mods_dir().display()));
+            println!("{}", t!("cli.paths.config", path = state.paths.pak_config_path().display()));
             match state.save_dir() {
-                Ok(p) => println!("Saves:   {}", p.display()),
-                Err(e) => println!("Saves:   nicht verfügbar – {e}"),
+                Ok(p) => println!("{}", t!("cli.paths.saves", path = p.display())),
+                Err(e) => println!("{}", t!("cli.paths.saves_unavailable", detail = e)),
             }
-            println!("Backups: {}", state.backups_dir().display());
+            println!("{}", t!("cli.paths.backups", path = state.backups_dir().display()));
         }
 
         Command::Open { target } => {
@@ -228,7 +228,7 @@ fn run_command(state: &mut AppState, command: Command) -> Result<()> {
                 OpenTarget::Backups => {
                     let dir = state.backups_dir();
                     std::fs::create_dir_all(&dir)
-                        .with_context(|| format!("{} konnte nicht angelegt werden", dir.display()))?;
+                        .with_context(|| t!("cli.error.dir_create_failed", path = dir.display()))?;
                     dir
                 }
             };
@@ -250,7 +250,7 @@ fn set_disabled(state: &mut AppState, pak: &str, disabled: bool) -> Result<()> {
         .entries
         .iter_mut()
         .find(|e| e.pak == pak)
-        .with_context(|| format!("{pak} ist nicht installiert"))?;
+        .with_context(|| t!("cli.error.not_installed", name = pak))?;
     entry.disabled = disabled;
     Ok(())
 }
@@ -260,28 +260,28 @@ fn set_disabled(state: &mut AppState, pak: &str, disabled: bool) -> Result<()> {
 /// are appended at the end.
 fn run_order(state: &mut AppState, requested: Vec<String>) -> Result<()> {
     if requested.is_empty() {
-        println!("Keine Paks angegeben.");
+        println!("{}", t!("cli.order.none_given"));
         return Ok(());
     }
 
     let mut seen = HashSet::new();
     for name in &requested {
         if !seen.insert(name.as_str()) {
-            bail!("{name} wurde mehrfach genannt");
+            bail!(t!("cli.order.duplicate_name", name = name));
         }
     }
 
     let mut new_entries: Vec<PakEntry> = Vec::with_capacity(state.config.entries.len());
     for name in &requested {
         let Some(pos) = state.config.entries.iter().position(|e| &e.pak == name) else {
-            bail!("{name} ist nicht installiert");
+            bail!(t!("cli.error.not_installed", name = name));
         };
         new_entries.push(state.config.entries.remove(pos));
     }
     new_entries.append(&mut state.config.entries);
     state.config.entries = new_entries;
     state.persist()?;
-    println!("✓ Ladereihenfolge gesetzt");
+    println!("{}", t!("cli.order.done"));
     Ok(())
 }
 
@@ -293,17 +293,17 @@ fn run_order(state: &mut AppState, requested: Vec<String>) -> Result<()> {
 /// anywhere.
 fn run_install(state: &mut AppState, files: &[PathBuf]) -> Result<()> {
     if files.is_empty() {
-        println!("Keine Dateien angegeben.");
+        println!("{}", t!("cli.install.none_given"));
         return Ok(());
     }
 
     // Must live as long as the import calls that read from it: for archives
     // the extracted paks sit below this directory until they are imported.
-    let tmp = tempfile::tempdir().context("temporäres Verzeichnis konnte nicht angelegt werden")?;
+    let tmp = tempfile::tempdir().context(t!("cli.error.tmp_dir_failed"))?;
 
     for file in files {
         let extracted = import::extract_paks(file, tmp.path())
-            .with_context(|| format!("{} konnte nicht gelesen werden", file.display()))?;
+            .with_context(|| t!("cli.error.read_failed", path = file.display()))?;
 
         for pak in &extracted {
             // For a single `.pak` as input, `extract_paks` returns the
@@ -318,7 +318,7 @@ fn run_install(state: &mut AppState, files: &[PathBuf]) -> Result<()> {
             } else {
                 let target = unique_copy_target(tmp.path(), pak);
                 std::fs::copy(pak, &target)
-                    .with_context(|| format!("{} konnte nicht gelesen werden", pak.display()))?;
+                    .with_context(|| t!("cli.error.read_failed", path = pak.display()))?;
                 target
             };
 
@@ -330,15 +330,15 @@ fn run_install(state: &mut AppState, files: &[PathBuf]) -> Result<()> {
                 &working_copy,
                 Some(&source),
             )
-            .with_context(|| format!("{} konnte nicht importiert werden", working_copy.display()))?;
+            .with_context(|| t!("cli.error.import_failed", path = working_copy.display()))?;
 
             match &outcome.duplicate_of {
                 Some(existing) => {
-                    println!("– {} ist inhaltsgleich mit {existing}, übersprungen", outcome.pak);
+                    println!("{}", t!("cli.install.duplicate", pak = outcome.pak, existing = existing));
                 }
                 None => {
                     state.persist()?;
-                    println!("✓ {} importiert (deaktiviert)", outcome.pak);
+                    println!("{}", t!("cli.install.done", pak = outcome.pak));
                 }
             }
         }
@@ -374,41 +374,44 @@ fn unique_copy_target(tmp: &std::path::Path, source: &std::path::Path) -> PathBu
 fn run_profile_command(state: &mut AppState, cmd: ProfileCommand) -> Result<()> {
     let dir = state.profiles_dir();
     std::fs::create_dir_all(&dir)
-        .with_context(|| format!("{} konnte nicht angelegt werden", dir.display()))?;
+        .with_context(|| t!("cli.error.dir_create_failed", path = dir.display()))?;
 
     match cmd {
         ProfileCommand::List => {
             let profiles = list_profiles(&dir)?;
             if profiles.is_empty() {
-                println!("Keine Profile gespeichert.");
+                println!("{}", t!("cli.profile.none_saved"));
             }
             for p in profiles {
                 let active = p.entries.iter().filter(|e| !e.disabled).count();
-                println!("{}  ({active} aktiv von {})", p.name, p.entries.len());
+                println!(
+                    "{}",
+                    t!("cli.profile.list_entry", name = p.name, active = active, total = p.entries.len())
+                );
             }
         }
         ProfileCommand::Save { name } => {
             let profile = Profile::from_config(&name, &state.config);
             let path = profile.save(&dir)?;
-            println!("✓ Profil '{name}' gespeichert: {}", path.display());
+            println!("{}", t!("cli.profile.saved", name = name, path = path.display()));
         }
         ProfileCommand::Apply { name } => {
             let profile = find_profile_by_name(&dir, &name)?;
 
             let (new_config, missing) = profile.apply(&state.paths.list_paks()?);
             for pak in &missing {
-                eprintln!("Warnung: {pak} aus dem Profil ist nicht installiert, übersprungen.");
+                eprintln!("{}", t!("cli.profile.pak_missing", pak = pak));
             }
             state.config = new_config;
             state.persist()?;
-            println!("✓ Profil '{}' angewendet", profile.name);
+            println!("{}", t!("cli.profile.applied", name = profile.name));
         }
         ProfileCommand::Delete { name } => {
             let profile = find_profile_by_name(&dir, &name)?;
             let path = profile.path_in(&dir);
             std::fs::remove_file(&path)
-                .with_context(|| format!("{} konnte nicht gelöscht werden", path.display()))?;
-            println!("✓ Profil '{}' gelöscht ({})", profile.name, path.display());
+                .with_context(|| t!("cli.error.delete_failed", path = path.display()))?;
+            println!("{}", t!("cli.profile.deleted", name = profile.name, path = path.display()));
         }
     }
     Ok(())
@@ -429,15 +432,11 @@ fn find_profile_by_name(dir: &std::path::Path, name: &str) -> Result<Profile> {
         list_profiles(dir)?.into_iter().filter(|p| p.name.eq_ignore_ascii_case(name)).collect();
 
     match matches.len() {
-        0 => bail!("Profil '{name}' nicht gefunden"),
+        0 => bail!(t!("cli.profile.not_found", name = name)),
         1 => Ok(matches.remove(0)),
         _ => {
             let names: Vec<&str> = matches.iter().map(|p| p.name.as_str()).collect();
-            bail!(
-                "mehrere Profile passen zu '{name}' und unterscheiden sich nur in \
-                 Groß-/Kleinschreibung ({}). Bitte den exakten Namen angeben.",
-                names.join(", ")
-            );
+            bail!(t!("cli.profile.ambiguous", name = name, names = names.join(", ")));
         }
     }
 }
@@ -460,12 +459,12 @@ fn run_save_command_with(state: &AppState, cmd: SaveCommand, steam_running: impl
         SaveCommand::Backup { tag } => {
             let saves_dir = state.save_dir()?;
             let entry = saves::backup(&saves_dir, &backups, tag.as_deref())?;
-            println!("✓ Backup: {}", entry.archive.display());
+            println!("{}", t!("cli.save.backup_done", path = entry.archive.display()));
         }
         SaveCommand::List => {
             let list = saves::list_backups(&backups)?;
             if list.is_empty() {
-                println!("Keine Backups vorhanden.");
+                println!("{}", t!("cli.save.none_present"));
             }
             for (i, entry) in list.iter().enumerate() {
                 let label = entry.label.clone().unwrap_or_default();
@@ -475,7 +474,7 @@ fn run_save_command_with(state: &AppState, cmd: SaveCommand, steam_running: impl
         SaveCommand::Restore { index, at, force } => {
             let list = saves::list_backups(&backups)?;
             if list.is_empty() {
-                bail!("keine Backups vorhanden");
+                bail!(t!("cli.save.no_backups"));
             }
             let entry = resolve_backup_selection(&list, index, at.as_deref())?;
 
@@ -486,26 +485,22 @@ fn run_save_command_with(state: &AppState, cmd: SaveCommand, steam_running: impl
             // `--index`/`--at` actually hit, before the operation becomes
             // irreversible (see `resolve_backup_selection`'s doc comment).
             let label = entry.label.clone().unwrap_or_default();
-            println!("Ausgewähltes Backup: {}  {label}", entry.created_at);
+            println!("{}", t!("cli.save.selected", created_at = entry.created_at, label = label));
 
             if steam_running() {
                 if !force {
-                    bail!(
-                        "Steam läuft. Die Cloud-Synchronisation kann den wiederhergestellten \
-                         Stand überschreiben. Bitte Steam beenden und erneut versuchen, oder \
-                         mit --force auf eigenes Risiko fortfahren."
-                    );
+                    bail!(t!("cli.save.steam_running"));
                 }
-                eprintln!(
-                    "Warnung: Steam läuft – --force erzwingt die Wiederherstellung trotz \
-                     möglicher Cloud-Synchronisation."
-                );
+                eprintln!("{}", t!("cli.save.steam_forced"));
             }
 
             let saves_dir = state.save_dir()?;
             let safety_backup = saves::restore(entry, &saves_dir, &backups)?;
-            println!("✓ Wiederhergestellt: {}", entry.created_at);
-            println!("  Vorheriger Stand gesichert: {}", safety_backup.archive.display());
+            println!("{}", t!("cli.save.restored", created_at = entry.created_at));
+            println!(
+                "{}",
+                t!("cli.save.restored_safety", path = safety_backup.archive.display())
+            );
         }
         SaveCommand::Import { archive, tag } => {
             // Deliberately without `state.save_dir()`: importing only
@@ -514,35 +509,38 @@ fn run_save_command_with(state: &AppState, cmd: SaveCommand, steam_running: impl
             // situation someone switching launchers is in.
             let entry = saves::import_archive(&archive, &backups, tag.as_deref())?;
             let label = entry.label.clone().unwrap_or_default();
-            println!("✓ Importiert: {}  {label}", entry.created_at);
-            println!("  Liegt unter: {}", entry.archive.display());
+            println!("{}", t!("cli.save.import_done", created_at = entry.created_at, label = label));
+            println!("{}", t!("cli.save.import_location", path = entry.archive.display()));
         }
         SaveCommand::Rename { index, at, tag } => {
             let list = saves::list_backups(&backups)?;
             if list.is_empty() {
-                bail!("keine Backups vorhanden");
+                bail!(t!("cli.save.no_backups"));
             }
             let entry = resolve_backup_selection(&list, index, at.as_deref())?;
             let renamed = saves::rename(entry, &backups, tag.as_deref())?;
-            println!("✓ Umbenannt: {}  {}", renamed.created_at, renamed.label.as_deref().unwrap_or("—"));
+            println!(
+                "{}",
+                t!(
+                    "cli.save.renamed",
+                    created_at = renamed.created_at,
+                    label = renamed.label.as_deref().unwrap_or("—")
+                )
+            );
             println!("  {}", renamed.archive.display());
         }
         SaveCommand::Delete { index, at, yes } => {
             let list = saves::list_backups(&backups)?;
             if list.is_empty() {
-                bail!("keine Backups vorhanden");
+                bail!(t!("cli.save.no_backups"));
             }
             let entry = resolve_backup_selection(&list, index, at.as_deref())?;
             let label = entry.label.clone().unwrap_or_default();
             if !yes {
-                bail!(
-                    "Löschen ist unwiderruflich. Ausgewählt wäre: {}  {label}. Mit --yes \
-                     bestätigen.",
-                    entry.created_at
-                );
+                bail!(t!("cli.save.delete_confirm", created_at = entry.created_at, label = label));
             }
             saves::delete(entry)?;
-            println!("✓ Gelöscht: {}  {label}", entry.created_at);
+            println!("{}", t!("cli.save.deleted", created_at = entry.created_at, label = label));
         }
     }
     Ok(())
@@ -557,10 +555,10 @@ fn run_save_command_with(state: &AppState, cmd: SaveCommand, steam_running: impl
 fn resolve_backup_index(requested: Option<usize>, count: usize) -> Result<usize> {
     let requested = requested.unwrap_or(1);
     if requested == 0 {
-        bail!("Index muss mindestens 1 sein (1 = neuestes Backup)");
+        bail!(t!("cli.save.index_too_low"));
     }
     if requested > count {
-        bail!("Backup {requested} gibt es nicht ({count} vorhanden)");
+        bail!(t!("cli.save.index_out_of_range", requested = requested, count = count));
     }
     Ok(requested - 1)
 }
@@ -581,7 +579,7 @@ fn resolve_backup_selection<'a>(
         Some(timestamp) => list
             .iter()
             .find(|e| e.created_at == timestamp)
-            .with_context(|| format!("kein Backup mit Zeitstempel '{timestamp}' gefunden")),
+            .with_context(|| t!("cli.save.timestamp_not_found", timestamp = timestamp)),
         None => {
             let position = resolve_backup_index(index, list.len())?;
             Ok(&list[position])
@@ -596,13 +594,12 @@ fn snapshot_and_disable_all_for_vanilla_start(state: &mut AppState) -> Result<()
     match vanilla::snapshot_and_disable_all(state)? {
         Some(snapshot) => {
             println!(
-                "Hinweis: bisheriger Zustand als Profil '{}' gesichert ({}).",
-                snapshot.name,
-                snapshot.path.display()
+                "{}",
+                t!("cli.play.vanilla_snapshot", name = snapshot.name, path = snapshot.path.display())
             );
-            println!("  Mit `profile apply \"{}\"` wiederherstellen.", snapshot.name);
+            println!("{}", t!("cli.play.vanilla_snapshot_hint", name = snapshot.name));
         }
-        None => eprintln!("Hinweis: bereits vollständig deaktiviert – keine neue Sicherung angelegt."),
+        None => eprintln!("{}", t!("cli.play.vanilla_already_disabled")),
     }
     Ok(())
 }
@@ -654,10 +651,7 @@ fn run_play_with(
     launch_game: impl FnOnce(&GamePaths, LaunchMode) -> sm2_core::Result<()>,
 ) -> Result<()> {
     if no_eac && !no_eac_available() {
-        bail!(
-            "Start ohne EAC ist auf diesem System nicht möglich – umu-launcher wurde nicht \
-             gefunden (https://github.com/Open-Wine-Components/umu-launcher)."
-        );
+        bail!(t!("cli.play.no_eac_unavailable"));
     }
 
     if vanilla {
@@ -668,25 +662,25 @@ fn run_play_with(
         let label = if vanilla { "vor Vanilla-Start" } else { "vor Modded-Start" };
         match state.save_dir() {
             Ok(saves_dir) => match saves::backup(&saves_dir, &state.backups_dir(), Some(label)) {
-                Ok(entry) => println!("✓ Save gesichert: {}", entry.archive.display()),
-                Err(e) => eprintln!("Warnung: Save-Backup fehlgeschlagen – {e}"),
+                Ok(entry) => println!("{}", t!("cli.play.save_backed_up", path = entry.archive.display())),
+                Err(e) => eprintln!("{}", t!("cli.play.save_backup_failed", detail = e)),
             },
-            Err(e) => eprintln!("Warnung: kein Save-Backup möglich – {e}"),
+            Err(e) => eprintln!("{}", t!("cli.play.no_save_backup_possible", detail = e)),
         }
     }
 
     if vanilla {
         state.persist()?;
     } else if let Err(e) = state.persist() {
-        eprintln!("Warnung: Konfiguration konnte nicht gespeichert werden – {e:#}");
+        eprintln!("{}", t!("cli.play.persist_failed", detail = format!("{e:#}")));
     }
 
     let mode = if no_eac { LaunchMode::NoEac } else { LaunchMode::Steam };
     if no_eac {
-        eprintln!("Hinweis: Start ohne EAC – Multiplayer ist damit nicht möglich.");
+        eprintln!("{}", t!("cli.play.no_eac_notice"));
     }
     launch_game(&state.paths, mode)?;
-    println!("✓ Spiel gestartet");
+    println!("{}", t!("cli.play.started"));
     Ok(())
 }
 
@@ -741,6 +735,11 @@ mod tests {
 
     #[test]
     fn run_order_rejects_a_repeated_name() {
+        // `language_test_lock` is not reachable from this crate (it stays
+        // `pub(crate)` to sm2-core) — safe without it regardless, because no
+        // other test in this binary ever flips the language away from the
+        // default.
+        sm2_core::i18n::set_language(sm2_core::i18n::Language::English);
         let tmp = tempfile::tempdir().unwrap();
         let mut state = test_fixture(tmp.path());
         state.config.entries = vec![
@@ -749,17 +748,18 @@ mod tests {
         ];
 
         let err = run_order(&mut state, vec!["a.pak".into(), "a.pak".into()]).unwrap_err();
-        assert!(err.to_string().contains("mehrfach"), "{err}");
+        assert!(err.to_string().contains("was named more than once"), "{err}");
     }
 
     #[test]
     fn run_order_rejects_an_unknown_pak() {
+        sm2_core::i18n::set_language(sm2_core::i18n::Language::English);
         let tmp = tempfile::tempdir().unwrap();
         let mut state = test_fixture(tmp.path());
         state.config.entries = vec![PakEntry { pak: "a.pak".into(), disabled: false }];
 
         let err = run_order(&mut state, vec!["fehlt.pak".into()]).unwrap_err();
-        assert!(err.to_string().contains("nicht installiert"), "{err}");
+        assert!(err.to_string().contains("is not installed"), "{err}");
     }
 
     #[test]
@@ -1134,13 +1134,14 @@ mod tests {
 
     #[test]
     fn profile_delete_reports_a_clear_error_for_an_unknown_name() {
+        sm2_core::i18n::set_language(sm2_core::i18n::Language::English);
         let tmp = tempfile::tempdir().unwrap();
         let mut state = test_fixture(tmp.path());
 
         let err = run_profile_command(&mut state, ProfileCommand::Delete { name: "unbekannt".into() })
             .unwrap_err();
 
-        assert!(err.to_string().contains("nicht gefunden"), "{err}");
+        assert!(err.to_string().contains("not found"), "{err}");
     }
 
     // --- run_play_with (2c/2f: auto backup for --vanilla, injectable -----

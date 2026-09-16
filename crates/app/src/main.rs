@@ -3,6 +3,8 @@ mod cli;
 mod gui;
 mod vanilla;
 
+use sm2_core::t;
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -15,14 +17,14 @@ fn main() {
     // line — a single binary for both.
     if std::env::args().len() == 1 {
         if let Err(e) = gui::run() {
-            eprintln!("Fehler: die Oberfläche konnte nicht gestartet werden – {e}");
+            eprintln!("{}", t!("cli.error.gui_start", detail = e));
             std::process::exit(1);
         }
         return;
     }
 
     if let Err(e) = cli::run() {
-        eprintln!("Fehler: {e:#}");
+        eprintln!("{}", t!("cli.error.prefix", detail = format!("{e:#}")));
         std::process::exit(1);
     }
 }

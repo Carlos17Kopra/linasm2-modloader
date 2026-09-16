@@ -1,9 +1,88 @@
-[demo]
-greeting = "Backup angelegt"
-with_value = "Backup {created_at} geprüft"
-
 [app.notice]
 unknown_language = "Unbekannte Sprache '{code}' in den Einstellungen – es bleibt bei Englisch"
+
+[cli.notice]
+info = "Hinweis"
+warning = "Warnung"
+error = "Fehlt"
+
+[cli.error]
+gui_start = "Fehler: die Oberfläche konnte nicht gestartet werden – {detail}"
+prefix = "Fehler: {detail}"
+not_installed = "{name} ist nicht installiert"
+dir_create_failed = "{path} konnte nicht angelegt werden"
+read_failed = "{path} konnte nicht gelesen werden"
+import_failed = "{path} konnte nicht importiert werden"
+delete_failed = "{path} konnte nicht gelöscht werden"
+tmp_dir_failed = "temporäres Verzeichnis konnte nicht angelegt werden"
+
+[cli.list]
+none_installed = "Keine Mods installiert."
+
+[cli.enable]
+done = "✓ {pak} aktiviert"
+
+[cli.disable]
+done = "✓ {pak} deaktiviert"
+
+[cli.order]
+none_given = "Keine Paks angegeben."
+duplicate_name = "{name} wurde mehrfach genannt"
+done = "✓ Ladereihenfolge gesetzt"
+
+[cli.install]
+none_given = "Keine Dateien angegeben."
+duplicate = "– {pak} ist inhaltsgleich mit {existing}, übersprungen"
+done = "✓ {pak} importiert (deaktiviert)"
+
+[cli.paths]
+game = "Spiel:   {path}"
+mods = "Mods:    {path}"
+config = "Config:  {path}"
+saves = "Saves:   {path}"
+saves_unavailable = "Saves:   nicht verfügbar – {detail}"
+backups = "Backups: {path}"
+
+[cli.profile]
+none_saved = "Keine Profile gespeichert."
+list_entry = "{name}  ({active} aktiv von {total})"
+saved = "✓ Profil '{name}' gespeichert: {path}"
+pak_missing = "Warnung: {pak} aus dem Profil ist nicht installiert, übersprungen."
+applied = "✓ Profil '{name}' angewendet"
+deleted = "✓ Profil '{name}' gelöscht ({path})"
+not_found = "Profil '{name}' nicht gefunden"
+ambiguous = "mehrere Profile passen zu '{name}' und unterscheiden sich nur in Groß-/Kleinschreibung ({names}). Bitte den exakten Namen angeben."
+
+[cli.save]
+backup_done = "✓ Backup: {path}"
+none_present = "Keine Backups vorhanden."
+no_backups = "keine Backups vorhanden"
+selected = "Ausgewähltes Backup: {created_at}  {label}"
+restored = "✓ Wiederhergestellt: {created_at}"
+restored_safety = "  Vorheriger Stand gesichert: {path}"
+import_done = "✓ Importiert: {created_at}  {label}"
+import_location = "  Liegt unter: {path}"
+steam_running = "Steam läuft. Die Cloud-Synchronisation kann den wiederhergestellten Stand überschreiben. Bitte Steam beenden und erneut versuchen, oder mit --force auf eigenes Risiko fortfahren."
+steam_forced = "Warnung: Steam läuft – --force erzwingt die Wiederherstellung trotz möglicher Cloud-Synchronisation."
+renamed = "✓ Umbenannt: {created_at}  {label}"
+deleted = "✓ Gelöscht: {created_at}  {label}"
+delete_confirm = "Löschen ist unwiderruflich. Ausgewählt wäre: {created_at}  {label}. Mit --yes bestätigen."
+index_too_low = "Index muss mindestens 1 sein (1 = neuestes Backup)"
+index_out_of_range = "Backup {requested} gibt es nicht ({count} vorhanden)"
+timestamp_not_found = "kein Backup mit Zeitstempel '{timestamp}' gefunden"
+
+[cli.play]
+no_eac_unavailable = "Start ohne EAC ist auf diesem System nicht möglich – umu-launcher wurde nicht gefunden (https://github.com/Open-Wine-Components/umu-launcher)."
+vanilla_snapshot = "Hinweis: bisheriger Zustand als Profil '{name}' gesichert ({path})."
+vanilla_snapshot_hint = "  Mit `profile apply \"{name}\"` wiederherstellen."
+vanilla_already_disabled = "Hinweis: bereits vollständig deaktiviert – keine neue Sicherung angelegt."
+vanilla_backup_failed = "bisheriger Zustand konnte nicht gesichert werden – Start ohne Sicherung wird verweigert"
+save_backed_up = "✓ Save gesichert: {path}"
+save_backup_failed = "Warnung: Save-Backup fehlgeschlagen – {detail}"
+no_save_backup_possible = "Warnung: kein Save-Backup möglich – {detail}"
+persist_failed = "Warnung: Konfiguration konnte nicht gespeichert werden – {detail}"
+no_eac_notice = "Hinweis: Start ohne EAC – Multiplayer ist damit nicht möglich."
+started = "✓ Spiel gestartet"
 
 [error]
 steam_not_found = "Steam-Installation nicht gefunden"

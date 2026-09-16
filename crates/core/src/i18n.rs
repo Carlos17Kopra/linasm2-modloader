@@ -217,10 +217,10 @@ mod tests {
     #[test]
     fn a_key_resolves_to_the_text_of_the_active_language() {
         with_language(Language::German, || {
-            assert_eq!(lookup("demo.greeting"), "Backup angelegt");
+            assert_eq!(lookup("error.steam_not_found"), "Steam-Installation nicht gefunden");
         });
         with_language(Language::English, || {
-            assert_eq!(lookup("demo.greeting"), "Backup created");
+            assert_eq!(lookup("error.steam_not_found"), "Steam installation not found");
         });
     }
 
@@ -254,8 +254,8 @@ mod tests {
     #[test]
     fn placeholders_are_replaced_by_name() {
         with_language(Language::English, || {
-            let text = format("demo.with_value", &[("created_at", String::from("2026-09-16"))]);
-            assert_eq!(text, "Backup 2026-09-16 verified");
+            let text = format("error.game_not_found", &[("app_id", String::from("2183900"))]);
+            assert_eq!(text, "Space Marine 2 (AppID 2183900) is not installed in any Steam library");
         });
     }
 
@@ -313,10 +313,10 @@ mod tests {
     #[test]
     fn the_macro_resolves_with_and_without_arguments() {
         with_language(Language::English, || {
-            assert_eq!(crate::t!("demo.greeting"), "Backup created");
+            assert_eq!(crate::t!("error.steam_not_found"), "Steam installation not found");
             assert_eq!(
-                crate::t!("demo.with_value", created_at = "2026-09-16"),
-                "Backup 2026-09-16 verified"
+                crate::t!("error.game_not_found", app_id = "2183900"),
+                "Space Marine 2 (AppID 2183900) is not installed in any Steam library"
             );
         });
     }
