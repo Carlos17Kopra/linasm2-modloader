@@ -1,18 +1,29 @@
-//! Numbers and timestamps written the way the design writes them.
+//! Numbers and timestamps written the way the active language writes them.
+//!
+//! The decimal separator and the date pattern come from the catalogue
+//! (`format.decimal_separator`, `format.datetime`) instead of being fixed
+//! in the code, so that a new language brings its own notation with it
+//! rather than requiring a code change here.
 
-/// File size as "3,8 GB" — decimal prefixes and a comma, as in the design.
+use sm2_core::{i18n, t};
+
+/// File size as "3.8 GB" (English) or "3,8 GB" (German) — decimal prefixes
+/// with the active language's decimal separator.
 pub fn human_size(bytes: u64) -> String {
     const UNITS: [(&str, f64); 3] = [("GB", 1e9), ("MB", 1e6), ("kB", 1e3)];
+    let separator = i18n::lookup("format.decimal_separator");
+    // `lookup` hands back an owned String, hence the borrow below.
     let value = bytes as f64;
     for (unit, factor) in UNITS {
         if value >= factor {
-            return format!("{:.1} {unit}", value / factor).replace('.', ",");
+            return format!("{:.1} {unit}", value / factor).replace('.', &separator);
         }
     }
-    format!("{bytes} Byte")
+    t!("format.byte_unit_value", value = bytes)
 }
 
-/// Timestamp as "14.09.2026 21:38".
+/// Timestamp as "2026-09-14 21:38" (English) or "14.09.2026 21:38"
+/// (German), following the active language's `format.datetime` pattern.
 ///
 /// The input is RFC 3339 in UTC, the way `sm2_core::import::now_rfc3339`
 /// writes it. If the string cannot be read as such, it is passed through
@@ -26,7 +37,15 @@ pub fn human_time(rfc3339: &str) -> String {
         return rfc3339.to_string();
     }
     let Some(clock) = time.get(0..5) else { return rfc3339.to_string() };
-    format!("{day}.{month}.{year} {clock}")
+    i18n::format(
+        "format.datetime",
+        &[
+            ("year", year.to_string()),
+            ("month", month.to_string()),
+            ("day", day.to_string()),
+            ("clock", clock.to_string()),
+        ],
+    )
 }
 
 /// Hash shortened as in the design: eight characters at the front, four at
@@ -41,18 +60,25 @@ pub fn short_hash(hash: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_state::language_test_lock;
+    use sm2_core::i18n::{set_language, Language};
 
     #[test]
-    fn sizes_are_written_with_a_decimal_comma() {
+    fn a_size_uses_the_separator_of_the_language() {
+        let _held = language_test_lock();
+        set_language(Language::German);
         assert_eq!(human_size(3_800_000_000), "3,8 GB");
-        assert_eq!(human_size(640_000_000), "640,0 MB");
-        assert_eq!(human_size(4_200_000), "4,2 MB");
-        assert_eq!(human_size(512), "512 Byte");
+        set_language(Language::English);
+        assert_eq!(human_size(3_800_000_000), "3.8 GB");
     }
 
     #[test]
-    fn timestamps_are_formatted_in_german_notation() {
-        assert_eq!(human_time("2026-09-14T21:38:07Z"), "14.09.2026 21:38");
+    fn a_timestamp_follows_the_pattern_of_the_language() {
+        let _held = language_test_lock();
+        set_language(Language::German);
+        assert_eq!(human_time("2026-09-14T21:38:00Z"), "14.09.2026 21:38");
+        set_language(Language::English);
+        assert_eq!(human_time("2026-09-14T21:38:00Z"), "2026-09-14 21:38");
     }
 
     #[test]

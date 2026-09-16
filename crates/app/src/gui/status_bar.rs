@@ -5,6 +5,7 @@ use super::theme::{color, mono, sans};
 use super::widgets::{self, ButtonStyle};
 use super::{Action, App};
 use egui::{Align, Align2, CornerRadius, Layout, Pos2, Rect, Sense, Ui, Vec2};
+use sm2_core::t;
 
 pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
@@ -21,7 +22,7 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
                     .padding_x(9.0)
                     .font(sans(11.0))
                     .corner_radius(5);
-                if widgets::button(ui, &style, None, "Abbrechen", true).clicked() {
+                if widgets::button(ui, &style, None, &t!("gui.status_bar.cancel"), true).clicked() {
                     actions.push(Action::CancelTask);
                 }
             }
@@ -59,10 +60,8 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
 
 fn right_label(app: &App) -> String {
     match &app.state {
-        Some(state) => {
-            format!("pak_config.yaml · {} Einträge", state.config.entries.len())
-        }
-        None => String::from("kein Spielverzeichnis"),
+        Some(state) => t!("gui.status_bar.entries", count = state.config.entries.len()),
+        None => t!("gui.status_bar.no_game_dir"),
     }
 }
 

@@ -4,13 +4,19 @@ use super::theme::{color, medium, mono, sans};
 use super::widgets::Icon;
 use super::{Action, App, Section};
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
+use sm2_core::t;
 
 pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     let items = [
-        (Section::Mods, Icon::NavMods, "Mods", mods_count(app)),
-        (Section::Profiles, Icon::NavProfiles, "Profile", app.profiles.len().to_string()),
-        (Section::Saves, Icon::NavSaves, "Savegames", saves_count(app)),
-        (Section::Settings, Icon::NavSettings, "Einstellungen", String::new()),
+        (Section::Mods, Icon::NavMods, t!("gui.side_bar.nav_mods"), mods_count(app)),
+        (
+            Section::Profiles,
+            Icon::NavProfiles,
+            t!("gui.side_bar.nav_profiles"),
+            app.profiles.len().to_string(),
+        ),
+        (Section::Saves, Icon::NavSaves, t!("gui.side_bar.nav_saves"), saves_count(app)),
+        (Section::Settings, Icon::NavSettings, t!("gui.side_bar.nav_settings"), String::new()),
     ];
 
     // The status card sits at the bottom edge and is given its space
@@ -24,7 +30,7 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             for (section, icon, label, count) in items {
-                if nav_item(app, ui, section, icon, label, &count) {
+                if nav_item(app, ui, section, icon, &label, &count) {
                     actions.push(Action::ShowSection(section));
                 }
             }
@@ -35,7 +41,7 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
 fn mods_count(app: &App) -> String {
     match &app.state {
         Some(state) => state.config.entries.len().to_string(),
-        None => String::from("—"),
+        None => t!("gui.side_bar.mods_count_unknown"),
     }
 }
 
@@ -160,28 +166,28 @@ fn status_card(app: &App, ui: &mut Ui) {
     }
 }
 
-fn game_row(app: &App) -> (Icon, Color32, &'static str) {
+fn game_row(app: &App) -> (Icon, Color32, String) {
     if app.state.is_some() {
-        (Icon::Check, color::OK, "Spiel erkannt")
+        (Icon::Check, color::OK, t!("gui.side_bar.game_detected"))
     } else {
-        (Icon::Warning, color::WARN, "Spiel nicht gefunden")
+        (Icon::Warning, color::WARN, t!("gui.side_bar.game_not_found"))
     }
 }
 
-fn write_row(app: &App) -> (Icon, Color32, &'static str) {
+fn write_row(app: &App) -> (Icon, Color32, String) {
     if app.state.is_none() {
-        (Icon::Ring, color::TEXT_FAINT, "Schreibrecht noch nicht geprüft")
+        (Icon::Ring, color::TEXT_FAINT, t!("gui.side_bar.write_not_checked"))
     } else if app.writable {
-        (Icon::Check, color::OK, "pak_config.yaml beschreibbar")
+        (Icon::Check, color::OK, t!("gui.side_bar.write_ok"))
     } else {
-        (Icon::Warning, color::WARN, "Mods-Verzeichnis schreibgeschützt")
+        (Icon::Warning, color::WARN, t!("gui.side_bar.write_denied"))
     }
 }
 
-fn eac_row(app: &App) -> (Icon, Color32, &'static str) {
+fn eac_row(app: &App) -> (Icon, Color32, String) {
     if app.no_eac_available {
-        (Icon::Check, color::OK, "umu-run gefunden – Start ohne EAC möglich")
+        (Icon::Check, color::OK, t!("gui.side_bar.eac_available"))
     } else {
-        (Icon::Ring, color::TEXT_FAINT, "umu-run fehlt – „Ohne EAC“ ausgeblendet")
+        (Icon::Ring, color::TEXT_FAINT, t!("gui.side_bar.eac_unavailable"))
     }
 }

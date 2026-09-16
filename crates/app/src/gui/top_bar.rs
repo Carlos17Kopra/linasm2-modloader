@@ -4,13 +4,20 @@ use super::theme::{color, medium, metric, mono, sans};
 use super::widgets::{self, ButtonStyle, Icon};
 use super::{Action, App, LaunchChoice};
 use egui::{Align, CornerRadius, Layout, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
+use sm2_core::t;
 
 pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
 
-        if widgets::button(ui, &ButtonStyle::primary().padding_x(18.0), Some(Icon::Play), "Starten", true)
-            .clicked()
+        if widgets::button(
+            ui,
+            &ButtonStyle::primary().padding_x(18.0),
+            Some(Icon::Play),
+            &t!("gui.top_bar.start"),
+            true,
+        )
+        .clicked()
         {
             actions.push(Action::Launch);
         }
@@ -37,14 +44,11 @@ fn headline(app: &App, ui: &mut Ui) {
             let total = state.config.entries.len();
             let active = state.config.entries.iter().filter(|e| !e.disabled).count();
             (
-                format!("{total} Mods · {active} aktiv"),
+                t!("gui.top_bar.mods_active", total = total, active = active),
                 state.paths.mods_dir().display().to_string(),
             )
         }
-        None => (
-            String::from("Kein Spielverzeichnis"),
-            String::from("Erkennung fehlgeschlagen – Verzeichnis manuell wählen"),
-        ),
+        None => (t!("gui.top_bar.no_game_dir"), t!("gui.top_bar.detection_failed")),
     };
 
     let title_galley =

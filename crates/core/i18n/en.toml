@@ -248,3 +248,33 @@ too_large = "the archive unpacks to more than {limit}"
 [error.size]
 mib = "{value} MiB"
 bytes = "{value} bytes"
+
+[format]
+decimal_separator = "."
+datetime = "{year}-{month}-{day} {clock}"
+byte_unit_value = "{value} bytes"
+
+[gui.status_bar]
+cancel = "Cancel"
+entries = "pak_config.yaml · {count} entries"
+no_game_dir = "no game directory"
+
+[gui.top_bar]
+start = "Start"
+mods_active = "{total} mods · {active} active"
+no_game_dir = "No game directory"
+detection_failed = "Detection failed – choose the directory manually"
+
+[gui.side_bar]
+nav_mods = "Mods"
+nav_profiles = "Profiles"
+nav_saves = "Savegames"
+nav_settings = "Settings"
+mods_count_unknown = "—"
+game_detected = "Game detected"
+game_not_found = "Game not found"
+write_not_checked = "Write access not checked yet"
+write_ok = "pak_config.yaml writable"
+write_denied = "Mods directory is read-only"
+eac_available = "umu-run found – launch without EAC possible"
+eac_unavailable = "umu-run missing – \"Without EAC\" hidden"

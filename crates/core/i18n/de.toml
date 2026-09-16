@@ -248,3 +248,33 @@ too_large = "Archiv ist entpackt größer als {limit}"
 [error.size]
 mib = "{value} MiB"
 bytes = "{value} Byte"
+
+[format]
+decimal_separator = ","
+datetime = "{day}.{month}.{year} {clock}"
+byte_unit_value = "{value} Byte"
+
+[gui.status_bar]
+cancel = "Abbrechen"
+entries = "pak_config.yaml · {count} Einträge"
+no_game_dir = "kein Spielverzeichnis"
+
+[gui.top_bar]
+start = "Starten"
+mods_active = "{total} Mods · {active} aktiv"
+no_game_dir = "Kein Spielverzeichnis"
+detection_failed = "Erkennung fehlgeschlagen – Verzeichnis manuell wählen"
+
+[gui.side_bar]
+nav_mods = "Mods"
+nav_profiles = "Profile"
+nav_saves = "Savegames"
+nav_settings = "Einstellungen"
+mods_count_unknown = "—"
+game_detected = "Spiel erkannt"
+game_not_found = "Spiel nicht gefunden"
+write_not_checked = "Schreibrecht noch nicht geprüft"
+write_ok = "pak_config.yaml beschreibbar"
+write_denied = "Mods-Verzeichnis schreibgeschützt"
+eac_available = "umu-run gefunden – Start ohne EAC möglich"
+eac_unavailable = "umu-run fehlt – „Ohne EAC“ ausgeblendet"
