@@ -71,6 +71,20 @@ pub fn set_language(language: Language) {
     *CURRENT.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = language;
 }
 
+/// The active-language-then-English resolution chain, pulled out of
+/// `lookup` as a pure function of two maps.
+///
+/// The committed catalogues can never exercise the English-fallback arm:
+/// `every_language_has_exactly_the_english_keys` guarantees every shipped
+/// language already has every English key. The fallback still earns its
+/// place — it is what makes "a further language costs one file and one
+/// line of code" true, since a newly added, half-translated language file
+/// is exactly the state this arm serves. A synthetic-map unit test is the
+/// only way to reach it before such a language exists.
+fn resolve<'a>(active: &'a BTreeMap<String, String>, english: &'a BTreeMap<String, String>, key: &str) -> Option<&'a str> {
+    active.get(key).or_else(|| english.get(key)).map(String::as_str)
+}
+
 /// The text for a key: from the active language, otherwise from English
 /// (a half-finished translation should show the original, not a gap), and
 /// otherwise the key itself — see `an_unknown_key_yields_the_key_itself`.
@@ -79,11 +93,8 @@ pub fn set_language(language: Language) {
 /// last case: the key belongs to the caller and does not live long enough
 /// to be handed back by reference.
 pub fn lookup(key: &str) -> String {
-    language()
-        .catalog()
-        .get(key)
-        .or_else(|| Language::English.catalog().get(key))
-        .cloned()
+    resolve(language().catalog(), Language::English.catalog(), key)
+        .map(str::to_string)
         .unwrap_or_else(|| key.to_string())
 }
 
@@ -195,6 +206,33 @@ mod tests {
         with_language(Language::English, || {
             assert_eq!(lookup("demo.greeting"), "Backup created");
         });
+    }
+
+    /// The committed catalogues can never be missing a key that English
+    /// has (that is `every_language_has_exactly_the_english_keys`'s whole
+    /// point), so the fallback arm of `resolve` — the one that makes a
+    /// freshly added, half-translated language show English instead of a
+    /// gap — can only be reached with synthetic maps, never with the
+    /// shipped `de.toml`/`en.toml`.
+    #[test]
+    fn resolve_prefers_the_active_language_over_english() {
+        let active = BTreeMap::from([("greeting".to_string(), "Moin".to_string())]);
+        let english = BTreeMap::from([("greeting".to_string(), "Hi".to_string())]);
+        assert_eq!(resolve(&active, &english, "greeting"), Some("Moin"));
+    }
+
+    #[test]
+    fn resolve_falls_back_to_english_when_the_active_language_lacks_the_key() {
+        let active = BTreeMap::new();
+        let english = BTreeMap::from([("greeting".to_string(), "Hi".to_string())]);
+        assert_eq!(resolve(&active, &english, "greeting"), Some("Hi"));
+    }
+
+    #[test]
+    fn resolve_yields_nothing_when_neither_map_has_the_key() {
+        let active: BTreeMap<String, String> = BTreeMap::new();
+        let english: BTreeMap<String, String> = BTreeMap::new();
+        assert_eq!(resolve(&active, &english, "greeting"), None);
     }
 
     #[test]
