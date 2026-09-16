@@ -73,6 +73,15 @@ mod tests {
     }
 
     #[test]
+    fn a_byte_count_below_a_kilobyte_gets_the_unit_word_of_the_language() {
+        let _held = language_test_lock();
+        set_language(Language::German);
+        assert_eq!(human_size(512), "512 Byte");
+        set_language(Language::English);
+        assert_eq!(human_size(512), "512 bytes");
+    }
+
+    #[test]
     fn a_timestamp_follows_the_pattern_of_the_language() {
         let _held = language_test_lock();
         set_language(Language::German);
