@@ -183,6 +183,11 @@ macro_rules! t {
 /// two such tests running concurrently (the default with `cargo test`)
 /// could observe each other's switch mid-assertion, since `CURRENT` is one
 /// process-wide static.
+///
+/// Any test elsewhere in the workspace whose assertion depends on which
+/// language is active (not just on `set_language`/`lookup` in isolation,
+/// but on the wording a call under test actually produces) must acquire
+/// this lock too — including the GUI tests coming in later phases.
 #[cfg(test)]
 pub(crate) fn language_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());

@@ -34,6 +34,8 @@ library_serialize_failed = "Bibliothek konnte nicht als JSON serialisiert werden
 altered_check_unreadable = "{pak}: Prüfung auf Veränderung übersprungen (nicht lesbar: {source})"
 altered_check_failed = "{pak}: Prüfung auf Veränderung übersprungen ({source})"
 app_dirs_not_found = "Basisverzeichnisse des Systems nicht ermittelbar"
+archive_unpack_failed = "Archiv konnte nicht entpackt werden – ist es beschädigt?"
+invalid_pak_filename = "ungültiger Dateiname"
 
 [error.backup_defect]
 not_a_zip = "Archiv lässt sich nicht als ZIP öffnen: {path}"

@@ -34,6 +34,8 @@ library_serialize_failed = "the library could not be serialized as JSON"
 altered_check_unreadable = "{pak}: change check skipped (not readable: {source})"
 altered_check_failed = "{pak}: change check skipped ({source})"
 app_dirs_not_found = "could not determine the system's base directories"
+archive_unpack_failed = "the archive could not be unpacked – is it damaged?"
+invalid_pak_filename = "invalid file name"
 
 [error.backup_defect]
 not_a_zip = "the archive cannot be opened as a ZIP: {path}"

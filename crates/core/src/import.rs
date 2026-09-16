@@ -178,10 +178,7 @@ fn extract_rar(archive: &Path, into: &Path) -> Result<Vec<PathBuf>> {
     if tool_ran {
         Err(Error::io(
             archive,
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Archiv konnte nicht entpackt werden – ist es beschädigt?",
-            ),
+            std::io::Error::new(std::io::ErrorKind::InvalidData, crate::t!("error.archive_unpack_failed")),
         ))
     } else {
         Err(Error::NoRarTool)
@@ -282,7 +279,7 @@ pub fn import_pak(
         .ok_or_else(|| {
             Error::io(
                 pak,
-                std::io::Error::new(std::io::ErrorKind::InvalidInput, "ungültiger Dateiname"),
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, crate::t!("error.invalid_pak_filename")),
             )
         })?
         .to_string();
