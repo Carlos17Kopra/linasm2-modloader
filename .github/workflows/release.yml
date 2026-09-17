@@ -4,6 +4,11 @@ name: Release
 # derived from that tag: the tag `v0.2.0` becomes the directory
 # `.../download/v0.2.0/` holding `lina-sm2-0.2.0-x86_64-linux.tar.gz` and
 # `SHA256SUMS`. Change a name here and the installer stops finding it.
+#
+# Windows is served from the same release by a plain ZIP: unpack it, run
+# the exe. Deliberately no installer — an unsigned one would add a second
+# SmartScreen warning on top of the one the executable already triggers,
+# and buys nothing that a folder does not already give.
 on:
   push:
     tags:
@@ -19,15 +24,28 @@ permissions:
   contents: write # needed to create the release and upload its assets
 
 jobs:
-  release:
-    # Not `ubuntu-latest`: a binary linked against a newer glibc refuses to
-    # start on anything older, and this one is meant for whatever
-    # distribution a Steam machine happens to run. 22.04 means glibc 2.35,
-    # which every currently supported distribution is at or above.
-    # Everything else the launcher needs — Wayland, X11, xkbcommon, the
-    # portal for the file dialog — is opened at runtime, not linked, so the
-    # build needs no -dev packages at all.
-    runs-on: ubuntu-22.04
+  build:
+    strategy:
+      # No fail-fast: when one platform breaks, the other's result is still
+      # worth having — it says whether the breakage is local to a platform
+      # or in the code both share.
+      fail-fast: false
+      matrix:
+        include:
+          # Not `ubuntu-latest`: a binary linked against a newer glibc
+          # refuses to start on anything older, and this one is meant for
+          # whatever distribution a Steam machine happens to run. 22.04
+          # means glibc 2.35, which every currently supported distribution
+          # is at or above. Everything else the launcher needs — Wayland,
+          # X11, xkbcommon, the portal for the file dialog — is opened at
+          # runtime, not linked, so the build needs no -dev packages at all.
+          - os: ubuntu-22.04
+            platform: linux
+          - os: windows-latest
+            platform: windows
+
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
@@ -38,24 +56,26 @@ jobs:
         # `crates/app` sets rust-version = 1.95; the runner's preinstalled
         # toolchain is older more often than not.
         run: |
-          rustup toolchain install stable --profile minimal
+          rustup toolchain install stable --profile minimal --component clippy
           rustup default stable
           rustc --version
 
       - name: Work out the version
         id: version
+        shell: bash
         run: |
           tag="${{ github.event.inputs.tag || github.ref_name }}"
           version="${tag#v}"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      # A tag that does not match the version in Cargo.toml would produce a
-      # tarball named after the tag holding a binary that reports something
-      # else — and `install.sh` compares exactly those two to decide
-      # whether an update is needed. It would then offer the same update
-      # forever. Caught here rather than in the wild.
+      # A tag that does not match the version in Cargo.toml would produce an
+      # archive named after the tag holding a binary that reports something
+      # else — and `install.sh` compares exactly those two to decide whether
+      # an update is needed. It would then offer the same update forever.
+      # Caught here rather than in the wild.
       - name: Check the tag against Cargo.toml
+        shell: bash
         run: |
           manifest="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)"
           if [ "$manifest" != "${{ steps.version.outputs.version }}" ]; then
@@ -65,52 +85,106 @@ jobs:
 
       - name: Test
         run: |
-          cargo test --release
-          cargo clippy --all-targets -- -D warnings
+          cargo test --release --locked
+          cargo clippy --all-targets --locked -- -D warnings
 
       - name: Build
         run: cargo build --release --locked
 
-      - name: Assemble the archive
-        id: archive
+      - name: Assemble the archive (linux)
+        if: matrix.platform == 'linux'
+        shell: bash
         run: |
           set -eu
-          version="${{ steps.version.outputs.version }}"
-          name="lina-sm2-$version-x86_64-linux"
+          name="lina-sm2-${{ steps.version.outputs.version }}-x86_64-linux"
           mkdir -p "dist/$name"
 
           cp target/release/lina-sm2 "dist/$name/"
-          # ~33 MB of debug symbols nobody downloading a release can use.
+          # Debug symbols nobody downloading a release can use: ~33 MB
+          # become ~26 MB.
           strip "dist/$name/lina-sm2"
           cp packaging/lina-sm2.desktop packaging/lina-sm2.svg "dist/$name/"
           # MIT asks for the notice to travel with every copy, and a
-          # downloaded tarball is a copy.
+          # downloaded archive is a copy.
           cp LICENSE "dist/$name/"
 
           tar -czf "dist/$name.tar.gz" -C dist "$name"
-          # Written from inside dist/ so the file names in SHA256SUMS are
-          # bare — `install.sh` checks them next to the downloaded archive,
-          # where a path would not resolve.
-          (cd dist && sha256sum "$name.tar.gz" > SHA256SUMS)
+          rm -rf "dist/$name"
+          ls -l dist
+
+      - name: Assemble the archive (windows)
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: |
+          set -eu
+          name="lina-sm2-${{ steps.version.outputs.version }}-x86_64-windows"
+          mkdir -p "dist/$name"
+
+          cp target/release/lina-sm2.exe "dist/$name/"
+          # A plain text file rather than the project's README: whoever
+          # unpacks this has no browser rendering Markdown in front of
+          # them, and the two warts of this build (SmartScreen, the console
+          # window) belong where they will actually be read.
+          cp packaging/README-windows.txt "dist/$name/README.txt"
+          # `.txt`, because double-clicking an extensionless LICENSE on
+          # Windows opens the "how do you want to open this file" dialog.
+          cp LICENSE "dist/$name/LICENSE.txt"
+
+          # PowerShell's own archiver: the Windows runner has no `zip`.
+          powershell -Command "Compress-Archive -Path 'dist/$name' -DestinationPath 'dist/$name.zip'"
+          rm -rf "dist/$name"
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    # Both archives have to exist before anything is published: a single
+    # SHA256SUMS covers them together, and a release that appears with only
+    # half its assets is one people download in the minutes before the rest
+    # arrives.
+    needs: build
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: collected
+
+      - name: Collect the archives and checksum them together
+        id: gather
+        run: |
+          set -eu
+          mkdir -p dist
+          find collected -type f -exec mv {} dist/ \;
+          ls -l dist
+
+          # Written from inside dist/ so the names in SHA256SUMS are bare.
+          # `install.sh` looks for the archive name at the end of a line,
+          # so a `./` in front of it would already be enough to make it
+          # refuse a perfectly good download — and the glob names the
+          # archives rather than using `*`, which would race with the
+          # SHA256SUMS being written here.
+          (cd dist && sha256sum lina-sm2-* > SHA256SUMS)
           cat dist/SHA256SUMS
 
-          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
 
       # `gh` is preinstalled on the runner, so this needs no third-party
       # action in the release path.
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -eu
-          tag="${{ steps.version.outputs.tag }}"
-          name="${{ steps.archive.outputs.name }}"
+          tag="${{ steps.gather.outputs.tag }}"
 
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "dist/$name.tar.gz" "dist/SHA256SUMS" --clobber
+            gh release upload "$tag" dist/* --clobber
           else
-            gh release create "$tag" \
-              --title "$tag" \
-              --generate-notes \
-              "dist/$name.tar.gz" "dist/SHA256SUMS"
+            gh release create "$tag" --title "$tag" --generate-notes dist/*
           fi

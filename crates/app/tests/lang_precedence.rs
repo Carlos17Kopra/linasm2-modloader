@@ -7,11 +7,20 @@
 //! `--lang en` would be silently undone by `AppState::open()` for
 //! everything printed after it.
 //!
+//! Unix only, and not because the behaviour under test is: the harness
+//! steers `directories::ProjectDirs` through the XDG environment
+//! variables, and on Windows those are ignored in favour of `%APPDATA%` —
+//! the tests would then read and write the real user's configuration
+//! directory instead of a sandbox. Porting the harness is a piece of work
+//! of its own, not a side effect of the Windows build.
+//!
 //! This runs the real binary as a subprocess (steered through the XDG
 //! environment variables `directories::ProjectDirs` reads), not
 //! `cli::run()` in-process: that function reads `std::env::args()`
 //! directly and calls `std::process::exit` on error, neither of which a
 //! single test binary can do more than once.
+
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

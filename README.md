@@ -59,12 +59,31 @@ export PATH="$HOME/.local/bin:$PATH"
 
 The installer deliberately does not edit those files for you.
 
+## Install on Windows
+
+There is no installer and no one-liner. Download
+`lina-sm2-<version>-x86_64-windows.zip` from the
+[releases](https://github.com/Carlos17Kopra/linasm2-modloader/releases),
+unpack it anywhere and run `lina-sm2.exe`. To uninstall, delete the
+folder; settings and backups under `%APPDATA%\lina-sm2` and
+`%LOCALAPPDATA%\lina-sm2` stay until you delete those too.
+
+Two things to expect, both explained in the `README.txt` inside the ZIP:
+Windows shows a SmartScreen warning because the executable is not signed,
+and a console window opens next to the launcher because the same file is
+both the graphical and the command line tool.
+
+> **The Windows build is untested.** It compiles in CI and its logic is
+> covered by tests, but no one has yet run it on a machine that actually
+> has Space Marine 2 installed — game detection, the savegame paths and
+> starting the game are unverified there. Reports welcome.
+
 ## Requirements
 
-- Linux on x86_64 — the same architecture Proton needs
-- Space Marine 2 installed through Steam and **started at least once**, so
-  that its Proton prefix exists
-- `curl` or `wget`, and `tar` — present on every desktop distribution
+- x86_64 — the same architecture Proton needs. Linux, or Windows 10/11
+- Space Marine 2 installed through Steam, and **started at least once** on
+  Linux, so that its Proton prefix exists
+- On Linux, `curl` or `wget` and `tar` — present on every desktop distribution
 
 ## Build from source
 

@@ -10,6 +10,10 @@
 //! Nothing outside a temporary directory is touched: the harness points
 //! `HOME`, the XDG variables and the installer's two endpoint variables at
 //! a sandbox of its own.
+//!
+//! Unix only: `install.sh` is a POSIX shell script for Linux, and Windows
+//! is served by the ZIP from the same release instead.
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

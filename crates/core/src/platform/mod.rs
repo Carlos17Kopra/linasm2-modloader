@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
 pub mod unix;
+#[cfg(windows)]
+pub mod windows;
 
 /// The project's entire platform-dependent surface.
 ///
@@ -43,3 +45,5 @@ pub trait Platform {
 
 #[cfg(unix)]
 pub type Current = unix::Unix;
+#[cfg(windows)]
+pub type Current = windows::Windows;

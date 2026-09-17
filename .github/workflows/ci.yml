@@ -1,0 +1,46 @@
+name: CI
+
+# Runs on every push and pull request. Its reason for existing is the
+# Windows job: the Windows half of `Platform` cannot be compiled on the
+# machine it is written on — cross-compiling it needs a C toolchain for the
+# target, because `zstd-sys` and `blake3` build C. This workflow is
+# therefore the first compiler that sees that code, and the only thing that
+# says whether it still builds.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      # Both sides always run: a failure on one tells nothing about the
+      # other, and the Windows result is the whole point of this workflow.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: Linux
+          - os: windows-latest
+            name: Windows
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain
+        # `crates/app` sets rust-version = 1.95; the preinstalled toolchain
+        # on the runners is older more often than not.
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+          rustc --version
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
