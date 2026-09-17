@@ -52,6 +52,13 @@ icon_file_for() {
     printf '%s/%sx%s/apps/%s.png' "$ICON_BASE" "$1" "$1" "$BIN_NAME"
 }
 
+# Up to 0.3.0 the icon was a single scalable SVG. It has to go, and not
+# for tidiness: under the icon theme specification a `scalable` entry
+# answers for every size, while a 48 px PNG answers only for 48. Left in
+# place it would keep winning at 22, 24 and 32 px — the task bar and the
+# window list — and an update would look like it had changed nothing.
+LEGACY_ICON_FILE="$ICON_BASE/scalable/apps/$BIN_NAME.svg"
+
 say() { printf '%s\n' "$*"; }
 step() { printf '  %s\n' "$*"; }
 
@@ -156,7 +163,7 @@ if [ "$action" = "uninstall" ]; then
     # Unquoted on purpose: `$icon_files` is a list of paths, and none of
     # them can hold a space — they are built from $DATA_HOME and numbers.
     # shellcheck disable=SC2086
-    for file in "$BIN_DIR/$BIN_NAME" "$DESKTOP_FILE" $icon_files; do
+    for file in "$BIN_DIR/$BIN_NAME" "$DESKTOP_FILE" "$LEGACY_ICON_FILE" $icon_files; do
         if [ -e "$file" ]; then
             rm -f "$file"
             step "removed $file"
@@ -276,6 +283,9 @@ for size in $ICON_SIZES; do
         cp "$work/unpacked/$BIN_NAME-$size.png" "$(icon_file_for "$size")"
     fi
 done
+# After the new files, not before: a run that fails in between then leaves
+# an installation with an icon rather than one with none.
+rm -f "$LEGACY_ICON_FILE"
 
 # The desktop entry points at the absolute path, not at the bare name: the
 # menu does not read the shell's PATH, so an entry saying `Exec=lina-sm2`
