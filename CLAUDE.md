@@ -93,14 +93,25 @@ The Windows side has never run on a machine with the game installed. Two
 things are therefore uncovered rather than merely unverified, and both are
 marked at the tests that had to be gated:
 
-- Everything reached through `save_dir`. The fixtures build the save
+- Everything reached through `save_dir` — thirteen tests across
+  `core::paths`, `core::tests::workflow`, `app::app_state` and `app::cli`
+  carry `#[cfg(unix)]` for this one reason. The fixtures build the save
   directory inside a Proton prefix under a temporary directory, which is
   where `user_profile_root` looks on Linux; on Windows it returns the real
-  `%USERPROFILE%`, which a test must not write into. Giving that function
-  a test override would fix it, and is an open decision, not an oversight.
+  `%USERPROFILE%`, which a test must not write into. Giving that one
+  function a way to be redirected in tests would bring all thirteen back
+  on Windows, and is an open decision, not an oversight.
 - The symlink guards in `saves` and `import`. The guards themselves rest on
   `symlink_metadata` and are platform-neutral; only creating a symlink as a
   fixture needs privileges on Windows.
+- `backup`'s refusal of a save file with a backslash in its name. The
+  hostile file cannot be created on Windows at all, where a backslash
+  separates path components. The same guard for archives written elsewhere
+  (`verify_rejects_backslash_components_in_entry_names`) runs on both.
+
+When gating a test for one of these, say which of the three it is. A bare
+`#[cfg(unix)]` reads like the behaviour is Unix-specific, and here it
+almost never is — it is the fixture that cannot be built.
 
 ## Working on it
 

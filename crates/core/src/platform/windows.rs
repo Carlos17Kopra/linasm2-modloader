@@ -209,6 +209,22 @@ fn which_in(name: &str, path: &OsStr, pathext: &OsStr) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
+    /// Windows file names are case-insensitive, and `which_in` returns the
+    /// name it assembled from `PATHEXT` (".EXE"), not the spelling that is
+    /// on disk (".exe"). Both open the very same file, so an assertion
+    /// that compares the strings byte for byte is not testing the lookup —
+    /// it is testing how `PATHEXT` happens to be capitalised.
+    fn assert_same_file(found: Option<PathBuf>, expected: &Path) {
+        let found = found.expect("the tool must be found");
+        assert_eq!(
+            found.to_string_lossy().to_lowercase(),
+            expected.to_string_lossy().to_lowercase(),
+            "found {} , expected {}",
+            found.display(),
+            expected.display()
+        );
+    }
+
     /// The counterpart to `user_profile_root_points_into_the_proton_prefix`
     /// on the Unix side: there the library is the whole answer, here it is
     /// none of it.
@@ -258,7 +274,7 @@ mod tests {
 
         let found = which_in("7z", dir.path().as_os_str(), OsStr::new(".COM;.EXE"));
 
-        assert_eq!(found, Some(tool));
+        assert_same_file(found, &tool);
     }
 
     /// The order in `PATHEXT` decides, not the order on disk.
@@ -270,7 +286,7 @@ mod tests {
 
         let found = which_in("tool", dir.path().as_os_str(), OsStr::new(".EXE;.CMD"));
 
-        assert_eq!(found, Some(dir.path().join("tool.exe")));
+        assert_same_file(found, &dir.path().join("tool.exe"));
     }
 
     #[test]
@@ -281,7 +297,7 @@ mod tests {
 
         let found = which_in("7z.exe", dir.path().as_os_str(), OsStr::new(".COM;.EXE"));
 
-        assert_eq!(found, Some(tool));
+        assert_same_file(found, &tool);
     }
 
     #[test]

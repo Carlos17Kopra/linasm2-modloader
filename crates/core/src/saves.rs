@@ -1419,6 +1419,15 @@ mod tests {
     /// would immediately reject the resulting archive as corrupt. So
     /// `backup` has to refuse by itself, instead of producing an archive
     /// that never passes its own verification.
+    // Unix only, and the doc comment above says why without meaning to: a
+    // backslash is an ordinary character in a file name *there*. On Windows
+    // it separates path components, so `slot1\campaign.sav` does not create
+    // the hostile file this test needs — it creates a directory `slot1`
+    // holding an ordinary save, which `backup` is right to accept. The
+    // guard stays relevant on both systems for archives written elsewhere;
+    // `verify_rejects_backslash_components_in_entry_names` covers that side
+    // and runs everywhere.
+    #[cfg(unix)]
     #[test]
     fn backup_rejects_a_save_file_whose_name_contains_a_backslash() {
         let (_tmp, saves, backups) = save_fixture();

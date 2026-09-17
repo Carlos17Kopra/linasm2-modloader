@@ -321,6 +321,12 @@ mod tests {
         assert!(paths.pak_config_path().ends_with("client_pc/root/mods/pak_config.yaml"));
     }
 
+    // Unix only: the fixture builds the savegames inside a Proton prefix
+    // under a temporary directory, which is where `user_profile_root`
+    // looks on Linux. On Windows it returns the real `%USERPROFILE%`,
+    // which a test must not write into. See CLAUDE.md → Platforms: this is
+    // the gap that leaves Windows save handling without coverage.
+    #[cfg(unix)]
     #[test]
     fn resolves_save_dir_in_proton_prefix() {
         let (_tmp, paths) = fixture();
@@ -329,6 +335,12 @@ mod tests {
         assert!(saves.is_dir());
     }
 
+    // Unix only: the fixture builds the savegames inside a Proton prefix
+    // under a temporary directory, which is where `user_profile_root`
+    // looks on Linux. On Windows it returns the real `%USERPROFILE%`,
+    // which a test must not write into. See CLAUDE.md → Platforms: this is
+    // the gap that leaves Windows save handling without coverage.
+    #[cfg(unix)]
     #[test]
     fn reports_missing_prefix_clearly() {
         let tmp = tempfile::tempdir().unwrap();
@@ -360,6 +372,12 @@ mod tests {
         assert!(matches!(paths.save_dir(None).unwrap_err(), Error::NoSaveUser(_)));
     }
 
+    // Unix only: the fixture builds the savegames inside a Proton prefix
+    // under a temporary directory, which is where `user_profile_root`
+    // looks on Linux. On Windows it returns the real `%USERPROFILE%`,
+    // which a test must not write into. See CLAUDE.md → Platforms: this is
+    // the gap that leaves Windows save handling without coverage.
+    #[cfg(unix)]
     #[test]
     fn reports_multiple_steam_profiles_instead_of_guessing() {
         let (tmp, paths) = fixture();
@@ -375,6 +393,12 @@ mod tests {
     /// `settings.toml`'s `steam_user` (2b): when several user directories
     /// are present, a matching preset resolves the otherwise fatal
     /// ambiguity.
+    // Unix only: the fixture builds the savegames inside a Proton prefix
+    // under a temporary directory, which is where `user_profile_root`
+    // looks on Linux. On Windows it returns the real `%USERPROFILE%`,
+    // which a test must not write into. See CLAUDE.md → Platforms: this is
+    // the gap that leaves Windows save handling without coverage.
+    #[cfg(unix)]
     #[test]
     fn steam_user_override_resolves_ambiguity_when_it_matches_one_of_the_found_ids() {
         let (tmp, paths) = fixture();
@@ -394,6 +418,12 @@ mod tests {
     /// `settings.toml`, say) must produce a clear error of its own that
     /// names the profiles actually present — rather than being silently
     /// ignored or disappearing into `AmbiguousSaveUser`.
+    // Unix only: the fixture builds the savegames inside a Proton prefix
+    // under a temporary directory, which is where `user_profile_root`
+    // looks on Linux. On Windows it returns the real `%USERPROFILE%`,
+    // which a test must not write into. See CLAUDE.md → Platforms: this is
+    // the gap that leaves Windows save handling without coverage.
+    #[cfg(unix)]
     #[test]
     fn steam_user_override_that_matches_nothing_names_the_available_ids() {
         let (_tmp, paths) = fixture();

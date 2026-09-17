@@ -48,6 +48,12 @@ fn zip_with(files: &[(&str, &[u8])], to: &Path) {
     zip.finish().unwrap();
 }
 
+// Unix only, and only because of its last step: the restoration resolves
+// the save directory, which on Windows lives under the real
+// `%USERPROFILE%` rather than under this test's temporary Proton prefix.
+// The import and profile halves are covered on both systems by the other
+// two tests in this file.
+#[cfg(unix)]
 #[test]
 fn from_import_through_profile_to_restoration() {
     let (tmp, paths) = world();
