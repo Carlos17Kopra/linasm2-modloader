@@ -19,6 +19,11 @@ pub enum Error {
     NoSaveInArchive(PathBuf),
     UnusableArchive(ArchiveDefect),
     NotWritable(PathBuf),
+    /// Another instance already holds the single-instance lock. Its own
+    /// variant rather than an `Io` with `WouldBlock`, because the callers
+    /// have to tell this one case apart from every other failure of
+    /// `InstanceLock::acquire`: it is the only one that stops the program.
+    AlreadyRunning,
     Io { path: PathBuf, source: std::io::Error },
     PlainIo(std::io::Error),
 }
@@ -238,6 +243,9 @@ impl std::fmt::Display for Error {
             }
             Error::NotWritable(path) => {
                 i18n::format("error.not_writable", &[("path", path.display().to_string())])
+            }
+            Error::AlreadyRunning => {
+                i18n::format("error.already_running", &[("name", crate::APP_NAME.to_string())])
             }
             Error::Io { path, source } => i18n::format(
                 "error.io",

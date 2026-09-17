@@ -3,6 +3,7 @@ pub mod branding;
 pub mod error;
 pub mod i18n;
 pub mod import;
+pub mod instance;
 pub mod launch;
 pub mod library;
 pub mod pak_config;

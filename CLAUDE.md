@@ -90,6 +90,15 @@ of filesystem operations is the entire safety argument.
   all (ERROR_ACCESS_DENIED) and Windows offers no equivalent flush. The
   write-flush-rename of the archive file itself is unchanged on both.
 - Symlinks inside a save or extraction directory are never followed.
+- Only one launcher runs at a time. `instance::InstanceLock` takes an
+  advisory lock on `instance.lock` in the state directory, and the CLI
+  takes it for every command that changes something. Which ones those are
+  is decided by `cli::requires_exclusive_access`, exhaustively and without
+  a `_` arm, so a new subcommand does not compile until someone has chosen
+  a side for it. The guard has to stay bound for the whole run — a
+  `let _ = ...` releases it on the spot. A lock that cannot be taken at
+  all is a warning, not a refusal; only a lock someone else holds stops
+  the program.
 
 ## Platforms
 
@@ -123,7 +132,7 @@ almost never is — it is the fixture that cannot be built.
 
 ## Working on it
 
-    cargo test                  # 318 tests across both crates
+    cargo test                  # 327 tests across both crates
     cargo clippy --all-targets  # kept clean
     cargo run                   # GUI
     cargo run -- <subcommand>   # CLI
