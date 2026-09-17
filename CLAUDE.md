@@ -136,12 +136,19 @@ README carries it. The three pieces:
 - `packaging/` — the desktop entry and the icon that go into the archive.
   `StartupWMClass` there has to stay equal to `APP_SLUG`, or the running
   window is not connected to the menu entry.
-- `.github/workflows/release.yml` — a pushed tag `vX.Y.Z` builds on
-  ubuntu-22.04 (glibc 2.35: the oldest base the binary should still start
-  on) and uploads `lina-sm2-X.Y.Z-x86_64-linux.tar.gz` plus `SHA256SUMS`.
-  The tag has to match the workspace version; the workflow refuses
-  otherwise, because `install.sh` compares exactly those two to decide
-  whether an update is due.
+- `.github/workflows/release.yml` — a pushed tag `vX.Y.Z` builds on both
+  platforms and uploads `lina-sm2-X.Y.Z-x86_64-linux.tar.gz`,
+  `lina-sm2-X.Y.Z-x86_64-windows.zip` and one `SHA256SUMS` covering both.
+  Linux builds on ubuntu-22.04 (glibc 2.35: the oldest base the binary
+  should still start on). Windows gets a plain ZIP and no installer — an
+  unsigned installer only adds a second SmartScreen warning to the one the
+  executable already triggers. The tag has to match the workspace version;
+  the workflow refuses otherwise, because `install.sh` compares exactly
+  those two to decide whether an update is due.
+- `.github/workflows/ci.yml` — builds and tests both platforms on every
+  push. It is not optional: the Windows half cannot be compiled on a Linux
+  machine without a C toolchain for the target (`zstd-sys` and `blake3`
+  build C), so this is the only thing that says whether it still builds.
 
 The installer has its own end-to-end suite, `packaging/test-install.sh`: it
 publishes a release into a temporary directory and drives the real script
