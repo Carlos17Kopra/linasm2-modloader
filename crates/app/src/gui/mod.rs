@@ -56,6 +56,19 @@ use sm2_core::t;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+/// Reports a problem that keeps the interface from opening at all.
+///
+/// A window, not a line on `stderr`: started from the menu entry there is
+/// no terminal anywhere the user would look, and a launcher that simply
+/// does nothing on a double click looks broken rather than protected.
+pub fn report_start_refused(message: &str) {
+    rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Warning)
+        .set_title(sm2_core::APP_NAME)
+        .set_description(message)
+        .show();
+}
+
 /// Starts the interface. Returns once the user closes the window.
 pub fn run() -> eframe::Result {
     let options = eframe::NativeOptions {

@@ -6,6 +6,7 @@ use crate::vanilla;
 use anyhow::{bail, Context, Result};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use sm2_core::i18n::{self, Language};
+use sm2_core::instance::InstanceLock;
 use sm2_core::launch::{launch, no_eac_available, LaunchMode};
 use sm2_core::pak_config::PakEntry;
 use sm2_core::paths::GamePaths;
@@ -184,6 +185,45 @@ enum SaveCommand {
     },
 }
 
+/// Does this command change something a second instance could overwrite?
+///
+/// Exhaustive on purpose, without a `_` arm: a subcommand added later
+/// does not compile until someone has decided which side it belongs on.
+/// This is the one place where that decision could otherwise be
+/// forgotten in silence, and the cost of forgetting it is two processes
+/// writing the same file.
+///
+/// The commands answering "no" are not entirely free of writes —
+/// `AppState::open` may refresh the mod cache `library.json` for any of
+/// them. That write goes through `atomic.rs` and is best effort, so two
+/// of them at once can cost at most one refresh, never a damaged file.
+/// Everything that touches the mod directory, `pak_config.yaml`, a
+/// profile or a savegame is on the other side of this function.
+fn requires_exclusive_access(command: &Command) -> bool {
+    match command {
+        Command::List | Command::Paths | Command::Open { .. } => false,
+        // Without a code `lang` only prints the current setting.
+        Command::Lang { code } => code.is_some(),
+        Command::Enable { .. }
+        | Command::Disable { .. }
+        | Command::Order { .. }
+        | Command::Install { .. }
+        | Command::Play { .. } => true,
+        Command::Profile(sub) => match sub {
+            ProfileCommand::List => false,
+            ProfileCommand::Save { .. } | ProfileCommand::Apply { .. } | ProfileCommand::Delete { .. } => true,
+        },
+        Command::Save(sub) => match sub {
+            SaveCommand::List => false,
+            SaveCommand::Backup { .. }
+            | SaveCommand::Restore { .. }
+            | SaveCommand::Import { .. }
+            | SaveCommand::Rename { .. }
+            | SaveCommand::Delete { .. } => true,
+        },
+    }
+}
+
 pub fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
@@ -192,9 +232,12 @@ pub fn run() -> Result<()> {
     // file is read here and again in `AppState::open()` below: reading a
     // small TOML file twice is cheaper than parsing the arguments twice,
     // which is the only other way to learn about `--lang` this early.
-    let stored = crate::app_state::load_dirs_and_settings()
-        .map(|(_, settings)| settings.language())
-        .unwrap_or_default();
+    // Both halves of this call are kept: the language for the messages
+    // right below, the directories for the single-instance lock further
+    // down. A failure is not handled here — `AppState::open()` runs into
+    // the same one a few lines later and reports it properly.
+    let loaded = crate::app_state::load_dirs_and_settings().ok();
+    let stored = loaded.as_ref().map(|(_, settings)| settings.language()).unwrap_or_default();
     let effective = match cli_help::language_from_args(&args) {
         Ok(language) => language.unwrap_or(stored),
         Err(code) => {
@@ -208,6 +251,15 @@ pub fn run() -> Result<()> {
     i18n::set_language(effective);
 
     let cli = Cli::from_arg_matches(&cli_help::localize(Cli::command(), "cli").get_matches_from(args))?;
+
+    // Only commands that change something wait for the other instance;
+    // `list` and its kin have to stay usable while the interface is open.
+    // The binding must be named: `let _ = ...` would drop the guard here
+    // and release the lock before the command has even run.
+    let _lock = match (&loaded, requires_exclusive_access(&cli.command)) {
+        (Some((dirs, _)), true) => InstanceLock::acquire(dirs)?,
+        _ => None,
+    };
 
     let mut state = AppState::open()?;
     // `AppState::open` applies the language from the settings file; `--lang`
@@ -781,6 +833,55 @@ mod tests {
     use super::*;
     use crate::app_state::{language_test_lock, test_fixture};
     use clap::CommandFactory;
+
+    /// Parses one command line the way `run` does, without executing it.
+    fn command_from(args: &[&str]) -> Command {
+        Cli::try_parse_from(args).expect("test argument list does not parse").command
+    }
+
+    #[test]
+    fn commands_that_only_read_run_alongside_a_second_instance() {
+        // Not a nicety: without these the user cannot even look up what is
+        // going on while the interface is open.
+        for args in [
+            &["lina-sm2", "list"][..],
+            &["lina-sm2", "paths"],
+            &["lina-sm2", "open", "mods"],
+            &["lina-sm2", "profile", "list"],
+            &["lina-sm2", "save", "list"],
+            &["lina-sm2", "lang"],
+        ] {
+            assert!(
+                !requires_exclusive_access(&command_from(args)),
+                "{args:?} only reads and must not be blocked"
+            );
+        }
+    }
+
+    #[test]
+    fn commands_that_write_demand_the_single_instance_lock() {
+        for args in [
+            &["lina-sm2", "enable", "a.pak"][..],
+            &["lina-sm2", "disable", "a.pak"],
+            &["lina-sm2", "order", "a.pak"],
+            &["lina-sm2", "install", "a.pak"],
+            &["lina-sm2", "lang", "de"],
+            &["lina-sm2", "play"],
+            &["lina-sm2", "profile", "save", "p"],
+            &["lina-sm2", "profile", "apply", "p"],
+            &["lina-sm2", "profile", "delete", "p"],
+            &["lina-sm2", "save", "backup"],
+            &["lina-sm2", "save", "restore"],
+            &["lina-sm2", "save", "import", "b.zip"],
+            &["lina-sm2", "save", "rename"],
+            &["lina-sm2", "save", "delete", "--yes"],
+        ] {
+            assert!(
+                requires_exclusive_access(&command_from(args)),
+                "{args:?} changes state and must wait for the other instance"
+            );
+        }
+    }
 
     #[test]
     fn cli_command_structure_is_valid() {
