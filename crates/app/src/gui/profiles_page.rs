@@ -4,7 +4,7 @@ use super::format::human_time;
 use super::theme::{color, medium, metric, mono, sans};
 use super::widgets::{self, ButtonStyle, Column};
 use super::{Action, App};
-use crate::vanilla::VANILLA_SNAPSHOT_PREFIX;
+use crate::vanilla::is_snapshot_name;
 use egui::{Align2, CornerRadius, Pos2, Rect, Sense, Stroke, Ui, UiBuilder, Vec2};
 use sm2_core::t;
 
@@ -102,7 +102,7 @@ fn row(app: &App, ui: &mut Ui, profile: &sm2_core::profile::Profile, actions: &m
     );
 
     // The name, followed by the marker for automatically made snapshots.
-    let automatic = profile.name.starts_with(VANILLA_SNAPSHOT_PREFIX);
+    let automatic = is_snapshot_name(&profile.name);
     let name_galley = widgets::truncated(
         ui,
         &profile.name,

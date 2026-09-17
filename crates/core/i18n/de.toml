@@ -273,6 +273,15 @@ decimal_separator = ","
 datetime = "{day}.{month}.{year} {clock}"
 byte_unit_value = "{value} Byte"
 
+# Do not reword these three: profile names on users' disks begin with
+# them, and that is how such a profile is recognised as one the launcher
+# made. `the_german_labels_still_read_as_they_do_on_disks_today` in
+# i18n.rs holds them to it.
+[label]
+before_vanilla_launch = "vor Vanilla-Start"
+before_modded_launch = "vor Modded-Start"
+before_restore = "vor Wiederherstellung"
+
 [gui.status_bar]
 cancel = "Abbrechen"
 entries = "pak_config.yaml · {count} Einträge"

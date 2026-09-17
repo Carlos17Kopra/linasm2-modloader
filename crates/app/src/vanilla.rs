@@ -9,23 +9,39 @@
 
 use crate::app_state::AppState;
 use anyhow::{Context, Result};
+use sm2_core::i18n::{lookup_in, Language};
 use sm2_core::import::now_rfc3339;
 use sm2_core::profile::Profile;
 use sm2_core::t;
 use std::path::PathBuf;
 
-/// The name prefix under which the previous state is backed up. Every run
-/// appends a timestamp (see `snapshot_and_disable_all`) so that two vanilla
-/// launches in a row can never hit the same profile name — and therefore
-/// the same file, see `Profile::file_stem` — and overwrite each other.
+/// The name a snapshot of the previous state is saved under: the label in
+/// the language that is active right now, followed by a timestamp so that
+/// two vanilla launches in a row can never hit the same profile name — and
+/// therefore the same file, see `Profile::file_stem` — and overwrite each
+/// other.
 ///
-/// Stays German by decision, unlike every other user-facing string in this
-/// program: it is matched by prefix and already written into existing
-/// profile names on users' disks, so translating it would rename data that
-/// is already there. It is shown to the user even in an English interface
-/// — a known limitation, not an oversight — and whether to eventually
-/// split the stored form from the displayed form is left open for later.
-pub const VANILLA_SNAPSHOT_PREFIX: &str = "vor Vanilla-Start";
+/// The name is written once and never rewritten, so a profile keeps the
+/// wording of the run that made it. Recognising one again is therefore
+/// `is_snapshot_name`'s job and not a matter of the active language.
+pub fn snapshot_name() -> String {
+    format!("{} {}", t!("label.before_vanilla_launch"), timestamp_for_snapshot_name())
+}
+
+/// Whether `name` belongs to a profile this program wrote before a vanilla
+/// start, rather than one the user named.
+///
+/// Asks every language instead of only the active one. The profiles on a
+/// user's disk carry the wording of whichever interface language was set
+/// when they were made; matching only the current language would strip the
+/// "automatic" badge off every snapshot from before a language switch, and
+/// renaming them to repair that is exactly what this program does not do
+/// to data it finds.
+pub fn is_snapshot_name(name: &str) -> bool {
+    Language::ALL
+        .iter()
+        .any(|language| name.starts_with(&lookup_in(*language, "label.before_vanilla_launch")))
+}
 
 /// What the backup created.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +62,7 @@ pub struct Snapshot {
 /// starting the game.
 pub fn snapshot_and_disable_all(state: &mut AppState) -> Result<Option<Snapshot>> {
     let snapshot = if state.config.entries.iter().any(|e| !e.disabled) {
-        let name = format!("{VANILLA_SNAPSHOT_PREFIX} {}", timestamp_for_snapshot_name());
+        let name = snapshot_name();
         let profile = Profile::from_config(&name, &state.config);
         let path = profile.save(&state.profiles_dir()).context(t!("cli.play.vanilla_backup_failed"))?;
         Some(Snapshot { name, path })
@@ -76,6 +92,30 @@ pub fn timestamp_for_snapshot_name() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The badge on the profiles page asks every language, not just the
+    /// active one: a snapshot made under a German interface has to keep
+    /// being recognised as automatic after a switch to English, and the
+    /// other way round. Its name on disk is never rewritten.
+    #[test]
+    fn a_snapshot_name_is_recognised_whatever_language_wrote_it() {
+        assert!(is_snapshot_name("vor Vanilla-Start 2026-09-14 21:40"));
+        assert!(is_snapshot_name("before vanilla launch 2026-09-14 21:40"));
+        assert!(!is_snapshot_name("Coop night"), "a name the user chose is not a snapshot");
+    }
+
+    #[test]
+    fn a_snapshot_is_named_in_the_active_language() {
+        let _held = crate::app_state::language_test_lock();
+
+        sm2_core::i18n::set_language(sm2_core::i18n::Language::English);
+        let english = snapshot_name();
+        assert!(english.starts_with("before vanilla launch"), "{english}");
+
+        sm2_core::i18n::set_language(sm2_core::i18n::Language::German);
+        let german = snapshot_name();
+        assert!(german.starts_with("vor Vanilla-Start"), "{german}");
+    }
 
     #[test]
     fn the_timestamp_is_precise_to_the_minute() {

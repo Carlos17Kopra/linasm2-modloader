@@ -212,13 +212,11 @@ fn vanilla(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
             widgets::inset().show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.label(
-                    egui::RichText::new(format!(
-                        "{} {}",
-                        crate::vanilla::VANILLA_SNAPSHOT_PREFIX,
-                        crate::vanilla::timestamp_for_snapshot_name()
-                    ))
-                    .font(mono(11.5))
-                    .color(color::TEXT_STRONG),
+                    // The very function that names the profile, so the
+                    // preview cannot drift from what is then written.
+                    egui::RichText::new(crate::vanilla::snapshot_name())
+                        .font(mono(11.5))
+                        .color(color::TEXT_STRONG),
                 );
             });
             ui.label(
