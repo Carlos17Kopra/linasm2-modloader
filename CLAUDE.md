@@ -132,7 +132,7 @@ almost never is — it is the fixture that cannot be built.
 
 ## Working on it
 
-    cargo test                  # 327 tests across both crates
+    cargo test                  # 330 tests across both crates
     cargo clippy --all-targets  # kept clean
     cargo run                   # GUI
     cargo run -- <subcommand>   # CLI
@@ -150,9 +150,18 @@ README carries it. The three pieces:
   against that release's `SHA256SUMS`, installs binary, desktop entry and
   icon under `$HOME`. POSIX sh, no bash. Also `--uninstall`, `--force`,
   `--version`.
-- `packaging/` — the desktop entry and the icon that go into the archive.
+- `packaging/` — the desktop entry and the icons that go into the archive.
   `StartupWMClass` there has to stay equal to `APP_SLUG`, or the running
-  window is not connected to the menu entry.
+  window is not connected to the menu entry. Every image in the project
+  is derived from `docs/logo.jpg` by `packaging/make-icons.py`: the four
+  `icons/lina-sm2-<size>.png` the installer puts into hicolor, the
+  `lina-sm2-window.png` the interface builds into the binary for X11 and
+  Windows, the `lina-sm2.ico` `build.rs` compiles into the executable,
+  and `docs/social-preview.png`. The app icon is a crop of the logo, not
+  the logo: at 48 px the wordmark is a smudge and only the helmet still
+  reads. Change the logo and that script is what regenerates the rest —
+  nothing does it automatically, and `crates/app/tests/windows_icon.rs`
+  is what notices if the `.ico` stops being one.
 - `.github/workflows/release.yml` — a pushed tag `vX.Y.Z` builds on both
   platforms and uploads `lina-sm2-X.Y.Z-x86_64-linux.tar.gz`,
   `lina-sm2-X.Y.Z-x86_64-windows.zip` and one `SHA256SUMS` covering both.

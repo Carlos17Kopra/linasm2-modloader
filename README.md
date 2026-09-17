@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.jpg" alt="LiNa SM2 - Mod Launcher" width="420">
+</p>
+
 # LiNa SM2 - Mod Launcher
 
 A mod launcher for **Warhammer 40,000: Space Marine 2** on Linux — Steam,
@@ -17,14 +21,14 @@ mode next to the Start button](docs/screenshots/mods.png)
 curl -fsSL https://raw.githubusercontent.com/Carlos17Kopra/linasm2-modloader/main/install.sh | sh
 ```
 
-No root, no package manager. It puts three files under your home
-directory and nothing else:
+No root, no package manager. It puts the launcher, its menu entry and its
+icon under your home directory and nothing else:
 
 | File | Purpose |
 | --- | --- |
 | `~/.local/bin/lina-sm2` | the launcher itself (GUI and CLI in one binary) |
 | `~/.local/share/applications/lina-sm2.desktop` | entry in the application menu |
-| `~/.local/share/icons/hicolor/scalable/apps/lina-sm2.svg` | its icon |
+| `~/.local/share/icons/hicolor/<size>/apps/lina-sm2.png` | its icon, in four sizes |
 
 The released binary is checked against the `SHA256SUMS` of the same
 release before anything is unpacked; a mismatch stops the installation and

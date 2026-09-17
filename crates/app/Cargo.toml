@@ -19,3 +19,10 @@ eframe.workspace = true
 egui.workspace = true
 rfd.workspace = true
 tempfile.workspace = true
+
+# Not target-gated: a `cfg(windows)` here would be read for the machine
+# running the build script, so a cross build from Linux to Windows would
+# leave `build.rs` without the crate it needs. It costs one small crate on
+# a Linux build and nothing else.
+[build-dependencies]
+winresource.workspace = true

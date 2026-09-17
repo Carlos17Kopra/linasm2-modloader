@@ -5,10 +5,10 @@
 #   curl -fsSL https://raw.githubusercontent.com/Carlos17Kopra/linasm2-modloader/main/install.sh | sh
 #
 # It downloads the released binary for this machine, checks it against the
-# SHA256SUMS of the same release, and puts it, a desktop entry and an icon
-# under $HOME. No root, no package manager, nothing outside $HOME.
+# SHA256SUMS of the same release, and puts it, a desktop entry and the
+# icon under $HOME. No root, no package manager, nothing outside $HOME.
 #
-#   --uninstall   removes those three files again; settings, profiles and
+#   --uninstall   removes those files again; settings, profiles and
 #                 save backups are left alone
 #   --force       installs the release even when the same or a newer
 #                 version is already there
@@ -38,10 +38,19 @@ DOWNLOAD_BASE="${LINA_SM2_DOWNLOAD_BASE:-https://github.com/$REPO/releases/downl
 BIN_DIR="${LINA_SM2_BIN_DIR:-$HOME/.local/bin}"
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 DESKTOP_DIR="$DATA_HOME/applications"
-ICON_DIR="$DATA_HOME/icons/hicolor/scalable/apps"
+ICON_BASE="$DATA_HOME/icons/hicolor"
+# The icon is a photograph, so it ships as one PNG per size instead of a
+# single scalable file. 48 upwards is what a desktop looks for; below that
+# the toolkit scales down from the nearest size it finds, which it does
+# far better than scaling up. Keep in step with `packaging/make-icons.py`.
+ICON_SIZES="48 64 128 256"
 
 DESKTOP_FILE="$DESKTOP_DIR/$BIN_NAME.desktop"
-ICON_FILE="$ICON_DIR/$BIN_NAME.svg"
+
+# The installed path for one size, e.g. `.../hicolor/48x48/apps/lina-sm2.png`.
+icon_file_for() {
+    printf '%s/%sx%s/apps/%s.png' "$ICON_BASE" "$1" "$1" "$BIN_NAME"
+}
 
 say() { printf '%s\n' "$*"; }
 step() { printf '  %s\n' "$*"; }
@@ -140,7 +149,14 @@ refresh_desktop_caches() {
 
 if [ "$action" = "uninstall" ]; then
     removed="no"
-    for file in "$BIN_DIR/$BIN_NAME" "$DESKTOP_FILE" "$ICON_FILE"; do
+    icon_files=""
+    for size in $ICON_SIZES; do
+        icon_files="$icon_files $(icon_file_for "$size")"
+    done
+    # Unquoted on purpose: `$icon_files` is a list of paths, and none of
+    # them can hold a space — they are built from $DATA_HOME and numbers.
+    # shellcheck disable=SC2086
+    for file in "$BIN_DIR/$BIN_NAME" "$DESKTOP_FILE" $icon_files; do
         if [ -e "$file" ]; then
             rm -f "$file"
             step "removed $file"
@@ -240,7 +256,10 @@ mkdir -p "$work/unpacked"
 tar -xzf "$work/$archive" -C "$work/unpacked" --strip-components=1
 [ -f "$work/unpacked/$BIN_NAME" ] || die "the archive does not contain $BIN_NAME"
 
-mkdir -p "$BIN_DIR" "$DESKTOP_DIR" "$ICON_DIR"
+mkdir -p "$BIN_DIR" "$DESKTOP_DIR"
+for size in $ICON_SIZES; do
+    mkdir -p "$(dirname "$(icon_file_for "$size")")"
+done
 
 # Written next to the target and then renamed over it. The rename is
 # atomic, so a crash here leaves the previous version in place rather than
@@ -252,9 +271,11 @@ cp "$work/unpacked/$BIN_NAME" "$staged"
 chmod 755 "$staged"
 mv -f "$staged" "$BIN_DIR/$BIN_NAME"
 
-if [ -f "$work/unpacked/$BIN_NAME.svg" ]; then
-    cp "$work/unpacked/$BIN_NAME.svg" "$ICON_FILE"
-fi
+for size in $ICON_SIZES; do
+    if [ -f "$work/unpacked/$BIN_NAME-$size.png" ]; then
+        cp "$work/unpacked/$BIN_NAME-$size.png" "$(icon_file_for "$size")"
+    fi
+done
 
 # The desktop entry points at the absolute path, not at the bare name: the
 # menu does not read the shell's PATH, so an entry saying `Exec=lina-sm2`
@@ -275,7 +296,9 @@ say "  $BIN_DIR/$BIN_NAME"
 # list aborts the script — and a missing optional file must not turn a
 # finished installation into an error.
 [ -f "$DESKTOP_FILE" ] && say "  $DESKTOP_FILE" || true
-[ -f "$ICON_FILE" ] && say "  $ICON_FILE" || true
+for size in $ICON_SIZES; do
+    [ -f "$(icon_file_for "$size")" ] && say "  $(icon_file_for "$size")" || true
+done
 say ""
 
 case ":$PATH:" in
