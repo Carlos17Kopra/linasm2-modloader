@@ -9,8 +9,14 @@ use std::path::Path;
 use sm2_core::library::Library;
 use sm2_core::pak_config::PakConfig;
 use sm2_core::paths::GamePaths;
+use sm2_core::import;
+// Both are used only by `from_import_through_profile_to_restoration`, which
+// is Unix-only (see there) — without the gate they are dead imports on
+// Windows, and `-D warnings` makes that a build failure.
+#[cfg(unix)]
 use sm2_core::profile::Profile;
-use sm2_core::{import, saves};
+#[cfg(unix)]
+use sm2_core::saves;
 
 /// Builds a game directory with Proton prefix and savegames, matching a
 /// real installation.
