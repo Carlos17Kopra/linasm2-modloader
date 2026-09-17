@@ -2083,7 +2083,7 @@ dependencies = [
 
 [[package]]
 name = "lina-sm2"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3428,7 +3428,7 @@ dependencies = [
 
 [[package]]
 name = "sm2-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "directories",
