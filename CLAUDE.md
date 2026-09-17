@@ -106,8 +106,11 @@ of filesystem operations is the entire safety argument.
 `unix.rs` and `windows.rs` implement it, `Current` picks one, and nothing
 above it carries a `cfg`. Adding a platform means adding one file there.
 
-The Windows side has never run on a machine with the game installed. Two
-things are therefore uncovered rather than merely unverified, and both are
+The Windows side has been run through by hand on a machine with the game
+installed — detection, the mod list, savegame backup and restore, and
+starting the game all work there. What that does not do is close the gaps
+in the automated suite: three things stay uncovered by tests, for reasons
+that are about the fixtures rather than the behaviour, and all three are
 marked at the tests that had to be gated:
 
 - Everything reached through `save_dir` — thirteen tests across
