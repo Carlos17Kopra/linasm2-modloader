@@ -97,4 +97,4 @@ graphical interface has the same choice in its settings.
 
 ## License
 
-MIT.
+MIT — see [LICENSE](LICENSE).

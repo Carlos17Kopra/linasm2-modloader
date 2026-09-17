@@ -83,6 +83,9 @@ jobs:
           # ~33 MB of debug symbols nobody downloading a release can use.
           strip "dist/$name/lina-sm2"
           cp packaging/lina-sm2.desktop packaging/lina-sm2.svg "dist/$name/"
+          # MIT asks for the notice to travel with every copy, and a
+          # downloaded tarball is a copy.
+          cp LICENSE "dist/$name/"
 
           tar -czf "dist/$name.tar.gz" -C dist "$name"
           # Written from inside dist/ so the file names in SHA256SUMS are
