@@ -69,6 +69,32 @@ pub fn report_start_refused(message: &str) {
         .show();
 }
 
+/// The icon the window carries, decoded from the PNG built into the
+/// binary.
+///
+/// Wayland never asks for this — there the `.desktop` file found through
+/// the app id below owns the icon, which is why the launcher had none of
+/// this until now. X11 and Windows do ask, and without an answer they
+/// fall back to a blank default.
+///
+/// The file is read from `packaging/`, outside this crate, so that the
+/// icon the window shows and the icon the installer puts on the disk
+/// cannot drift apart: `make-icons.py` writes both from the same crop.
+///
+/// A file that will not decode costs the icon, not the start. There is
+/// nothing a user could do about it and nothing worth stopping for.
+fn window_icon() -> Option<egui::IconData> {
+    match eframe::icon_data::from_png_bytes(include_bytes!(
+        "../../../../packaging/lina-sm2-window.png"
+    )) {
+        Ok(icon) => Some(icon),
+        Err(source) => {
+            tracing::warn!(%source, "window icon could not be decoded");
+            None
+        }
+    }
+}
+
 /// Starts the interface. Returns once the user closes the window.
 pub fn run() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -82,6 +108,13 @@ pub fn run() -> eframe::Result {
             // display name.
             .with_app_id(sm2_core::APP_SLUG),
         ..Default::default()
+    };
+    let options = match window_icon() {
+        Some(icon) => eframe::NativeOptions {
+            viewport: options.viewport.with_icon(icon),
+            ..options
+        },
+        None => options,
     };
 
     eframe::run_native(
@@ -1045,6 +1078,24 @@ mod tests {
     use super::*;
     use crate::app_state::language_test_lock;
     use sm2_core::i18n::{set_language, Language};
+
+    #[test]
+    fn the_window_icon_decodes_to_a_square_of_pixels() {
+        // `with_icon` is handed raw RGBA, so a PNG that cannot be decoded
+        // would leave the window with the toolkit's default icon and say
+        // nothing about it. This is the check that the file committed
+        // beside the binary is still one the decoder accepts.
+        let icon = window_icon().expect("the embedded window icon must decode");
+
+        assert_eq!(icon.width, icon.height, "the icon has to be square");
+        assert_eq!(icon.width, 256, "packaging/make-icons.py writes 256 px");
+        assert_eq!(
+            icon.rgba.len(),
+            (icon.width * icon.height * 4) as usize,
+            "four bytes per pixel, or the toolkit reads past the end"
+        );
+    }
+
 
     /// `LaunchChoice::label()` is one of the two literals Task 6 left for
     /// this task on purpose (see the module doc comment) — it must actually

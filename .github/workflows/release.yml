@@ -105,7 +105,10 @@ jobs:
           # Debug symbols nobody downloading a release can use: ~33 MB
           # become ~26 MB.
           strip "dist/$name/lina-sm2"
-          cp packaging/lina-sm2.desktop packaging/lina-sm2.svg "dist/$name/"
+          cp packaging/lina-sm2.desktop "dist/$name/"
+          # Flat, not as a directory: `install.sh` looks for
+          # `lina-sm2-<size>.png` right beside the binary.
+          cp packaging/icons/lina-sm2-*.png "dist/$name/"
           # MIT asks for the notice to travel with every copy, and a
           # downloaded archive is a copy.
           cp LICENSE "dist/$name/"

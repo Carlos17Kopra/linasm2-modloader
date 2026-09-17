@@ -42,8 +42,19 @@ new_machine() {
     dl="$sandbox/dl"
     bin_dir="$home/.local/bin"
     desktop_file="$home/.local/share/applications/lina-sm2.desktop"
-    icon_file="$home/.local/share/icons/hicolor/scalable/apps/lina-sm2.svg"
+    icon_base="$home/.local/share/icons/hicolor"
     mkdir -p "$home" "$api" "$dl"
+}
+
+# The icon is a raster now, so it is one file per size rather than a
+# single scalable one. These are the sizes `packaging/make-icons.py`
+# writes and `install.sh` installs; the tests below check every one of
+# them, because a loop that stops after the first size would pass just as
+# happily.
+ICON_SIZES="48 64 128 256"
+
+icon_path() {
+    printf '%s/%sx%s/apps/lina-sm2.png' "$icon_base" "$1" "$1"
 }
 
 # Publishes version $1 as the latest release: a tarball holding a stand-in
@@ -70,7 +81,9 @@ exit 0
 EOF
     chmod 755 "$stage/$name/lina-sm2"
     cp "$ROOT/packaging/lina-sm2.desktop" "$stage/$name/"
-    cp "$ROOT/packaging/lina-sm2.svg" "$stage/$name/"
+    for size in $ICON_SIZES; do
+        cp "$ROOT/packaging/icons/lina-sm2-$size.png" "$stage/$name/"
+    done
 
     (cd "$stage" && tar -czf "$dl/v$version/$name.tar.gz" "$name")
     (cd "$dl/v$version" && sha256sum "$name.tar.gz" > SHA256SUMS)
@@ -107,7 +120,9 @@ test_a_fresh_installation_places_binary_desktop_entry_and_icon() {
 
     [ -x "$bin_dir/lina-sm2" ] || { fail "no executable at $bin_dir/lina-sm2"; return; }
     [ -f "$desktop_file" ] || { fail "no desktop entry at $desktop_file"; return; }
-    [ -f "$icon_file" ] || { fail "no icon at $icon_file"; return; }
+    for size in $ICON_SIZES; do
+        [ -f "$(icon_path "$size")" ] || { fail "no icon at $(icon_path "$size")"; return; }
+    done
     [ "$(installed_version)" = "0.2.0" ] || { fail "installed the wrong version"; return; }
     pass
 }
@@ -213,7 +228,10 @@ test_a_tampered_archive_is_refused_and_the_previous_version_survives() {
     mkdir -p "$swap"
     printf '#!/bin/sh\necho "lina-sm2 6.6.6"\n' > "$swap/lina-sm2"
     chmod 755 "$swap/lina-sm2"
-    cp "$ROOT/packaging/lina-sm2.desktop" "$ROOT/packaging/lina-sm2.svg" "$swap/"
+    cp "$ROOT/packaging/lina-sm2.desktop" "$swap/"
+    for size in $ICON_SIZES; do
+        cp "$ROOT/packaging/icons/lina-sm2-$size.png" "$swap/"
+    done
     (cd "$sandbox/swap" && tar -czf "$dl/v0.2.0/lina-sm2-0.2.0-x86_64-linux.tar.gz" \
         "lina-sm2-0.2.0-x86_64-linux")
 
@@ -282,7 +300,9 @@ test_uninstall_removes_the_three_files_and_keeps_settings_and_data() {
 
     [ -e "$bin_dir/lina-sm2" ] && { fail "the binary is still there"; return; }
     [ -e "$desktop_file" ] && { fail "the desktop entry is still there"; return; }
-    [ -e "$icon_file" ] && { fail "the icon is still there"; return; }
+    for size in $ICON_SIZES; do
+        [ -e "$(icon_path "$size")" ] && { fail "$(icon_path "$size") is still there"; return; }
+    done
     [ -f "$home/.config/lina-sm2/settings.toml" ] || { fail "the settings were deleted"; return; }
     [ -f "$home/.local/share/lina-sm2/profiles/mine.json" ] || { fail "a profile was deleted"; return; }
     pass
