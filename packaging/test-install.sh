@@ -308,6 +308,50 @@ test_uninstall_removes_the_three_files_and_keeps_settings_and_data() {
     pass
 }
 
+# Up to 0.3.0 the icon was a single scalable SVG. Leaving it behind on an
+# update is not cosmetic: under the icon theme specification a `scalable`
+# entry answers for *every* size, while a 48 px PNG answers only for 48 —
+# so at the sizes in between (22, 24, 32: task bar, window list) the old
+# file would keep winning and the update would appear not to have changed
+# the icon at all.
+test_an_update_removes_the_icon_of_the_previous_layout() {
+    new_machine
+    legacy="$home/.local/share/icons/hicolor/scalable/apps/lina-sm2.svg"
+    mkdir -p "$(dirname "$legacy")"
+    printf '<svg xmlns="http://www.w3.org/2000/svg"/>\n' > "$legacy"
+
+    publish_release 0.4.0
+    run_installer > "$sandbox/out" 2>&1 || {
+        fail "the installer exited non-zero: $(cat "$sandbox/out")"
+        return
+    }
+
+    [ -e "$legacy" ] && { fail "the icon of the previous layout is still there"; return; }
+    for size in $ICON_SIZES; do
+        [ -f "$(icon_path "$size")" ] || { fail "no icon at $(icon_path "$size")"; return; }
+    done
+    pass
+}
+
+# And the same file has to go when the launcher is removed, or an
+# uninstall leaves an icon behind for a program that is gone.
+test_uninstall_removes_the_icon_of_the_previous_layout() {
+    new_machine
+    legacy="$home/.local/share/icons/hicolor/scalable/apps/lina-sm2.svg"
+    mkdir -p "$(dirname "$legacy")"
+    printf '<svg xmlns="http://www.w3.org/2000/svg"/>\n' > "$legacy"
+
+    publish_release 0.4.0
+    run_installer > "$sandbox/out" 2>&1 || { fail "install failed"; return; }
+    run_installer --uninstall > "$sandbox/out" 2>&1 || {
+        fail "the uninstall exited non-zero: $(cat "$sandbox/out")"
+        return
+    }
+
+    [ -e "$legacy" ] && { fail "the icon of the previous layout is still there"; return; }
+    pass
+}
+
 test_uninstalling_nothing_is_not_an_error() {
     new_machine
 
