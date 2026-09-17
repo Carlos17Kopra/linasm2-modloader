@@ -40,7 +40,11 @@ jobs:
           rustc --version
 
       - name: Test
-        run: cargo test --locked
+        # `--no-fail-fast`: without it `cargo test` stops at the first test
+        # binary that fails, and a Windows run then reports the app crate's
+        # trouble while never touching `sm2-core`'s 189 tests at all. One
+        # round per hidden failure is a slow way to port a platform.
+        run: cargo test --locked --no-fail-fast
 
       - name: Clippy
         run: cargo clippy --all-targets --locked -- -D warnings

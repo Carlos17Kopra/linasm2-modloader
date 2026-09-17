@@ -1045,6 +1045,15 @@ mod tests {
 
     /// A fixture with exactly one save user directory, holding a savegame
     /// but no backup yet.
+    // The root of a group that is Unix-only, and not for convenience:
+    // this fixture puts the save directory inside a Proton prefix under a
+    // temporary directory, which is where `Platform::user_profile_root`
+    // looks on Linux. On Windows that function returns the real
+    // `%USERPROFILE%` — a path a test must never write into — so anything
+    // resolving a save directory cannot be sandboxed there at all.
+    // Everything below carrying `#[cfg(unix)]` does so for this one
+    // reason; Windows save handling has no automated coverage as a result.
+    #[cfg(unix)]
     fn fixture_with_save_dir(tmp: &std::path::Path) -> (AppState, PathBuf) {
         let state = test_fixture(tmp);
         let save_dir = tmp
@@ -1060,6 +1069,8 @@ mod tests {
     /// content in it before that content is overwritten. That makes it
     /// possible to check afterwards whether `run_save_command_with` actually
     /// restored or not.
+    // Unix only, see `fixture_with_save_dir` above.
+    #[cfg(unix)]
     fn fixture_with_one_backup(tmp: &std::path::Path) -> (AppState, PathBuf) {
         let (state, save_dir) = fixture_with_save_dir(tmp);
 
@@ -1069,10 +1080,17 @@ mod tests {
         (state, save_dir)
     }
 
+    // Unix only, see `fixture_with_save_dir` above.
+    #[cfg(unix)]
     fn restore_default() -> SaveCommand {
         SaveCommand::Restore { index: None, at: None, force: false }
     }
 
+    // Unix only for the reason at `fixture_with_save_dir` — and this one
+    // would otherwise pass on Windows for the wrong reason: it asserts an
+    // error and an unchanged save file, and gets both because `save_dir`
+    // fails first, long before the refusal under test is ever reached.
+    #[cfg(unix)]
     #[test]
     fn save_restore_refuses_when_steam_is_running_without_force() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1090,6 +1108,8 @@ mod tests {
 
     /// Also proves that `--force` is not inverted: `force: true` together
     /// with a running Steam must actually restore, not refuse.
+    // Unix only, see `fixture_with_save_dir` above.
+    #[cfg(unix)]
     #[test]
     fn save_restore_force_overrides_the_steam_running_refusal() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1108,6 +1128,8 @@ mod tests {
     /// Control test: without a running Steam the restore happens as normal,
     /// regardless of `force` — the refusal depends solely on
     /// `steam_running()`, not on a swapped condition.
+    // Unix only, see `fixture_with_save_dir` above.
+    #[cfg(unix)]
     #[test]
     fn save_restore_without_force_still_restores_when_steam_is_not_running() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1155,6 +1177,8 @@ mod tests {
 
     /// An imported backup has to be restorable like any other — that is the
     /// whole point of importing it.
+    // Unix only, see `fixture_with_save_dir` above.
+    #[cfg(unix)]
     #[test]
     fn imported_backup_can_be_restored() {
         let tmp = tempfile::tempdir().unwrap();

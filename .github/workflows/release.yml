@@ -84,8 +84,10 @@ jobs:
           fi
 
       - name: Test
+        # `--no-fail-fast` for the same reason as in ci.yml: one round per
+        # hidden failure is a slow way to find out what a release breaks.
         run: |
-          cargo test --release --locked
+          cargo test --release --locked --no-fail-fast
           cargo clippy --all-targets --locked -- -D warnings
 
       - name: Build
