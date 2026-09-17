@@ -1,0 +1,20 @@
+[Desktop Entry]
+Type=Application
+Name=LiNa SM2 - Mod Launcher
+GenericName=Mod Launcher
+Comment=Mod launcher for Space Marine 2 on Linux
+Comment[de]=Mod-Launcher für Space Marine 2 unter Linux
+# `install.sh` rewrites this line to the absolute path it installed to.
+# Left relative here so the file is also usable by a distribution package
+# that puts the binary on the PATH itself.
+Exec=lina-sm2
+Icon=lina-sm2
+Terminal=false
+# Exactly one main category: `Game;Utility;` makes some menus list
+# the launcher twice (desktop-file-validate warns about it).
+Categories=Game;
+Keywords=Space Marine;Warhammer;mod;Steam;Proton;
+# Must match `ViewportBuilder::with_app_id` (sm2_core::APP_SLUG), or the
+# window ends up detached from this entry: no icon in the task bar and a
+# second, nameless entry next to this one while the program runs.
+StartupWMClass=lina-sm2

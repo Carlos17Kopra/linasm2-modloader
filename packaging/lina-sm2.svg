@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="LiNa SM2 - Mod Launcher">
+  <!-- The colours are the interface's own (see gui/theme.rs): WINDOW as the
+       tile, BORDER for its edge, ACCENT for the mark, TEXT_MUTED for the
+       base bar. An icon in different colours than the window it opens
+       reads as a different program. -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#12141a"/>
+  <rect x="2.5" y="2.5" width="59" height="59" rx="13.5" fill="none" stroke="#262b36"/>
+
+  <!-- A play triangle: the one symbol that still says "starts something"
+       at 16 px, where a wordmark is a grey smudge. -->
+  <path d="M25 19.5 L45 31 L25 42.5 Z" fill="#3ba6a0" stroke="#3ba6a0" stroke-width="4" stroke-linejoin="round"/>
+
+  <!-- The bar under it stands for the load order the launcher arranges,
+       and gives the triangle a ground to sit on so it does not float. -->
+  <rect x="21" y="48" width="22" height="4" rx="2" fill="#8a94a6"/>
+</svg>

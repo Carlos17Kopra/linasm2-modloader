@@ -1,0 +1,113 @@
+name: Release
+
+# Pushing a tag is the whole trigger. What `install.sh` downloads is
+# derived from that tag: the tag `v0.2.0` becomes the directory
+# `.../download/v0.2.0/` holding `lina-sm2-0.2.0-x86_64-linux.tar.gz` and
+# `SHA256SUMS`. Change a name here and the installer stops finding it.
+on:
+  push:
+    tags:
+      - "v*"
+  # Lets a release be rebuilt from the Actions tab without moving the tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build (e.g. v0.2.0)"
+        required: true
+
+permissions:
+  contents: write # needed to create the release and upload its assets
+
+jobs:
+  release:
+    # Not `ubuntu-latest`: a binary linked against a newer glibc refuses to
+    # start on anything older, and this one is meant for whatever
+    # distribution a Steam machine happens to run. 22.04 means glibc 2.35,
+    # which every currently supported distribution is at or above.
+    # Everything else the launcher needs — Wayland, X11, xkbcommon, the
+    # portal for the file dialog — is opened at runtime, not linked, so the
+    # build needs no -dev packages at all.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install the Rust toolchain
+        # `crates/app` sets rust-version = 1.95; the runner's preinstalled
+        # toolchain is older more often than not.
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+
+      - name: Work out the version
+        id: version
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # A tag that does not match the version in Cargo.toml would produce a
+      # tarball named after the tag holding a binary that reports something
+      # else — and `install.sh` compares exactly those two to decide
+      # whether an update is needed. It would then offer the same update
+      # forever. Caught here rather than in the wild.
+      - name: Check the tag against Cargo.toml
+        run: |
+          manifest="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)"
+          if [ "$manifest" != "${{ steps.version.outputs.version }}" ]; then
+            echo "tag ${{ steps.version.outputs.tag }} does not match Cargo.toml version $manifest" >&2
+            exit 1
+          fi
+
+      - name: Test
+        run: |
+          cargo test --release
+          cargo clippy --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Assemble the archive
+        id: archive
+        run: |
+          set -eu
+          version="${{ steps.version.outputs.version }}"
+          name="lina-sm2-$version-x86_64-linux"
+          mkdir -p "dist/$name"
+
+          cp target/release/lina-sm2 "dist/$name/"
+          # ~33 MB of debug symbols nobody downloading a release can use.
+          strip "dist/$name/lina-sm2"
+          cp packaging/lina-sm2.desktop packaging/lina-sm2.svg "dist/$name/"
+
+          tar -czf "dist/$name.tar.gz" -C dist "$name"
+          # Written from inside dist/ so the file names in SHA256SUMS are
+          # bare — `install.sh` checks them next to the downloaded archive,
+          # where a path would not resolve.
+          (cd dist && sha256sum "$name.tar.gz" > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      # `gh` is preinstalled on the runner, so this needs no third-party
+      # action in the release path.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag="${{ steps.version.outputs.tag }}"
+          name="${{ steps.archive.outputs.name }}"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "dist/$name.tar.gz" "dist/SHA256SUMS" --clobber
+          else
+            gh release create "$tag" \
+              --title "$tag" \
+              --generate-notes \
+              "dist/$name.tar.gz" "dist/SHA256SUMS"
+          fi

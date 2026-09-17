@@ -81,7 +81,7 @@ of filesystem operations is the entire safety argument.
 
 ## Working on it
 
-    cargo test                  # 310 tests across both crates
+    cargo test                  # 312 tests across both crates
     cargo clippy --all-targets  # kept clean
     cargo run                   # GUI
     cargo run -- <subcommand>   # CLI
@@ -89,3 +89,42 @@ of filesystem operations is the entire safety argument.
 Write tests first. The existing suite was built that way and the failure modes
 it covers (collisions in the same second, corrupt archives, zip-slip, symlink
 cycles) are the reason this tool can be trusted with real save data.
+
+## Packaging
+
+Users install with a one-liner that pipes `install.sh` into `sh`; the
+README carries it. The three pieces:
+
+- `install.sh` (repository root) — downloads the release asset, verifies it
+  against that release's `SHA256SUMS`, installs binary, desktop entry and
+  icon under `$HOME`. POSIX sh, no bash. Also `--uninstall`, `--force`,
+  `--version`.
+- `packaging/` — the desktop entry and the icon that go into the archive.
+  `StartupWMClass` there has to stay equal to `APP_SLUG`, or the running
+  window is not connected to the menu entry.
+- `.github/workflows/release.yml` — a pushed tag `vX.Y.Z` builds on
+  ubuntu-22.04 (glibc 2.35: the oldest base the binary should still start
+  on) and uploads `lina-sm2-X.Y.Z-x86_64-linux.tar.gz` plus `SHA256SUMS`.
+  The tag has to match the workspace version; the workflow refuses
+  otherwise, because `install.sh` compares exactly those two to decide
+  whether an update is due.
+
+The installer has its own end-to-end suite, `packaging/test-install.sh`: it
+publishes a release into a temporary directory and drives the real script
+against it over `file://` URLs. `cargo test` runs it through
+`crates/app/tests/install_script.rs`, so it stays in the one command that
+says whether this repository is sound. Change the asset naming in one of
+the three places and that suite is what tells you about the other two.
+
+The active language is one process-wide static (`CURRENT` in
+`crates/core/src/i18n.rs`), and `cargo test` runs a crate's tests
+concurrently by default. Any test anywhere in the workspace whose
+assertion depends on which language is active — not just on
+`set_language`/`lookup` in isolation, but on the wording a call under
+test actually produces — must hold the matching lock for as long as that
+dependency lasts: `sm2_core::i18n::language_test_lock()` inside
+`crates/core`, `crate::app_state::language_test_lock()` inside
+`crates/app` (a second lock there because the first one is `pub(crate)`
+to `sm2-core` and so unreachable from the other crate's test binary).
+Skip it and two such tests running side by side can flip the language
+out from under each other mid-assertion.
