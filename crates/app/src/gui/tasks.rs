@@ -102,6 +102,17 @@ where
     Running { cancellable, cancel, progress, outcome }
 }
 
+/// The wording the status line uses for the safety copy a restore made.
+///
+/// Whatever label `saves::restore` wrote is what that backup is called on
+/// disk from now on, so it is taken verbatim — including a German one from
+/// an earlier run, which is the backup's name and not a piece of interface
+/// text. The fallback only covers a safety copy without any label, which
+/// `restore` does not produce.
+fn safety_label(safety: &BackupEntry) -> String {
+    safety.label.clone().unwrap_or_else(|| t!("label.before_restore"))
+}
+
 fn report(progress: &Arc<Mutex<Progress>>, fraction: f32, label: impl Into<String>) {
     let mut guard = progress.lock().unwrap_or_else(PoisonError::into_inner);
     guard.fraction = fraction.clamp(0.0, 1.0);
@@ -196,14 +207,7 @@ impl App {
             Outcome::Restored { created_at, result } => match result {
                 Ok(safety) => {
                     self.refresh_backups();
-                    // "vor Wiederherstellung" is the persisted label
-                    // `saves::restore` always writes for the safety copy
-                    // (see `crates/core/src/saves.rs`) — a fixed identifier
-                    // already written into existing backup names, so it is
-                    // not translated here either (same standing decision as
-                    // `vanilla::VANILLA_SNAPSHOT_PREFIX`).
-                    let label =
-                        safety.label.clone().unwrap_or_else(|| "vor Wiederherstellung".to_string());
+                    let label = safety_label(&safety);
                     self.set_status(t!(
                         "gui.message.restore_done",
                         created_at = created_at,
@@ -551,6 +555,28 @@ mod tests {
             t!("gui.message.unpacking_progress", shown = "mod.zip", index = 2, total = 5),
             "Entpacken: mod.zip — Datei 2 von 5"
         );
+        set_language(Language::English);
+    }
+
+    /// `saves::restore` always labels the safety copy it hands back, so
+    /// this fallback fires only if that ever stops being true. It still
+    /// has to read in the active language: an untranslated literal here
+    /// would be the one that reaches an English interface unnoticed,
+    /// precisely because nothing normally gets this far.
+    #[test]
+    fn an_unlabelled_safety_copy_still_reads_in_the_active_language() {
+        let _held = language_test_lock();
+        let unlabelled = sm2_core::saves::BackupEntry {
+            archive: std::path::PathBuf::new(),
+            manifest: std::path::PathBuf::new(),
+            created_at: "2026-09-17T15:16:02Z".to_string(),
+            label: None,
+        };
+
+        set_language(Language::English);
+        assert_eq!(safety_label(&unlabelled), "before restore");
+        set_language(Language::German);
+        assert_eq!(safety_label(&unlabelled), "vor Wiederherstellung");
         set_language(Language::English);
     }
 

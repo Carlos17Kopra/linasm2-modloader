@@ -48,16 +48,24 @@ key (`every_command_and_argument_has_a_key` — a new clap argument needs
 a `cli.<path>.arg.<name>` key, or this one fails), and no German
 sentence is left in the code (`crates/app/tests/no_german_literals.rs`).
 
-Three identifiers stay German on purpose, the rule's only carve-out:
-`vanilla::VANILLA_SNAPSHOT_PREFIX` (`"vor Vanilla-Start"`), the sibling
-`"vor Modded-Start"` backup label next to it in `gui/commands.rs`, and the
-safety-backup label `"vor Wiederherstellung"` in `saves.rs`. All three are
-matched by prefix and already written into existing profile and backup
-names on disk, so translating them would rename data that is already
-there — they are shown to the user even in an English interface. Whether
-to eventually split the stored form from the displayed form is an open
-question left to the project's owner, not decided here. If you meet one
-of these strings elsewhere, it is this exception, not a leftover.
+There is no carve-out: `no_german_literals.rs`'s `EXEMPT_LITERALS` is
+empty. The three names the launcher gives its own profiles and backups —
+the vanilla snapshot, the backup before a launch, the safety copy before
+a restore — used to be German literals and are catalogue entries now,
+under `[label]`.
+
+They are the only catalogue entries that also end up on a disk, which
+makes them work differently from every other string: each is resolved
+once, at the moment the profile or backup is created, and then written.
+Nothing rewrites it afterwards, so an entry keeps the wording of the run
+that made it, and a language switch leaves what is already there alone —
+it is that backup's name now, not interface text. Recognising one again
+is therefore `vanilla::is_snapshot_name`'s job, which asks every language
+instead of the active one; `i18n::lookup_in` exists for exactly that.
+The German wordings are held to their historical form by
+`the_german_labels_still_read_as_they_do_on_disks_today` — reword them
+and every snapshot made before the change silently loses its "automatic"
+badge.
 
 Comment prose is wrapped at 78 columns including the `///` prefix.
 
@@ -115,7 +123,7 @@ almost never is — it is the fixture that cannot be built.
 
 ## Working on it
 
-    cargo test                  # 312 tests across both crates
+    cargo test                  # 318 tests across both crates
     cargo clippy --all-targets  # kept clean
     cargo run                   # GUI
     cargo run -- <subcommand>   # CLI

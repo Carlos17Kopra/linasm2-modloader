@@ -8,6 +8,9 @@ It manages the mod load order, keeps profiles of it, makes verified
 backups of your savegames before anything touches them, and starts the
 game with or without mods and with or without EAC.
 
+![The mod list: load order top first, a switch per mod, and the launch
+mode next to the Start button](docs/screenshots/mods.png)
+
 ## Install
 
 ```sh
@@ -113,6 +116,33 @@ lina-sm2 --help
 
 English and German are both built in; `lina-sm2 lang de` switches, and the
 graphical interface has the same choice in its settings.
+
+## The interface
+
+A profile is the load order plus which mods were on, under a name. Saving
+one takes the current state; applying one puts it back, and says which
+mods a profile knows but that are no longer installed. A launch without
+mods writes one by itself beforehand, marked *automatic* — it is the way
+back to the selection that launch just switched off.
+
+![The profiles page with three saved profiles, one of them written
+automatically before a launch without mods](docs/screenshots/profiles.png)
+
+Every backup carries a manifest with a hash for each file it holds.
+*Verify* reads the archive back and compares them, so a backup is known to
+be good before it is ever needed. Restoring backs the current state up
+first — that is not a setting and cannot be turned off.
+
+![The savegame backups, the newest one marked as verified after its hashes
+were checked against the manifest](docs/screenshots/savegames.png)
+
+The directories are detected, not configured: the Steam library, the
+Proton prefix the savegames live in, and the `pak_config.yaml` the load
+order is written to. Only the game directory can be set by hand, for an
+installation Steam does not report.
+
+![The settings page listing every detected directory, the automatic backup
+switch and the language](docs/screenshots/settings.png)
 
 ## License
 

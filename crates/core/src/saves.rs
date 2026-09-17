@@ -10,6 +10,7 @@
 
 use crate::atomic::write_atomic;
 use crate::error::{ArchiveDefect, BackupDefect, Error, Result};
+use crate::i18n;
 use crate::import::now_rfc3339;
 use crate::platform::{Current, Platform};
 use serde::{Deserialize, Serialize};
@@ -646,14 +647,11 @@ pub fn restore(entry: &BackupEntry, save_dir: &Path, backup_root: &Path) -> Resu
     // `unique_backup_name` additionally makes sure two backups never share
     // a file name.
     //
-    // The label stays German by decision, like
-    // `vanilla::VANILLA_SNAPSHOT_PREFIX`: it is matched by prefix and
-    // already written into existing backup names on users' disks, so
-    // translating it would rename data that is already there. It is shown
-    // even in an English interface — a known limitation, not an
-    // oversight — and splitting stored from displayed form is an open
-    // question left for later.
-    let safety_backup = backup(save_dir, backup_root, Some("vor Wiederherstellung"))?;
+    // The label is written in the language active at this moment and never
+    // rewritten: it ends up in the file name, and renaming a backup that
+    // already exists is precisely what this module does not do. A backup
+    // from an earlier run therefore keeps the wording of that run.
+    let safety_backup = backup(save_dir, backup_root, Some(&i18n::lookup("label.before_restore")))?;
 
     restore_after_safety_backup(entry, save_dir, &safety_backup).map_err(|e| {
         Error::RestoreFailedAfterBackup { safety_backup: safety_backup.archive.clone(), source: Box::new(e) }
@@ -1046,6 +1044,24 @@ mod tests {
         );
     }
 
+    /// The safety copy is labelled in the language that is active when it
+    /// is taken, and keeps that wording: the label becomes part of the
+    /// file name, and nothing renames a backup afterwards.
+    #[test]
+    fn the_safety_backup_is_labelled_in_the_active_language() {
+        let _held = crate::i18n::language_test_lock();
+        let (_tmp, saves, backups) = save_fixture();
+        let entry = backup(&saves, &backups, None).unwrap();
+
+        crate::i18n::set_language(crate::i18n::Language::English);
+        let english = restore(&entry, &saves, &backups).unwrap();
+        assert_eq!(english.label.as_deref(), Some("before restore"));
+
+        crate::i18n::set_language(crate::i18n::Language::German);
+        let german = restore(&entry, &saves, &backups).unwrap();
+        assert_eq!(german.label.as_deref(), Some("vor Wiederherstellung"));
+    }
+
     #[test]
     fn restore_always_backs_up_the_current_state_first() {
         let (_tmp, saves, backups) = save_fixture();
@@ -1055,7 +1071,12 @@ mod tests {
         let safety_backup = restore(&entry, &saves, &backups).unwrap();
 
         verify(&safety_backup).unwrap();
-        assert_eq!(safety_backup.label.as_deref(), Some("vor Wiederherstellung"));
+        // That the safety copy is labelled at all, not which wording it
+        // gets — that is language-dependent and belongs to
+        // `the_safety_backup_is_labelled_in_the_active_language`, which
+        // holds the lock for it. Asserting the wording here as well would
+        // make this test fail whenever that one is running beside it.
+        assert!(safety_backup.label.is_some(), "the safety copy must be recognisable as one");
 
         // The overwritten progress can be recovered from the safety backup.
         restore(&safety_backup, &saves, &backups).unwrap();
@@ -1343,7 +1364,7 @@ mod tests {
     fn restore_after_safety_backup_refuses_to_proceed_if_the_safety_copy_is_corrupt() {
         let (_tmp, saves, backups) = save_fixture();
         let entry = backup(&saves, &backups, None).unwrap();
-        let safety = backup(&saves, &backups, Some("vor Wiederherstellung")).unwrap();
+        let safety = backup(&saves, &backups, Some("safety")).unwrap();
         std::fs::write(&safety.archive, b"kaputt").unwrap();
 
         let err = restore_after_safety_backup(&entry, &saves, &safety).unwrap_err();

@@ -37,24 +37,16 @@ use std::path::{Path, PathBuf};
 const MARKERS: [&str; 10] =
     ["ä", "ö", "ü", "ß", "„", " nicht ", " wird ", " kein ", " eine ", " für "];
 
-/// Persisted identifiers that stay German on purpose (see CLAUDE.md →
-/// "Language"): `vanilla::VANILLA_SNAPSHOT_PREFIX`, the "vor Modded-Start"
-/// backup label next to it in `gui/commands.rs`, and the safety-backup
-/// label in `saves.rs`. All three are matched by prefix and already
-/// written into existing profile and backup names on users' disks, so
-/// translating them would rename data that exists there today. They are
-/// shown to the user even in an English interface — a known limitation,
-/// not an oversight this sweep failed to catch — and whether to eventually
-/// split the stored form from the displayed form is an open question left
-/// for later, not decided by this test.
+/// German that is allowed to stay in production code, each entry with the
+/// reason it is here.
 ///
-/// None of the three currently trips any `MARKERS` entry (no umlaut, no
-/// listed word), so stripping them here changes nothing about which lines
-/// fail today. The list exists so the decision stays visible in the one
-/// place a future contributor would look — this test — instead of quietly
-/// depending on the heuristic never being sharp enough to notice them.
-const EXEMPT_LITERALS: [&str; 3] =
-    ["vor Vanilla-Start", "vor Modded-Start", "vor Wiederherstellung"];
+/// Empty, and that is the point: it held the three labels the launcher
+/// writes into profile and backup names, which now live in the catalogue
+/// like every other user-facing string (`label.*`). What the program
+/// wrote to a disk in an earlier run keeps its wording, but nothing
+/// produces German from Rust any more. An entry added here needs the
+/// reason with it — an exemption nobody can weigh is worse than none.
+const EXEMPT_LITERALS: [&str; 0] = [];
 
 fn rust_files(dir: &Path, found: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).expect("source directory is readable") {

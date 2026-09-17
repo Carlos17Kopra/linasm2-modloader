@@ -747,9 +747,13 @@ fn run_play_with(
     }
 
     if state.settings.auto_backup {
-        let label = if vanilla { "vor Vanilla-Start" } else { "vor Modded-Start" };
+        let label = if vanilla {
+            t!("label.before_vanilla_launch")
+        } else {
+            t!("label.before_modded_launch")
+        };
         match state.save_dir() {
-            Ok(saves_dir) => match saves::backup(&saves_dir, &state.backups_dir(), Some(label)) {
+            Ok(saves_dir) => match saves::backup(&saves_dir, &state.backups_dir(), Some(label.as_str())) {
                 Ok(entry) => println!("{}", t!("cli.play.save_backed_up", path = entry.archive.display())),
                 Err(e) => eprintln!("{}", t!("cli.play.save_backup_failed", detail = e)),
             },
@@ -886,7 +890,7 @@ mod tests {
 
         let profiles = list_profiles(&state.profiles_dir()).unwrap();
         assert_eq!(profiles.len(), 1);
-        assert!(profiles[0].name.starts_with(vanilla::VANILLA_SNAPSHOT_PREFIX));
+        assert!(vanilla::is_snapshot_name(&profiles[0].name));
         let a = profiles[0].entries.iter().find(|e| e.pak == "a.pak").unwrap();
         assert!(!a.disabled, "the snapshot must show the state BEFORE the disabling");
     }
@@ -1371,6 +1375,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn run_play_vanilla_disables_everything_persists_and_still_launches() {
+        // The auto backup's label is asserted below, so which language is
+        // active decides the wording — hence the lock.
+        let _held = language_test_lock();
+        sm2_core::i18n::set_language(sm2_core::i18n::Language::English);
         let tmp = tempfile::tempdir().unwrap();
         let mut state = test_fixture(tmp.path());
         std::fs::write(state.paths.mods_dir().join("a.pak"), b"x").unwrap();
@@ -1402,7 +1410,7 @@ mod tests {
 
         let backups = saves::list_backups(&state.backups_dir()).unwrap();
         assert_eq!(backups.len(), 1, "a vanilla start must create an auto backup as well (spec §6.4)");
-        assert_eq!(backups[0].label.as_deref(), Some("vor Vanilla-Start"));
+        assert_eq!(backups[0].label.as_deref(), Some("before vanilla launch"));
     }
 
     /// Uses a write attempt to check whether a `0o555` permission on `dir`

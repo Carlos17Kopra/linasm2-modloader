@@ -100,19 +100,20 @@ impl App {
         if !self.settings().auto_backup {
             return;
         }
-        // These two backup labels stay German by decision: they are
-        // matched by prefix and already written into existing backup
-        // names on users' disks, so translating them would rename data
-        // that is already there (see `vanilla::VANILLA_SNAPSHOT_PREFIX`).
-        // They are shown even in an English interface — a known
-        // limitation, not an oversight — and splitting stored from
-        // displayed form is an open question left for later.
-        let label = if vanilla_start { "vor Vanilla-Start" } else { "vor Modded-Start" };
+        // Written in the active language and never rewritten: the label
+        // becomes part of the file name, so a backup keeps the wording of
+        // the run that made it (same rule as `saves::restore`'s safety
+        // copy and `vanilla::snapshot_name`).
+        let label = if vanilla_start {
+            t!("label.before_vanilla_launch")
+        } else {
+            t!("label.before_modded_launch")
+        };
         let Some(state) = &self.state else { return };
         let Some(backups) = self.backups_dir() else { return };
 
         match state.paths.save_dir(state.settings.steam_user.as_deref()) {
-            Ok(save_dir) => match saves::backup(&save_dir, &backups, Some(label)) {
+            Ok(save_dir) => match saves::backup(&save_dir, &backups, Some(label.as_str())) {
                 Ok(entry) => {
                     self.notices.push(Notice::info(t!(
                         "gui.message.save_backup_done",

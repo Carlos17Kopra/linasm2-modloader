@@ -273,6 +273,14 @@ decimal_separator = "."
 datetime = "{year}-{month}-{day} {clock}"
 byte_unit_value = "{value} bytes"
 
+# The names the launcher gives the profiles and backups it makes itself.
+# These are the only entries here that also end up on disk, so a change
+# reaches what is made from now on and nothing that is already there.
+[label]
+before_vanilla_launch = "before vanilla launch"
+before_modded_launch = "before modded launch"
+before_restore = "before restore"
+
 [gui.status_bar]
 cancel = "Cancel"
 entries = "pak_config.yaml · {count} entries"

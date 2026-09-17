@@ -93,7 +93,19 @@ fn resolve<'a>(active: &'a BTreeMap<String, String>, english: &'a BTreeMap<Strin
 /// last case: the key belongs to the caller and does not live long enough
 /// to be handed back by reference.
 pub fn lookup(key: &str) -> String {
-    resolve(language().catalog(), Language::English.catalog(), key)
+    lookup_in(language(), key)
+}
+
+/// Like `lookup`, but for a named language instead of the active one.
+///
+/// Exists for text this program wrote in an earlier run, under whatever
+/// language was set then, and has to recognise again now:
+/// `vanilla::is_snapshot_name` asks every language whether a profile name
+/// on disk is one of its own. Reading another language must not disturb
+/// the active one, so this takes the language as an argument rather than
+/// setting `CURRENT` and putting it back.
+pub fn lookup_in(language: Language, key: &str) -> String {
+    resolve(language.catalog(), Language::English.catalog(), key)
         .map(str::to_string)
         .unwrap_or_else(|| key.to_string())
 }
@@ -212,6 +224,41 @@ mod tests {
     #[test]
     fn english_is_the_language_before_anything_is_set() {
         assert_eq!(Language::default(), Language::English);
+    }
+
+    /// The three labels the launcher writes into profile and backup names
+    /// are the one class of catalogue text that also exists on users'
+    /// disks, written there by earlier runs under a German interface.
+    /// `vanilla::is_snapshot_name` recognises such a profile by exactly
+    /// this wording, so rewording the German would silently strip the
+    /// "automatic" badge from every snapshot made before today — and
+    /// rewording it in a *translation* commit is precisely the kind of
+    /// change nobody would connect to that consequence. Hence the anchor
+    /// here rather than a comment in `de.toml`.
+    #[test]
+    fn the_german_labels_still_read_as_they_do_on_disks_today() {
+        assert_eq!(
+            lookup_in(Language::German, "label.before_vanilla_launch"),
+            "vor Vanilla-Start"
+        );
+        assert_eq!(
+            lookup_in(Language::German, "label.before_modded_launch"),
+            "vor Modded-Start"
+        );
+        assert_eq!(lookup_in(Language::German, "label.before_restore"), "vor Wiederherstellung");
+    }
+
+    /// `lookup_in` answers for a named language instead of the active one,
+    /// and therefore needs no `language_test_lock`: that it is unaffected
+    /// by what another test has just set is the whole point of it.
+    #[test]
+    fn lookup_in_reads_the_language_it_is_given_not_the_active_one() {
+        with_language(Language::English, || {
+            assert_eq!(
+                lookup_in(Language::German, "error.steam_not_found"),
+                "Steam-Installation nicht gefunden"
+            );
+        });
     }
 
     #[test]
