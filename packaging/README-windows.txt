@@ -52,17 +52,16 @@ The same executable works from PowerShell or cmd:
 English and German are both built in: lina-sm2.exe lang de
 
 
-THIS IS A TEST BUILD
---------------------
+A YOUNG BUILD
+-------------
 
-The Windows support has never run on a machine with Space Marine 2
-actually installed. It compiles and its logic is covered by tests, but
-game detection, the savegame paths and starting the game are unverified
-here. Please report what happens -- especially if a path is not found.
+The Windows support has been run through end to end on a machine with
+Space Marine 2 installed -- detection, the mod list, savegame backup and
+restore, and starting the game. It has far fewer hours on it than the
+Linux side, though, so please report what goes wrong.
 
 The savegame functions take and verify a backup of their own before they
-restore anything, on every platform. That safety net is not the part in
-doubt; where the files are looked for is.
+restore anything, on every platform. That has never been optional.
 
 
 LICENSE

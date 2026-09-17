@@ -80,10 +80,9 @@ Windows shows a SmartScreen warning because the executable is not signed,
 and a console window opens next to the launcher because the same file is
 both the graphical and the command line tool.
 
-> **The Windows build is untested.** It compiles in CI and its logic is
-> covered by tests, but no one has yet run it on a machine that actually
-> has Space Marine 2 installed — game detection, the savegame paths and
-> starting the game are unverified there. Reports welcome.
+The Windows build has been run through end to end on a machine with the
+game installed: detection, the mod list, savegame backup and restore, and
+starting the game.
 
 ## Requirements
 
@@ -120,6 +119,32 @@ lina-sm2 --help
 
 English and German are both built in; `lina-sm2 lang de` switches, and the
 graphical interface has the same choice in its settings.
+
+### Bringing in backups you already have
+
+Backups from another launcher, or from a folder you copied aside yourself,
+can be taken over — **as a ZIP file**. A plain folder is not read and says
+so; pack it first. In a file manager that is the right-click menu's
+*Compress*, on a command line:
+
+```sh
+zip -r my-old-saves.zip <folder with the savegames>   # or 7z a, or ark …
+lina-sm2 save import my-old-saves.zip --tag "before the reinstall"
+```
+
+In the interface the same thing sits on the *Savegame Backups* page behind
+*Import backup*.
+
+Whether the savegames sit at the top of the ZIP or inside a folder does
+not matter — a directory that every entry shares is stripped, which is how
+other launchers pack them. What the archive does have to hold is at least
+one `.cfg` or `.sav` file; without one it is refused rather than imported
+as an empty backup. Unpacked it may come to at most 512 MB.
+
+An imported archive does not become a backup on trust. It is unpacked to a
+temporary directory, packed again the launcher's own way and hashed in the
+process, so what ends up in the list is a backup like any other — one that
+`Verify` can check and `Restore` can put back.
 
 ## The interface
 
