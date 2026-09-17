@@ -371,7 +371,7 @@ pub fn load_dirs_and_settings() -> Result<(AppDirs, Settings)> {
 }
 
 fn check_write_permission(dir: &Path) -> Result<()> {
-    let probe = dir.join(".sm2-modloader-writetest");
+    let probe = dir.join(format!(".{}-writetest", sm2_core::APP_SLUG));
     match std::fs::write(&probe, b"") {
         Ok(()) => {
             let _ = std::fs::remove_file(&probe);
@@ -384,7 +384,7 @@ fn check_write_permission(dir: &Path) -> Result<()> {
 /// Serialises every test in this crate that flips the global language.
 /// `sm2_core::i18n::language_test_lock` does the same job one crate over,
 /// but stays `pub(crate)` there and so is unreachable from here — this is
-/// the same lock, scoped to `sm2-modloader`'s own test binary, needed
+/// the same lock, scoped to `lina-sm2`'s own test binary, needed
 /// because `CURRENT` in `sm2-core` is one process-wide static that every
 /// test in this binary shares.
 #[cfg(test)]
@@ -782,7 +782,7 @@ mod tests {
     fn check_write_permission_succeeds_for_a_writable_dir_and_leaves_no_probe_file() {
         let tmp = tempfile::tempdir().unwrap();
         check_write_permission(tmp.path()).unwrap();
-        assert!(!tmp.path().join(".sm2-modloader-writetest").exists());
+        assert!(!tmp.path().join(format!(".{}-writetest", sm2_core::APP_SLUG)).exists());
     }
 
     #[test]

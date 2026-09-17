@@ -35,7 +35,7 @@ use sm2_core::i18n::{self, Language};
 /// irreversibly, since a child clearing its own copy of the setting is
 /// overwritten again by that OR the next time a build runs. The
 /// observable regression was verified directly: before the attempt,
-/// `sm2-modloader save --help` printed that subcommand's help (exit 0);
+/// `lina-sm2 save --help` printed that subcommand's help (exit 0);
 /// after, it errored with "unexpected argument '--help' found" (exit 2)
 /// for every subcommand, because none of them still had a `-h`/`--help`
 /// of their own. Making root's `-h`/`--help`/`-V`/`--version` localizable
@@ -151,13 +151,13 @@ mod tests {
 
     #[test]
     fn a_language_option_in_front_of_everything_is_recognised() {
-        let args = ["sm2-modloader", "--lang", "de", "save", "list"].map(String::from);
+        let args = ["lina-sm2", "--lang", "de", "save", "list"].map(String::from);
         assert_eq!(language_from_args(&args), Ok(Some(sm2_core::i18n::Language::German)));
 
-        let joined = ["sm2-modloader", "--lang=de"].map(String::from);
+        let joined = ["lina-sm2", "--lang=de"].map(String::from);
         assert_eq!(language_from_args(&joined), Ok(Some(sm2_core::i18n::Language::German)));
 
-        let without = ["sm2-modloader", "save", "list"].map(String::from);
+        let without = ["lina-sm2", "save", "list"].map(String::from);
         assert_eq!(language_from_args(&without), Ok(None));
     }
 
@@ -168,10 +168,10 @@ mod tests {
     /// must carry the bad code back to the caller instead of swallowing it.
     #[test]
     fn an_unrecognised_language_code_is_reported_instead_of_silently_ignored() {
-        let args = ["sm2-modloader", "--lang", "klingon", "save", "list"].map(String::from);
+        let args = ["lina-sm2", "--lang", "klingon", "save", "list"].map(String::from);
         assert_eq!(language_from_args(&args), Err("klingon".to_string()));
 
-        let joined = ["sm2-modloader", "--lang=klingon"].map(String::from);
+        let joined = ["lina-sm2", "--lang=klingon"].map(String::from);
         assert_eq!(language_from_args(&joined), Err("klingon".to_string()));
     }
 
@@ -179,7 +179,7 @@ mod tests {
     /// `clap`'s own parsing rejects that invocation right afterwards.
     #[test]
     fn a_trailing_lang_flag_without_a_value_is_not_reported_as_an_unrecognised_code() {
-        let args = ["sm2-modloader", "--lang"].map(String::from);
+        let args = ["lina-sm2", "--lang"].map(String::from);
         assert_eq!(language_from_args(&args), Ok(None));
     }
 }

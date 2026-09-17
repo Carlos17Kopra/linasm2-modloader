@@ -24,7 +24,7 @@ ihn ergänzen musste und wo sie bewusst abweicht.
 | `crates/app/src/gui/commands.rs` | Starten, Profile, Einstellungen |
 | `crates/app/src/gui/format.rs` | Größen, Zeitstempel, gekürzte Hashes |
 
-Eine einzige Binary: ohne Argumente startet `sm2-modloader` die Oberfläche,
+Eine einzige Binary: ohne Argumente startet `lina-sm2` die Oberfläche,
 mit Argumenten die Kommandozeile.
 
 ## Was eins zu eins übernommen ist

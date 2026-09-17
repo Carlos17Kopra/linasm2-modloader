@@ -1,6 +1,6 @@
 use crate::error::{Error, Result};
 use crate::platform::{Current, Platform};
-use crate::APP_ID;
+use crate::{APP_ID, APP_SLUG, LEGACY_APP_SLUG};
 use std::path::{Path, PathBuf};
 
 /// All paths around a game installation.
@@ -164,14 +164,14 @@ pub struct AppDirs {
 }
 
 pub fn app_dirs() -> Result<AppDirs> {
-    let project_dirs = directories::ProjectDirs::from("", "", "sm2-modloader").ok_or_else(|| {
+    let project_dirs = directories::ProjectDirs::from("", "", APP_SLUG).ok_or_else(|| {
         Error::PlainIo(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             crate::t!("error.app_dirs_not_found"),
         ))
     })?;
 
-    Ok(AppDirs {
+    let dirs = AppDirs {
         config: project_dirs.config_dir().to_path_buf(),
         data: project_dirs.data_dir().to_path_buf(),
         // On Linux with XDG_STATE_HOME, state_dir() practically always
@@ -182,7 +182,84 @@ pub fn app_dirs() -> Result<AppDirs> {
             .state_dir()
             .unwrap_or_else(|| project_dirs.data_dir())
             .to_path_buf(),
-    })
+    };
+
+    // Up to and including 0.1.0 the program was called `sm2-modloader` and
+    // kept all three directories under that name. The move belongs here and
+    // nowhere later: `load_dirs_and_settings` creates the config and data
+    // directories before it reads anything, and an empty directory created
+    // under the new name is exactly the thing that stops the move below —
+    // the stored language, a hand-entered game directory and every profile
+    // would stay behind, invisible, under the old name.
+    //
+    // The three moves are independent of one another on purpose. A crash
+    // between two of them leaves each directory either fully moved or
+    // untouched, which is a state the program reads without trouble; the
+    // next start finishes what is left.
+    if let Some(legacy) = directories::ProjectDirs::from("", "", LEGACY_APP_SLUG) {
+        migrate_legacy_dir(legacy.config_dir(), &dirs.config);
+        migrate_legacy_dir(legacy.data_dir(), &dirs.data);
+        let legacy_state = legacy.state_dir().unwrap_or_else(|| legacy.data_dir());
+        migrate_legacy_dir(legacy_state, &dirs.state);
+    }
+
+    Ok(dirs)
+}
+
+/// Moves a directory left behind under the previous name over to the one
+/// in use today. Returns whether anything was moved.
+///
+/// Two conditions, and the order of the checks is the whole argument:
+/// `current` must not exist yet, and `legacy` must be a directory. Once
+/// anything exists under the new name it is the truth — a directory still
+/// lying around under the old one is then a leftover, not a source, and
+/// overwriting today's settings with it would lose data rather than save
+/// it.
+///
+/// `rename` is the only operation used. Both paths sit under the same XDG
+/// base directory, so they are on the same filesystem, where a rename is
+/// atomic: a crash in the middle leaves either the old directory or the
+/// new one, never a half-copied mixture of the two. A recursive copy could
+/// not promise that.
+///
+/// A rename that fails is not an error the caller has to deal with. The
+/// worst case is a program starting with its default settings — what a
+/// fresh installation does anyway — and the old directory still sitting
+/// there untouched for the user to move by hand. Refusing to start over a
+/// leftover directory would be the far worse outcome.
+///
+/// A `legacy` that is a symlink to somewhere else is renamed as the
+/// symlink it is, not followed and copied: a configuration directory
+/// managed by a dotfiles tool keeps pointing where it pointed before.
+fn migrate_legacy_dir(legacy: &Path, current: &Path) -> bool {
+    if current.exists() || !legacy.is_dir() {
+        return false;
+    }
+    if let Some(parent) = current.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return false;
+        }
+    }
+
+    match std::fs::rename(legacy, current) {
+        Ok(()) => {
+            tracing::info!(
+                from = %legacy.display(),
+                to = %current.display(),
+                "moved a directory of the previous application name"
+            );
+            true
+        }
+        Err(e) => {
+            tracing::warn!(
+                from = %legacy.display(),
+                to = %current.display(),
+                error = %e,
+                "could not move a directory of the previous application name"
+            );
+            false
+        }
+    }
 }
 
 #[cfg(test)]
@@ -340,6 +417,114 @@ mod tests {
         std::fs::write(mods.join("pak_config.yaml"), b"[]").unwrap();
 
         assert_eq!(paths.list_paks().unwrap(), vec!["a.pak", "z.pak"]);
+    }
+
+    /// Builds the two sides of a rename: a directory under the old name
+    /// holding one recognisable file, and the path the new name would
+    /// use, which does not exist yet.
+    fn legacy_and_current(tmp: &Path) -> (PathBuf, PathBuf) {
+        let legacy = tmp.join(crate::LEGACY_APP_SLUG);
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("settings.toml"), b"language = \"de\"\n").unwrap();
+        (legacy, tmp.join(crate::APP_SLUG))
+    }
+
+    #[test]
+    fn a_directory_of_the_previous_name_is_moved_over_with_its_contents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (legacy, current) = legacy_and_current(tmp.path());
+
+        assert!(migrate_legacy_dir(&legacy, &current));
+
+        assert_eq!(
+            std::fs::read_to_string(current.join("settings.toml")).unwrap(),
+            "language = \"de\"\n"
+        );
+        assert!(!legacy.exists(), "the old directory must not be left behind as a second copy");
+    }
+
+    /// The decisive guard: once the program has written anything under the
+    /// new name, that is the current state. A leftover directory under the
+    /// old name must not be allowed to overwrite it — that would not
+    /// rescue settings, it would discard them.
+    #[test]
+    fn an_existing_current_directory_is_never_overwritten() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (legacy, current) = legacy_and_current(tmp.path());
+        std::fs::create_dir_all(&current).unwrap();
+        std::fs::write(current.join("settings.toml"), b"language = \"en\"\n").unwrap();
+
+        assert!(!migrate_legacy_dir(&legacy, &current));
+
+        assert_eq!(
+            std::fs::read_to_string(current.join("settings.toml")).unwrap(),
+            "language = \"en\"\n"
+        );
+        assert!(legacy.exists(), "the old directory stays untouched for the user to look at");
+    }
+
+    /// The ordinary case on a fresh installation: nothing to move, and no
+    /// directory conjured up in passing.
+    #[test]
+    fn a_missing_legacy_directory_is_not_an_error_and_creates_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let legacy = tmp.path().join(crate::LEGACY_APP_SLUG);
+        let current = tmp.path().join(crate::APP_SLUG);
+
+        assert!(!migrate_legacy_dir(&legacy, &current));
+
+        assert!(!current.exists());
+    }
+
+    /// A stray *file* under the old name is not a configuration directory.
+    /// Renaming it would put a file where the program expects to create a
+    /// directory, and every later write would fail.
+    #[test]
+    fn a_file_under_the_previous_name_is_not_mistaken_for_a_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let legacy = tmp.path().join(crate::LEGACY_APP_SLUG);
+        std::fs::write(&legacy, b"not a directory").unwrap();
+        let current = tmp.path().join(crate::APP_SLUG);
+
+        assert!(!migrate_legacy_dir(&legacy, &current));
+
+        assert!(!current.exists());
+        assert!(legacy.is_file());
+    }
+
+    /// The new name's parent (`~/.local/state`, say) need not exist yet on
+    /// a machine where nothing has ever written there.
+    #[test]
+    fn a_missing_parent_of_the_target_is_created() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (legacy, _) = legacy_and_current(tmp.path());
+        let current = tmp.path().join("state").join(crate::APP_SLUG);
+
+        assert!(migrate_legacy_dir(&legacy, &current));
+
+        assert!(current.join("settings.toml").is_file());
+    }
+
+    /// A configuration directory pointed somewhere else by a dotfiles tool
+    /// has to survive the rename as a symlink. Following it and moving the
+    /// target would tear the file out of the dotfiles repository it is
+    /// checked into.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_legacy_directory_is_moved_as_a_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let elsewhere = tmp.path().join("dotfiles");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("settings.toml"), b"language = \"de\"\n").unwrap();
+
+        let legacy = tmp.path().join(crate::LEGACY_APP_SLUG);
+        std::os::unix::fs::symlink(&elsewhere, &legacy).unwrap();
+        let current = tmp.path().join(crate::APP_SLUG);
+
+        assert!(migrate_legacy_dir(&legacy, &current));
+
+        assert!(current.symlink_metadata().unwrap().file_type().is_symlink());
+        assert!(elsewhere.join("settings.toml").is_file(), "the target stays where it is");
     }
 
     #[cfg(unix)]

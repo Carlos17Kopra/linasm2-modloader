@@ -1,11 +1,11 @@
 [package]
-name = "sm2-modloader"
+name = "lina-sm2"
 version.workspace = true
 edition.workspace = true
-# Höher als der Rest des Arbeitsbereichs (1.85): `egui`/`eframe` 0.36
-# verlangen 1.95. Nur diese Binary ist davon betroffen – `sm2-core` bleibt
-# absichtlich mit der älteren Grenze baubar, damit die Fachlogik auch auf
-# älteren Distributionen als Bibliothek nutzbar bleibt.
+# Higher than the rest of the workspace (1.85): `egui`/`eframe` 0.36 ask for
+# 1.95. Only this binary is affected — `sm2-core` stays buildable against the
+# older bound on purpose, so the domain logic remains usable as a library on
+# older distributions.
 rust-version = "1.95"
 license.workspace = true
 

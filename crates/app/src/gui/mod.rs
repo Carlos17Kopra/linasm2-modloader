@@ -34,6 +34,7 @@ mod profiles_page;
 mod saves_page;
 mod settings_page;
 mod side_bar;
+mod splash;
 mod status_bar;
 mod tasks;
 mod theme;
@@ -61,13 +62,17 @@ pub fn run() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 700.0])
             .with_min_inner_size([860.0, 560.0])
-            .with_title("SM2 Mod Loader")
-            .with_app_id("sm2-modloader"),
+            .with_title(sm2_core::APP_NAME)
+            // The app id is what a desktop file's `StartupWMClass` has to
+            // match for the window to get its icon and land in the right
+            // place in the task bar; it is the binary's name, not the
+            // display name.
+            .with_app_id(sm2_core::APP_SLUG),
         ..Default::default()
     };
 
     eframe::run_native(
-        "SM2 Mod Loader",
+        sm2_core::APP_NAME,
         options,
         Box::new(|cc| {
             theme::install(&cc.egui_ctx);
@@ -274,6 +279,10 @@ pub struct App {
     /// The transient messages over the lower right corner — see
     /// `toasts`. Fed by `set_status`/`set_warning`.
     toasts: toasts::Toasts,
+    /// The start-up screen, or `None` once it is over. It owns the first
+    /// `load()`: see `splash` for why that cannot happen before the first
+    /// frame has been drawn.
+    splash: Option<splash::Splash>,
 }
 
 impl App {
@@ -310,12 +319,21 @@ impl App {
             drag: None,
             task: None,
             toasts: toasts::Toasts::default(),
+            // `blank()` is what the tests build on, and they expect a
+            // struct they can act on straight away. The start-up screen is
+            // added in `new()`, the one path that really does have a
+            // window and a load ahead of it.
+            splash: None,
         }
     }
 
     fn new(egui_ctx: egui::Context) -> Self {
         let mut app = Self::blank(egui_ctx);
-        app.load();
+        // No `load()` here: it blocks, and running it before the first
+        // frame would leave the window empty for its whole duration. The
+        // start-up screen draws first and loads on its second frame — see
+        // `splash`.
+        app.splash = Some(splash::Splash::default());
         app
     }
 
@@ -759,6 +777,9 @@ fn apply_language(settings: &mut Settings, language: Language) {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if self.show_splash(ui) {
+            return;
+        }
         self.poll_task(&ctx);
 
         let mut actions: Vec<Action> = Vec::new();
@@ -830,6 +851,36 @@ impl eframe::App for App {
 }
 
 impl App {
+    /// Runs the start-up screen. Returns `true` while it has the frame to
+    /// itself — the caller then draws nothing else.
+    ///
+    /// The load sits after the drawing on purpose. `Step` decides which
+    /// frame it happens on; `splash`'s module comment has the reasoning.
+    fn show_splash(&mut self, ui: &mut egui::Ui) -> bool {
+        let now = ui.ctx().input(|input| input.time);
+        let Some(state) = &mut self.splash else { return false };
+
+        match state.step(now) {
+            splash::Step::Finish => {
+                self.splash = None;
+                return false;
+            }
+            splash::Step::Wait => {
+                splash::show(ui, now);
+                ui.ctx().request_repaint();
+            }
+            splash::Step::Load => {
+                splash::show(ui, now);
+                ui.ctx().request_repaint();
+                self.load();
+                if let Some(state) = &mut self.splash {
+                    state.mark_loaded();
+                }
+            }
+        }
+        true
+    }
+
     /// Draws in the dividers between the panels.
     ///
     /// `show_separator_line(false)` switches off `egui`'s own lines,

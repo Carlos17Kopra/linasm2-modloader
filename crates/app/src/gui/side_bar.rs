@@ -1,4 +1,5 @@
-//! The sidebar: navigation at the top, status card at the bottom.
+//! The sidebar: the brand line, navigation under it, status card at
+//! the bottom.
 
 use super::theme::{color, medium, mono, sans};
 use super::widgets::Icon;
@@ -28,6 +29,7 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         ui.add_space(12.0);
 
         ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+            brand(ui);
             ui.spacing_mut().item_spacing.y = 2.0;
             for (section, icon, label, count) in items {
                 if nav_item(app, ui, section, icon, &label, &count) {
@@ -36,6 +38,38 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
             }
         });
     });
+}
+
+/// The product's name above the navigation, with a divider under it.
+///
+/// It sits here and not in the top bar because that one belongs to the
+/// current state — mod count and path — and changes with every action; a
+/// name that never changes would only be in the way there. The two lines
+/// are not translated and therefore do not come from the catalogue, see
+/// `sm2_core::branding`.
+fn brand(ui: &mut Ui) {
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 46.0), Sense::hover());
+    let painter = ui.painter();
+
+    painter.text(
+        Pos2::new(rect.left(), rect.top() + 9.0),
+        Align2::LEFT_TOP,
+        sm2_core::APP_NAME_SHORT,
+        medium(17.0),
+        color::TEXT_STRONG,
+    );
+    painter.text(
+        Pos2::new(rect.left(), rect.top() + 29.0),
+        Align2::LEFT_TOP,
+        sm2_core::APP_SUBTITLE,
+        sans(10.5),
+        color::ACCENT,
+    );
+
+    // The same 1 px divider in BORDER_SOFT the panels use between them.
+    painter.hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, color::BORDER_SOFT));
+    ui.add_space(10.0);
 }
 
 fn mods_count(app: &App) -> String {

@@ -1,5 +1,5 @@
 [cli]
-about = "Mod-Loader für Space Marine 2"
+about = "Mod-Launcher für Space Marine 2 unter Linux"
 
 [cli.arg]
 lang = "Sprache für diesen Lauf (en, de); überschreibt die Einstellung"
@@ -286,6 +286,9 @@ detection_failed = "Erkennung fehlgeschlagen – Verzeichnis manuell wählen"
 choice_steam = "Mit Mods (über Steam)"
 choice_vanilla = "Ohne Mods (Vanilla)"
 choice_no_eac = "Ohne EAC (kein Multiplayer)"
+
+[gui.splash]
+loading = "Wird geladen …"
 
 [gui.side_bar]
 nav_mods = "Mods"

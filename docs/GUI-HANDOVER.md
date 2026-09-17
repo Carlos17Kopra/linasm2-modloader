@@ -1,4 +1,4 @@
-# Übergabe: GUI-Entwurf für den SM2 Mod Loader
+# Übergabe: GUI-Entwurf für LiNa SM2 - Mod Launcher
 
 Dieses Dokument ist die Grundlage für den Entwurf der grafischen Oberfläche. Die
 Logik darunter ist fertig, getestet und ändert sich nicht mehr — was hier steht,

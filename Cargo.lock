@@ -2072,6 +2072,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "lina-sm2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "eframe",
+ "egui",
+ "rfd",
+ "sm2-core",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "linebender_resource_handle"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3416,21 +3431,6 @@ dependencies = [
  "tracing",
  "yaml-rust2",
  "zip",
-]
-
-[[package]]
-name = "sm2-modloader"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "eframe",
- "egui",
- "rfd",
- "sm2-core",
- "tempfile",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

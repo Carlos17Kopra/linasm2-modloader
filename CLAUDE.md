@@ -1,11 +1,22 @@
-# SM2 Mod Loader
+# LiNa SM2 - Mod Launcher
 
-A mod loader for Space Marine 2 on Linux. Rust workspace, two crates:
+A mod launcher for Space Marine 2 on Linux ("LiNa" = Linux native). Rust
+workspace, two crates:
 
 - `crates/core` (`sm2-core`) — all domain logic, no UI. MSRV 1.85.
-- `crates/app` (`sm2-modloader`) — one binary that is both GUI and CLI. Started
+- `crates/app` (`lina-sm2`) — one binary that is both GUI and CLI. Started
   with no arguments it opens the egui interface, with arguments it runs the
   command line. MSRV 1.95 (egui 0.36 requires it).
+
+The name lives in exactly one place, `crates/core/src/branding.rs`:
+`APP_NAME` ("LiNa SM2 - Mod Launcher") with the two halves it is composed
+of, and `APP_SLUG` ("lina-sm2") for the binary, the XDG directories and the
+Wayland app id. Nothing spells either of them out a second time.
+
+Up to and including 0.1.0 the program was called "SM2 Mod Loader" and used
+the slug `sm2-modloader`. `paths::app_dirs` moves an installation left
+under that name over on the first start (`migrate_legacy_dir`); the old
+slug stays in `branding.rs` as `LEGACY_APP_SLUG` for exactly that.
 
 ## Language
 
@@ -14,6 +25,10 @@ catalogue, never in the code.**
 
 - English: `//`, `///`, `//!`, test names, `assert!` messages — anything
   only a developer reads.
+- Not the catalogue: the product's name. A proper name has to read the
+  same in every language, and a catalogue entry invites a translator to
+  adapt it — so it is a constant in `branding.rs` instead, with a test
+  that keeps its forms from drifting apart.
 - The catalogue: every sentence a user sees. `crates/core/i18n/en.toml`
   is the source of truth, `de.toml` the translation; both carry exactly
   the same keys. Reach for a text with `t!("area.key")`, or
@@ -66,7 +81,7 @@ of filesystem operations is the entire safety argument.
 
 ## Working on it
 
-    cargo test                  # 292 tests across both crates
+    cargo test                  # 310 tests across both crates
     cargo clippy --all-targets  # kept clean
     cargo run                   # GUI
     cargo run -- <subcommand>   # CLI
@@ -74,16 +89,3 @@ of filesystem operations is the entire safety argument.
 Write tests first. The existing suite was built that way and the failure modes
 it covers (collisions in the same second, corrupt archives, zip-slip, symlink
 cycles) are the reason this tool can be trusted with real save data.
-
-The active language is one process-wide static (`CURRENT` in
-`crates/core/src/i18n.rs`), and `cargo test` runs a crate's tests
-concurrently by default. Any test anywhere in the workspace whose
-assertion depends on which language is active — not just on
-`set_language`/`lookup` in isolation, but on the wording a call under
-test actually produces — must hold the matching lock for as long as that
-dependency lasts: `sm2_core::i18n::language_test_lock()` inside
-`crates/core`, `crate::app_state::language_test_lock()` inside
-`crates/app` (a second lock there because the first one is `pub(crate)`
-to `sm2-core` and so unreachable from the other crate's test binary).
-Skip it and two such tests running side by side can flip the language
-out from under each other mid-assertion.

@@ -17,7 +17,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "sm2-modloader", version)]
+#[command(name = sm2_core::APP_SLUG, version)]
 pub struct Cli {
     /// Language for this run (en, de); overrides the setting
     #[arg(long, global = true, value_name = "CODE")]
