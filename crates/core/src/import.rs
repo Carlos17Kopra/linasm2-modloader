@@ -547,6 +547,11 @@ mod tests {
     /// directory must not be followed while collecting the paks, or a
     /// malicious archive could use a link to `/` or to the game directory to
     /// collect foreign files.
+    // Unix only for the fixture, not for the behaviour: creating a
+    // symlink needs Developer Mode or elevation on Windows. The guard
+    // under test is platform-neutral — it rests on `symlink_metadata`,
+    // which reports a link as a link on both systems.
+    #[cfg(unix)]
     #[test]
     fn collect_paks_recursively_does_not_follow_symlinked_directories() {
         let tmp = tempfile::tempdir().unwrap();

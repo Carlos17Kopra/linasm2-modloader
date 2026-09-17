@@ -1336,6 +1336,11 @@ mod tests {
     /// overwritten: the complete dry run has to spot the unsafe second
     /// entry before the first one is written, and nothing may be written
     /// through the symlink anywhere.
+    // Unix only for the fixture, not for the behaviour: creating a
+    // symlink needs Developer Mode or elevation on Windows. The guard
+    // under test is platform-neutral — it rests on `symlink_metadata`,
+    // which reports a link as a link on both systems.
+    #[cfg(unix)]
     #[test]
     fn restore_does_not_write_any_file_when_a_later_entry_is_unsafe() {
         let (tmp, saves, backups) = save_fixture();
@@ -1368,6 +1373,11 @@ mod tests {
     /// A symlink inside `save_dir` pointing at `save_dir` itself must not
     /// send `backup` into endless recursion — and since `restore` always
     /// calls `backup` first, every restore would otherwise hang as well.
+    // Unix only for the fixture, not for the behaviour: creating a
+    // symlink needs Developer Mode or elevation on Windows. The guard
+    // under test is platform-neutral — it rests on `symlink_metadata`,
+    // which reports a link as a link on both systems.
+    #[cfg(unix)]
     #[test]
     fn backup_does_not_follow_a_symlink_cycle() {
         let (_tmp, saves, backups) = save_fixture();
