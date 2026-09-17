@@ -76,8 +76,31 @@ of filesystem operations is the entire safety argument.
   that is not optional and not configurable.
 - Archive and manifest are written fsync-before-rename, and every filesystem
   sequence is ordered so that a crash between two steps leaves a readable
-  state — never a half-written one.
+  state — never a half-written one. One half of that is weaker on Windows:
+  `saves::sync_dir` flushes the containing directory on Unix, and is a
+  no-op there, because a directory cannot be opened with `File::open` at
+  all (ERROR_ACCESS_DENIED) and Windows offers no equivalent flush. The
+  write-flush-rename of the archive file itself is unchanged on both.
 - Symlinks inside a save or extraction directory are never followed.
+
+## Platforms
+
+`core::platform::Platform` is the entire platform-dependent surface —
+`unix.rs` and `windows.rs` implement it, `Current` picks one, and nothing
+above it carries a `cfg`. Adding a platform means adding one file there.
+
+The Windows side has never run on a machine with the game installed. Two
+things are therefore uncovered rather than merely unverified, and both are
+marked at the tests that had to be gated:
+
+- Everything reached through `save_dir`. The fixtures build the save
+  directory inside a Proton prefix under a temporary directory, which is
+  where `user_profile_root` looks on Linux; on Windows it returns the real
+  `%USERPROFILE%`, which a test must not write into. Giving that function
+  a test override would fix it, and is an open decision, not an oversight.
+- The symlink guards in `saves` and `import`. The guards themselves rest on
+  `symlink_metadata` and are platform-neutral; only creating a symlink as a
+  fixture needs privileges on Windows.
 
 ## Working on it
 

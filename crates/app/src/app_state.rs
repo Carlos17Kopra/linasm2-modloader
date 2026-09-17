@@ -725,6 +725,9 @@ mod tests {
     /// Creates two Proton save user directories under `base` (the same root
     /// that `test_fixture` uses as `library_dir`), the way they appear when
     /// several Steam profiles share the same prefix.
+    // Gated with the two tests that use it: unused on Windows
+    // otherwise, and `-D warnings` makes dead code a build failure.
+    #[cfg(unix)]
     fn write_two_save_users(base: &Path) -> (String, String) {
         let user_root = base
             .join("steamapps/compatdata/2183900/pfx/drive_c/users/steamuser")
@@ -739,6 +742,14 @@ mod tests {
     /// 2b: `settings.steam_user` is no longer a decorative setting — it is
     /// actually read and resolves the otherwise fatal ambiguity of several
     /// save user profiles.
+    // Unix only, and a gap rather than a nicety: the fixture builds the
+    // save directory inside a Proton prefix under a temporary directory,
+    // which is exactly where `Platform::user_profile_root` looks on
+    // Linux. On Windows that function returns the real `%USERPROFILE%`,
+    // which a test must not write into — so this path cannot be
+    // sandboxed there at all. Windows save handling is consequently
+    // uncovered and needs a person with the game installed.
+    #[cfg(unix)]
     #[test]
     fn save_dir_uses_the_configured_steam_user_to_resolve_ambiguity() {
         let tmp = tempfile::tempdir().unwrap();
@@ -754,6 +765,14 @@ mod tests {
     /// A `steam_user` that matches none of the profiles found (a typo in
     /// `settings.toml`, say) must produce a clear error that names the
     /// profiles that do exist.
+    // Unix only, and a gap rather than a nicety: the fixture builds the
+    // save directory inside a Proton prefix under a temporary directory,
+    // which is exactly where `Platform::user_profile_root` looks on
+    // Linux. On Windows that function returns the real `%USERPROFILE%`,
+    // which a test must not write into — so this path cannot be
+    // sandboxed there at all. Windows save handling is consequently
+    // uncovered and needs a person with the game installed.
+    #[cfg(unix)]
     #[test]
     fn save_dir_reports_a_clear_error_when_the_configured_steam_user_matches_nothing() {
         let tmp = tempfile::tempdir().unwrap();

@@ -132,8 +132,31 @@ fn collision_counter(stem: &str) -> u32 {
 /// Opens a directory only to call `sync_all` on it. On Unix this forces a
 /// new directory entry (here: the freshly written archive file) to have
 /// actually reached the block device.
+#[cfg(unix)]
 fn sync_dir(dir: &Path) -> Result<()> {
     std::fs::File::open(dir).and_then(|f| f.sync_all()).map_err(|e| Error::io(dir, e))
+}
+
+/// Windows has no counterpart, and this is deliberately a no-op rather
+/// than an error.
+///
+/// `File::open` on a directory fails there outright with
+/// ERROR_ACCESS_DENIED — a directory handle needs
+/// `FILE_FLAG_BACKUP_SEMANTICS`, which `std` does not set — and flushing
+/// one is not an operation Windows offers the way Unix does. Returning the
+/// error instead would make every backup and every restore fail on a
+/// perfectly healthy system, which is what it did until CI first ran these
+/// tests on Windows.
+///
+/// The honest consequence: the promise "the new directory entry has
+/// reached the device" is weaker on Windows than on Linux, and rests on
+/// NTFS's own metadata journalling instead. The rest of the ordering is
+/// untouched — the archive is written to a temporary file, flushed, and
+/// only then renamed over its target — so a crash still cannot leave a
+/// half-written archive behind on either system.
+#[cfg(windows)]
+fn sync_dir(_dir: &Path) -> Result<()> {
+    Ok(())
 }
 
 /// Makes a label file-name-safe: only alphanumeric characters and hyphens

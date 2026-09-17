@@ -1337,6 +1337,14 @@ mod tests {
     /// backup attempt would only have warned instead of actually backing up,
     /// so a reintroduced `if !vanilla` would stay green and undetected
     /// (review point 5).
+    // Unix only, and a gap rather than a nicety: the fixture builds the
+    // save directory inside a Proton prefix under a temporary directory,
+    // which is exactly where `Platform::user_profile_root` looks on
+    // Linux. On Windows that function returns the real `%USERPROFILE%`,
+    // which a test must not write into — so this path cannot be
+    // sandboxed there at all. Windows save handling is consequently
+    // uncovered and needs a person with the game installed.
+    #[cfg(unix)]
     #[test]
     fn run_play_vanilla_disables_everything_persists_and_still_launches() {
         let tmp = tempfile::tempdir().unwrap();
