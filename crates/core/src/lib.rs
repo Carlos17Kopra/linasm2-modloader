@@ -14,7 +14,7 @@ pub mod saves;
 pub mod settings;
 pub mod update;
 
-pub use branding::{APP_NAME, APP_NAME_SHORT, APP_SLUG, APP_SUBTITLE, LEGACY_APP_SLUG};
+pub use branding::{APP_NAME, APP_NAME_SHORT, APP_SLUG, APP_SUBTITLE, LEGACY_APP_SLUG, REPO};
 pub use error::{Error, Result};
 
 /// Steam AppID of Warhammer 40,000: Space Marine 2.
