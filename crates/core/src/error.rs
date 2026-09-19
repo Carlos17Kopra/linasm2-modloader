@@ -105,6 +105,12 @@ pub enum UpdateDefect {
     /// executing half a shell script is exactly what must not happen.
     ChecksumMismatch { version: String },
     NoInstallerForPlatform { url: String },
+    /// The running program is not the file `install.sh` replaces — a
+    /// `cargo` build, a distribution package, a copy unpacked elsewhere.
+    /// Installing would leave a second, newer copy in `~/.local/bin` and
+    /// the restart would come back on the old version, so the user is
+    /// sent to the release page instead. See `update::is_managed_binary`.
+    NotTheManagedBinary { url: String },
     InstallerFailed { code: i32, tail: String },
 }
 
@@ -177,6 +183,10 @@ impl UpdateDefect {
             ),
             UpdateDefect::NoInstallerForPlatform { url } => i18n::format(
                 "error.update_defect.no_installer_for_platform",
+                &[("url", url.clone())],
+            ),
+            UpdateDefect::NotTheManagedBinary { url } => i18n::format(
+                "error.update_defect.not_the_managed_binary",
                 &[("url", url.clone())],
             ),
             UpdateDefect::InstallerFailed { code, tail } => i18n::format(

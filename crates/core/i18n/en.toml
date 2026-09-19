@@ -283,6 +283,7 @@ http_status = "github.com answered with status {status}"
 malformed_answer = "github.com's answer could not be read"
 checksum_mismatch = "the downloaded installer does not match the checksum published for release {version}"
 no_installer_for_platform = "there is no installer for this platform – please download the new version from {url}"
+not_the_managed_binary = "this copy of the launcher was not put there by the installer, so it cannot replace itself – please download the new version from {url}"
 installer_failed = "the installer stopped with exit code {code}: {tail}"
 
 [error.size]

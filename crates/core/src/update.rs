@@ -254,6 +254,59 @@ const INSTALLER_NAME: &str = "install.sh";
 /// How much of the installer's output is kept for the error message.
 const TAIL_LINES: usize = 5;
 
+/// The file `install.sh` replaces, derived the way the script derives
+/// it — same variable name, same default. A private mirror that
+/// redirects the installation with `LINA_SM2_BIN_DIR` is recognised as
+/// the same installation, because both sides read the one variable.
+fn managed_binary() -> PathBuf {
+    let dir = std::env::var_os("LINA_SM2_BIN_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/bin")))
+        .unwrap_or_default();
+    dir.join(crate::APP_SLUG)
+}
+
+/// Is the running program the one file `install.sh` manages?
+///
+/// The installer replaces exactly one path, `$LINA_SM2_BIN_DIR/lina-sm2`
+/// (by default `~/.local/bin/lina-sm2`), and nothing else. A launcher
+/// started from a `cargo` build, from a distribution package, or from a
+/// folder the user unpacked somewhere would not be replaced by it: the
+/// installer would put a *second*, newer copy into `~/.local/bin`, say
+/// it succeeded, and the restart it asks for would come back on the old
+/// version with no error anywhere to explain it. Refusing instead, and
+/// naming the release page, is the one direction that cannot leave
+/// someone silently stuck on an old build.
+///
+/// Both sides are resolved through their symlinks first, because
+/// `~/.local/bin/lina-sm2` pointing at the running file is the same
+/// installation. Resolving can fail — a path that is not there yet, a
+/// directory that cannot be read — and a failure answers "no": the other
+/// answer is the one that runs an installer.
+///
+/// Pure, and takes both paths, so that the decision can be tested
+/// without a `~/.local/bin` to install into.
+pub fn is_managed_binary(current_exe: &Path, managed: &Path) -> bool {
+    let (Ok(current_exe), Ok(managed)) = (current_exe.canonicalize(), managed.canonicalize())
+    else {
+        return false;
+    };
+    current_exe == managed
+}
+
+/// Can pressing "update" replace this copy in place, or does the user
+/// have to be sent to the release page? Two reasons for the latter: the
+/// platform has no installer, or this is not the copy the installer
+/// manages.
+///
+/// Deliberately not folded into `Platform::update_method()`: which binary
+/// happens to be running is not a property of the platform.
+pub fn can_install_in_place() -> bool {
+    Current::update_method() == UpdateMethod::Installer
+        && std::env::current_exe().is_ok_and(|exe| is_managed_binary(&exe, &managed_binary()))
+}
+
 /// Downloads the release's own installer, verifies it against the
 /// checksums that release published, and runs it for exactly the version
 /// the user was shown.
@@ -272,7 +325,21 @@ pub fn install(endpoints: &Endpoints, version: Version) -> Result<()> {
             url: endpoints.release_page(version),
         }));
     }
+    // Before the download, not after: there is nothing to fetch for a
+    // copy the installer would not replace anyway.
+    if !can_install_in_place() {
+        return Err(Error::Update(UpdateDefect::NotTheManagedBinary {
+            url: endpoints.release_page(version),
+        }));
+    }
+    fetch_verify_and_run(endpoints, version)
+}
 
+/// The installation itself, once it has been decided that it may happen.
+/// Separate from `install` so the tests can exercise the download, the
+/// verification and the run without being the binary `install.sh`
+/// manages — a test binary in `target/debug/deps` never is.
+fn fetch_verify_and_run(endpoints: &Endpoints, version: Version) -> Result<()> {
     let sums = fetch_text(&format!("{}/v{version}/SHA256SUMS", endpoints.download), NET_TIMEOUT)?;
     let script =
         fetch_text(&format!("{}/{REPO}/v{version}/{INSTALLER_NAME}", endpoints.raw), NET_TIMEOUT)?;
@@ -581,6 +648,86 @@ mod tests {
         assert_eq!(checksum_for("install.sh", sums), None);
     }
 
+    #[test]
+    fn the_file_the_installer_replaces_is_the_managed_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join(crate::APP_SLUG);
+        std::fs::write(&exe, b"a binary").unwrap();
+        assert!(is_managed_binary(&exe, &exe));
+    }
+
+    /// A `cargo run` build, a distribution package, a copy unpacked into
+    /// some other folder: running the installer for one of those puts a
+    /// *second* copy into `~/.local/bin` and reports success, and the
+    /// restart it then asks for comes back on the old version with
+    /// nothing anywhere to say why.
+    #[test]
+    fn a_copy_somewhere_else_is_not_the_managed_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let managed = dir.path().join("bin").join(crate::APP_SLUG);
+        let elsewhere = dir.path().join("target/release").join(crate::APP_SLUG);
+        for path in [&managed, &elsewhere] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"a binary").unwrap();
+        }
+        assert!(!is_managed_binary(&elsewhere, &managed));
+    }
+
+    /// Nothing installed there yet, a path that has gone, a directory
+    /// that cannot be read: not being able to tell must come out as "not
+    /// managed". The other answer is the one that runs the installer.
+    #[test]
+    fn a_path_that_cannot_be_resolved_is_not_managed() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join(crate::APP_SLUG);
+        std::fs::write(&exe, b"a binary").unwrap();
+        let absent = dir.path().join("nowhere").join(crate::APP_SLUG);
+        assert!(!is_managed_binary(&exe, &absent));
+        assert!(!is_managed_binary(&absent, &exe));
+    }
+
+    /// `~/.local/bin/lina-sm2` may well be a symlink to wherever the file
+    /// really lives; that is still the installation `install.sh`
+    /// replaces. Comparing the two paths as written would send its owner
+    /// to the release page for nothing.
+    // Unix only because creating a symlink as a fixture needs privileges
+    // on Windows — the second of the three reasons CLAUDE.md lists. The
+    // guard itself rests on `canonicalize` and is platform-neutral.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_to_the_running_binary_is_the_managed_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("opt").join(crate::APP_SLUG);
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        std::fs::write(&real, b"a binary").unwrap();
+        let managed = dir.path().join(crate::APP_SLUG);
+        std::os::unix::fs::symlink(&real, &managed).unwrap();
+        assert!(is_managed_binary(&real, &managed));
+    }
+
+    /// The guard runs before anything is downloaded. The endpoints point
+    /// at a port nothing listens on, so a failure to refuse shows up as
+    /// `Unreachable` rather than as a silent pass — and the test binary,
+    /// which lives in `target/debug/deps`, is exactly the kind of copy
+    /// the installer does not manage.
+    // Unix only for the same reason as `serve_release`, below: on Windows
+    // `install` stops one step earlier, at `NoInstallerForPlatform`.
+    #[cfg(unix)]
+    #[test]
+    fn refuses_to_install_over_a_binary_the_installer_does_not_manage() {
+        let nowhere = "http://127.0.0.1:1".to_string();
+        let endpoints = Endpoints {
+            api: nowhere.clone(),
+            download: nowhere.clone(),
+            raw: nowhere,
+        };
+        let error = install(&endpoints, Version::new(9, 9, 9)).unwrap_err();
+        assert!(
+            matches!(error, Error::Update(UpdateDefect::NotTheManagedBinary { .. })),
+            "{error:?}"
+        );
+    }
+
     /// Serves SHA256SUMS and install.sh on one loopback port, each once,
     /// in the order the installer asks for them.
     // Unix only, and this one really is the behaviour, not a fixture
@@ -620,7 +767,7 @@ mod tests {
         let script = "#!/bin/sh\nexit 0\n".to_string();
         let sums = format!("{}  install.sh\n", sha256_hex(b"something else"));
         let endpoints = serve_release(sums, script);
-        let error = install(&endpoints, Version::new(9, 9, 9)).unwrap_err();
+        let error = fetch_verify_and_run(&endpoints, Version::new(9, 9, 9)).unwrap_err();
         assert!(
             matches!(error, Error::Update(UpdateDefect::ChecksumMismatch { .. })),
             "{error:?}"
@@ -641,7 +788,7 @@ mod tests {
         let sums = format!("{}  install.sh\n", sha256_hex(script.as_bytes()));
         let endpoints = serve_release(sums, script);
 
-        install(&endpoints, Version::new(9, 9, 9)).unwrap();
+        fetch_verify_and_run(&endpoints, Version::new(9, 9, 9)).unwrap();
 
         assert_eq!(std::fs::read_to_string(&witness).unwrap(), "--version 9.9.9");
     }
@@ -654,7 +801,7 @@ mod tests {
         let script = "#!/bin/sh\necho 'no write permission' >&2\nexit 3\n".to_string();
         let sums = format!("{}  install.sh\n", sha256_hex(script.as_bytes()));
         let endpoints = serve_release(sums, script);
-        let error = install(&endpoints, Version::new(9, 9, 9)).unwrap_err();
+        let error = fetch_verify_and_run(&endpoints, Version::new(9, 9, 9)).unwrap_err();
         assert!(
             matches!(error, Error::Update(UpdateDefect::InstallerFailed { code: 3, .. })),
             "{error:?}"

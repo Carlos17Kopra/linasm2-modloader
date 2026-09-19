@@ -49,7 +49,7 @@ use sm2_core::launch;
 use sm2_core::library::ModInfo;
 use sm2_core::pak_config::PakEntry;
 use sm2_core::paths::AppDirs;
-use sm2_core::platform::{Current, Platform, UpdateMethod};
+use sm2_core::platform::{Current, Platform};
 use sm2_core::profile::{list_profiles, Profile};
 use sm2_core::saves::{self, BackupEntry};
 use sm2_core::settings::Settings;
@@ -57,7 +57,9 @@ use sm2_core::t;
 // Individual items rather than `update::{self, ...}`: this module also
 // declares `mod update;` (the interface's own `UpdateUi`), and importing
 // the crate's `update` module under that same name would collide with it.
-use sm2_core::update::{now_seconds, remember, Availability, CheckCache, Endpoints};
+use sm2_core::update::{
+    can_install_in_place, now_seconds, remember, Availability, CheckCache, Endpoints,
+};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -560,13 +562,17 @@ impl App {
         self.update.start_check(&self.egui_ctx, Endpoints::from_env(), update::Origin::Requested);
     }
 
-    /// The user pressed "update". On a platform without an installer
-    /// this is where the release page is opened instead — the platform
-    /// decides, not a `cfg` here.
+    /// The user pressed "update". Where the launcher cannot replace
+    /// itself the release page is opened instead — a working path beats
+    /// an error dialog. There are two such cases and
+    /// `update::can_install_in_place` weighs both: a platform without an
+    /// installer, and a copy that `install.sh` does not manage, which it
+    /// would install a second version beside rather than over. Neither
+    /// is decided by a `cfg` here.
     fn start_update_install(&mut self) {
         let Some(latest) = self.update.known.and_then(|found| found.newer()) else { return };
         let endpoints = Endpoints::from_env();
-        if Current::update_method() == UpdateMethod::ReleasePage {
+        if !can_install_in_place() {
             if let Err(e) = Current::open_url(&endpoints.release_page(latest)) {
                 self.set_warning(e.to_string());
             }
