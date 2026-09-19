@@ -1,4 +1,4 @@
-use super::Platform;
+use super::{Platform, UpdateMethod};
 use crate::error::{Error, Result};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -109,6 +109,20 @@ impl Platform for Unix {
             }
         }
         false
+    }
+
+    fn update_method() -> UpdateMethod {
+        UpdateMethod::Installer
+    }
+
+    fn open_url(url: &str) -> Result<()> {
+        // Same opener the file manager gets; a URL has no path to name
+        // in the error, so `PlainIo` rather than `Error::io`.
+        std::process::Command::new("xdg-open")
+            .arg(url)
+            .spawn()
+            .map_err(Error::PlainIo)?;
+        Ok(())
     }
 }
 
