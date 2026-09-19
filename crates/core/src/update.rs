@@ -1,11 +1,15 @@
 //! Looking for a newer release, and installing it.
 
+use crate::atomic::write_atomic;
 use crate::error::{Error, Result, UpdateDefect};
+use crate::paths::AppDirs;
 use crate::REPO;
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// A released version, the way the tags carry it: three numbers and
 /// nothing else. No `semver` crate for that — the project's tags are
@@ -177,6 +181,71 @@ fn fetch_text(url: &str, timeout: Duration) -> Result<String> {
         .map_err(|e| Error::Update(UpdateDefect::Unreachable { detail: e.to_string() }))
 }
 
+/// How long a check counts as recent enough. The rate limit of the
+/// unauthenticated API (60 requests per hour and address) is the lesser
+/// reason; the real one is that the mark on the sidebar survives a start
+/// without a network.
+pub const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// What the last check found, so the next start does not have to repeat
+/// it. Deliberately not part of `Settings`: that file is the user's
+/// configuration, and a timestamp would rewrite it on every start.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckCache {
+    /// Seconds since the epoch.
+    pub last_checked: u64,
+    /// The newest release seen then, as text — an unparsable value here
+    /// must not keep the file from being read.
+    pub latest_seen: String,
+}
+
+impl CheckCache {
+    pub fn path(dirs: &AppDirs) -> PathBuf {
+        dirs.state.join("update-check.toml")
+    }
+
+    /// A cache that cannot be read or understood is no cache. It is a
+    /// convenience, and turning it into an error would let a stray file
+    /// keep the launcher from starting.
+    pub fn load(path: &Path) -> Option<Self> {
+        let text = std::fs::read_to_string(path).ok()?;
+        toml::from_str(&text).ok()
+    }
+
+    pub fn save(&self, path: &Path) -> Result<()> {
+        let text = toml::to_string_pretty(self).map_err(|e| {
+            Error::io(path, std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        })?;
+        write_atomic(path, &text)
+    }
+
+    pub fn latest(&self) -> Option<Version> {
+        self.latest_seen.parse().ok()
+    }
+
+    /// `now` is passed in rather than read here, so the tests can place
+    /// a cache in the past and in the future without touching the clock.
+    /// A timestamp ahead of `now` is stale on purpose: a clock corrected
+    /// backwards would otherwise freeze the check for as long as the
+    /// jump lasted.
+    pub fn is_fresh(&self, now: u64) -> bool {
+        self.last_checked <= now && now - self.last_checked < CHECK_INTERVAL.as_secs()
+    }
+}
+
+/// Seconds since the epoch. A clock set before 1970 yields 0, which is
+/// "very old" — the safe direction: it checks again.
+pub fn now_seconds() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// Writes down what a check just found. Failing to write the cache is
+/// not a failure of the check: the caller has its answer either way.
+pub fn remember(dirs: &AppDirs, latest: Version) -> Result<()> {
+    let cache = CheckCache { last_checked: now_seconds(), latest_seen: latest.to_string() };
+    cache.save(&CheckCache::path(dirs))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,5 +404,62 @@ mod tests {
             matches!(error, Error::Update(UpdateDefect::Unreachable { .. })),
             "{error:?}"
         );
+    }
+
+    #[test]
+    fn a_missing_cache_is_no_cache_and_no_error() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(CheckCache::load(&dir.path().join("update-check.toml")).is_none());
+    }
+
+    /// A cache file is a convenience, never a reason to fail. Anything
+    /// unreadable counts as "not checked yet", which costs one request.
+    #[test]
+    fn a_corrupt_cache_counts_as_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("update-check.toml");
+        std::fs::write(&path, "this is not toml {{{").unwrap();
+        assert!(CheckCache::load(&path).is_none());
+    }
+
+    #[test]
+    fn a_cache_survives_a_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("update-check.toml");
+        let cache = CheckCache { last_checked: 1_758_271_234, latest_seen: "0.5.0".into() };
+        cache.save(&path).unwrap();
+        let read = CheckCache::load(&path).unwrap();
+        assert_eq!(read.last_checked, 1_758_271_234);
+        assert_eq!(read.latest(), Some(Version::new(0, 5, 0)));
+    }
+
+    #[test]
+    fn a_cache_younger_than_a_day_is_fresh() {
+        let now = 1_000_000_000;
+        let cache = CheckCache { last_checked: now - 3600, latest_seen: "0.5.0".into() };
+        assert!(cache.is_fresh(now));
+    }
+
+    #[test]
+    fn a_cache_older_than_a_day_is_stale() {
+        let now = 1_000_000_000;
+        let cache = CheckCache { last_checked: now - 25 * 3600, latest_seen: "0.5.0".into() };
+        assert!(!cache.is_fresh(now));
+    }
+
+    /// A clock that jumped backwards — a corrected system time, a dual
+    /// boot — would otherwise make a cache from "the future" fresh for
+    /// as long as the jump lasted.
+    #[test]
+    fn a_cache_from_the_future_is_stale() {
+        let now = 1_000_000_000;
+        let cache = CheckCache { last_checked: now + 5 * 3600, latest_seen: "0.5.0".into() };
+        assert!(!cache.is_fresh(now));
+    }
+
+    #[test]
+    fn a_cached_version_that_is_junk_is_no_version() {
+        let cache = CheckCache { last_checked: 0, latest_seen: "nightly".into() };
+        assert_eq!(cache.latest(), None);
     }
 }
