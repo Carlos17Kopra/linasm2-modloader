@@ -3,8 +3,10 @@
 use crate::atomic::write_atomic;
 use crate::error::{Error, Result, UpdateDefect};
 use crate::paths::AppDirs;
+use crate::platform::{Current, Platform, UpdateMethod};
 use crate::REPO;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -246,6 +248,91 @@ pub fn remember(dirs: &AppDirs, latest: Version) -> Result<()> {
     cache.save(&CheckCache::path(dirs))
 }
 
+/// The name the installer carries in the release's `SHA256SUMS`.
+const INSTALLER_NAME: &str = "install.sh";
+
+/// How much of the installer's output is kept for the error message.
+const TAIL_LINES: usize = 5;
+
+/// Downloads the release's own installer, verifies it against the
+/// checksums that release published, and runs it for exactly the version
+/// the user was shown.
+///
+/// Running the script rather than reimplementing it is deliberate: it is
+/// the same code path the documented `curl … | sh` line uses, it has its
+/// own end-to-end suite (`packaging/test-install.sh`), and a second
+/// implementation in Rust would be a second thing to keep correct. The
+/// trust anchor is HTTPS to github.com, the same one the README's line
+/// rests on; the checksum is not a second anchor but protection against
+/// a truncated download, which for a script that is then executed is a
+/// real failure mode.
+pub fn install(endpoints: &Endpoints, version: Version) -> Result<()> {
+    if Current::update_method() != UpdateMethod::Installer {
+        return Err(Error::Update(UpdateDefect::NoInstallerForPlatform {
+            url: endpoints.release_page(version),
+        }));
+    }
+
+    let sums = fetch_text(&format!("{}/v{version}/SHA256SUMS", endpoints.download), NET_TIMEOUT)?;
+    let script =
+        fetch_text(&format!("{}/{REPO}/v{version}/{INSTALLER_NAME}", endpoints.raw), NET_TIMEOUT)?;
+
+    // Bound, not inlined into the comparison: `Some(temp.as_str())` in an
+    // `if` condition borrows a temporary that is easy to trip over later.
+    let digest = sha256_hex(script.as_bytes());
+    if checksum_for(INSTALLER_NAME, &sums) != Some(digest.as_str()) {
+        return Err(Error::Update(UpdateDefect::ChecksumMismatch {
+            version: version.to_string(),
+        }));
+    }
+
+    // The script lives in a temporary directory that is removed when
+    // `dir` drops — after `output()` has returned, never before.
+    let dir = tempfile::tempdir().map_err(Error::PlainIo)?;
+    let path = dir.path().join(INSTALLER_NAME);
+    std::fs::write(&path, &script).map_err(|e| Error::io(&path, e))?;
+
+    let output = std::process::Command::new("sh")
+        .arg(&path)
+        .arg("--version")
+        .arg(version.to_string())
+        .output()
+        .map_err(|e| Error::io(&path, e))?;
+
+    if !output.status.success() {
+        return Err(Error::Update(UpdateDefect::InstallerFailed {
+            // A process killed by a signal has no code; -1 says "it did
+            // not finish" without pretending to know more.
+            code: output.status.code().unwrap_or(-1),
+            tail: tail_of(&output.stderr, &output.stdout),
+        }));
+    }
+    Ok(())
+}
+
+/// The hash of `bytes`, in the lowercase hex `sha256sum` writes.
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The checksum a `SHA256SUMS` file lists for one exact name. Matching
+/// the whole name matters: `my-install.sh` ends in the wanted name and
+/// must not be taken for it.
+fn checksum_for<'a>(name: &str, sums: &'a str) -> Option<&'a str> {
+    sums.lines().find_map(|line| {
+        let (hash, listed) = line.split_once("  ")?;
+        (listed.trim() == name).then_some(hash.trim())
+    })
+}
+
+/// The last few lines the installer said, stderr first — that is where
+/// `install.sh`'s own `die` writes.
+fn tail_of(stderr: &[u8], stdout: &[u8]) -> String {
+    let text = String::from_utf8_lossy(if stderr.is_empty() { stdout } else { stderr });
+    let lines: Vec<&str> = text.lines().filter(|line| !line.trim().is_empty()).collect();
+    lines[lines.len().saturating_sub(TAIL_LINES)..].join("; ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,5 +548,104 @@ mod tests {
     fn a_cached_version_that_is_junk_is_no_version() {
         let cache = CheckCache { last_checked: 0, latest_seen: "nightly".into() };
         assert_eq!(cache.latest(), None);
+    }
+
+    #[test]
+    fn hashes_the_way_sha256sum_does() {
+        // The value `printf abc | sha256sum` prints.
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn finds_a_name_in_a_sums_file() {
+        let sums = "aaaa  lina-sm2-0.5.0-x86_64-linux.tar.gz\nbbbb  install.sh\n";
+        assert_eq!(checksum_for("install.sh", sums), Some("bbbb"));
+    }
+
+    /// A release whose SHA256SUMS does not cover the installer must not
+    /// quietly skip the verification — that is the whole point of it.
+    #[test]
+    fn a_missing_name_yields_no_checksum() {
+        let sums = "aaaa  lina-sm2-0.5.0-x86_64-linux.tar.gz\n";
+        assert_eq!(checksum_for("install.sh", sums), None);
+    }
+
+    /// A name that merely *contains* the wanted one — `my-install.sh` —
+    /// must not be mistaken for it.
+    #[test]
+    fn a_similar_name_is_not_a_match() {
+        let sums = "aaaa  my-install.sh\n";
+        assert_eq!(checksum_for("install.sh", sums), None);
+    }
+
+    /// Serves SHA256SUMS and install.sh on one loopback port, each once,
+    /// in the order the installer asks for them.
+    #[cfg(unix)]
+    fn serve_release(sums: String, script: String) -> Endpoints {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for body in [sums, script] {
+                let Ok((mut stream, _)) = listener.accept() else { return };
+                let mut scratch = [0u8; 2048];
+                let _ = stream.read(&mut scratch);
+                let answer = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(answer.as_bytes());
+            }
+        });
+        let base = format!("http://127.0.0.1:{port}");
+        Endpoints { api: base.clone(), download: base.clone(), raw: base }
+    }
+
+    /// The installer is executed, so it has to be the file the release
+    /// published. A truncated download is the realistic failure, and
+    /// half a shell script is exactly what must not run.
+    #[cfg(unix)]
+    #[test]
+    fn refuses_an_installer_that_does_not_match_its_checksum() {
+        let script = "#!/bin/sh\nexit 0\n".to_string();
+        let sums = format!("{}  install.sh\n", sha256_hex(b"something else"));
+        let endpoints = serve_release(sums, script);
+        let error = install(&endpoints, Version::new(9, 9, 9)).unwrap_err();
+        assert!(
+            matches!(error, Error::Update(UpdateDefect::ChecksumMismatch { .. })),
+            "{error:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runs_an_installer_that_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let witness = dir.path().join("ran");
+        // The script records that it ran, and with which arguments — the
+        // version has to reach it, or the launcher would install
+        // whatever is newest instead of what the user was shown.
+        let script = format!("#!/bin/sh\nprintf '%s' \"$*\" > {}\n", witness.display());
+        let sums = format!("{}  install.sh\n", sha256_hex(script.as_bytes()));
+        let endpoints = serve_release(sums, script);
+
+        install(&endpoints, Version::new(9, 9, 9)).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&witness).unwrap(), "--version 9.9.9");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reports_the_exit_code_of_a_failed_installer() {
+        let script = "#!/bin/sh\necho 'no write permission' >&2\nexit 3\n".to_string();
+        let sums = format!("{}  install.sh\n", sha256_hex(script.as_bytes()));
+        let endpoints = serve_release(sums, script);
+        let error = install(&endpoints, Version::new(9, 9, 9)).unwrap_err();
+        assert!(
+            matches!(error, Error::Update(UpdateDefect::InstallerFailed { code: 3, .. })),
+            "{error:?}"
+        );
     }
 }

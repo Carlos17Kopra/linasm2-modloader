@@ -113,6 +113,12 @@ jobs:
           # downloaded archive is a copy.
           cp LICENSE "dist/$name/"
 
+          # The launcher downloads this script to update itself and
+          # verifies it against SHA256SUMS before running it. It is a
+          # release asset for that reason alone — the documented
+          # `curl … | sh` line still fetches it from the default branch.
+          cp install.sh dist/
+
           tar -czf "dist/$name.tar.gz" -C dist "$name"
           rm -rf "dist/$name"
           ls -l dist
@@ -173,7 +179,7 @@ jobs:
           # refuse a perfectly good download — and the glob names the
           # archives rather than using `*`, which would race with the
           # SHA256SUMS being written here.
-          (cd dist && sha256sum lina-sm2-* > SHA256SUMS)
+          (cd dist && sha256sum lina-sm2-* install.sh > SHA256SUMS)
           cat dist/SHA256SUMS
 
           echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
