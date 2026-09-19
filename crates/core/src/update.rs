@@ -583,6 +583,12 @@ mod tests {
 
     /// Serves SHA256SUMS and install.sh on one loopback port, each once,
     /// in the order the installer asks for them.
+    // Unix only, and this one really is the behaviour, not a fixture
+    // limitation: `install.sh` and `sh` do not exist on Windows, where
+    // `Current::update_method()` returns `UpdateMethod::ReleasePage`
+    // instead of `Installer` and `install` sends the user to the release
+    // page rather than running a script. None of the three fixture-
+    // related reasons CLAUDE.md lists for `#[cfg(unix)]` applies here.
     #[cfg(unix)]
     fn serve_release(sums: String, script: String) -> Endpoints {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -606,6 +612,8 @@ mod tests {
     /// The installer is executed, so it has to be the file the release
     /// published. A truncated download is the realistic failure, and
     /// half a shell script is exactly what must not run.
+    // Unix only for the same reason as `serve_release`, above: real
+    // platform behaviour, not a fixture limitation.
     #[cfg(unix)]
     #[test]
     fn refuses_an_installer_that_does_not_match_its_checksum() {
@@ -619,6 +627,8 @@ mod tests {
         );
     }
 
+    // Unix only for the same reason as `serve_release`, above: real
+    // platform behaviour, not a fixture limitation.
     #[cfg(unix)]
     #[test]
     fn runs_an_installer_that_matches() {
@@ -636,6 +646,8 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&witness).unwrap(), "--version 9.9.9");
     }
 
+    // Unix only for the same reason as `serve_release`, above: real
+    // platform behaviour, not a fixture limitation.
     #[cfg(unix)]
     #[test]
     fn reports_the_exit_code_of_a_failed_installer() {
