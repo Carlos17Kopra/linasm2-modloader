@@ -96,6 +96,26 @@ impl UpdateUi {
         }
         Some((origin, outcome))
     }
+
+    /// What is known once that version has been installed.
+    ///
+    /// Without it `known` still says `Newer` after a successful
+    /// installation: the dot stays on the sidebar, the Update button
+    /// stays enabled, and pressing it again downloads the installer,
+    /// runs the whole installation a second time and reports success
+    /// once more. `UpToDate` rather than clearing it, because the
+    /// settings page has a row to fill and "–" there would read as
+    /// "never looked" for something that was just checked.
+    ///
+    /// The version comes from the caller, not from `known`: a check
+    /// started meanwhile may have replaced what is known there, and this
+    /// has to name what was actually installed. It is still the
+    /// *running* binary that the row will disagree with until the
+    /// restart the message asks for — that is the truthful reading, and
+    /// the next start's check settles it either way.
+    pub fn installed(&mut self, version: Version) {
+        self.known = Some(Availability::UpToDate { current: version });
+    }
 }
 
 #[cfg(test)]
@@ -223,6 +243,24 @@ mod tests {
         assert!(ui.poll().is_some());
         assert!(!ui.is_busy());
         assert!(ui.poll().is_none(), "the answer must not be handed over twice");
+    }
+
+    /// After the installation there is nothing left to offer. The dot on
+    /// the sidebar and the enabled button are the same state, and leaving
+    /// them there invites a second, pointless run of the whole
+    /// installation that reports success again.
+    #[test]
+    fn an_installed_version_is_no_longer_news() {
+        let mut ui = UpdateUi {
+            known: Some(Availability::Newer {
+                current: Version::new(0, 4, 0),
+                latest: Version::new(0, 5, 0),
+            }),
+            ..Default::default()
+        };
+        ui.installed(Version::new(0, 5, 0));
+        assert!(!ui.has_news());
+        assert_eq!(ui.known, Some(Availability::UpToDate { current: Version::new(0, 5, 0) }));
     }
 
     /// On Windows there is no `install.sh`; the button sends the user to

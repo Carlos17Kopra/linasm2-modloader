@@ -229,6 +229,9 @@ impl App {
             },
             Outcome::Updated { version, result } => match result {
                 Ok(()) => {
+                    // Before the message, so that nothing between the two
+                    // can still read the old "a newer version exists".
+                    self.update.installed(version);
                     self.set_status(t!("gui.message.update_installed", version = version));
                 }
                 // Shown as it comes: `Error::Update` already reads
