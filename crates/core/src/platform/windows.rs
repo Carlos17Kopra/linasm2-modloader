@@ -162,8 +162,14 @@ impl Platform for Windows {
     fn open_url(url: &str) -> Result<()> {
         // `start` is a shell builtin, not a program, hence the detour
         // through cmd. The empty argument is the window title `start`
-        // would otherwise take the URL for.
-        Command::new("cmd").args(["/C", "start", "", url]).spawn().map_err(Error::PlainIo)?;
+        // would otherwise take the URL for. `cmd.exe` is itself a console
+        // application, so without `CREATE_NO_WINDOW` this flashes a black
+        // window on every call, same as the `tasklist` spawn above.
+        Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(Error::PlainIo)?;
         Ok(())
     }
 }
