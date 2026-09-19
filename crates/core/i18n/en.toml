@@ -219,6 +219,7 @@ no_rar_tool = "no tool for unpacking .rar found – please install 'unar' or '7z
 no_pak_in_archive = "The archive holds no .pak file: {path}"
 no_save_in_archive = "The archive holds no savegame files (.cfg or .sav): {path}"
 unusable_archive = "The archive cannot be imported: {detail}"
+update_failed = "Update failed: {detail}"
 not_writable = "no write permission for {path}"
 already_running = "{name} is already running. Two instances would write to the same files without knowing about each other – please close the running one first."
 io = "I/O error at {path}: {source}"
@@ -264,6 +265,14 @@ symlink = "the archive holds a symlink: {name}"
 invalid_path = "invalid path in the archive: {name}"
 duplicate_name = "{name} appears more than once in the archive"
 too_large = "the archive unpacks to more than {limit}"
+
+[error.update_defect]
+unreachable = "github.com could not be reached ({detail})"
+http_status = "github.com answered with status {status}"
+malformed_answer = "github.com's answer could not be read"
+checksum_mismatch = "the downloaded installer does not match the checksum published for release {version}"
+no_installer_for_platform = "there is no installer for this platform – please download the new version from {url}"
+installer_failed = "the installer stopped with exit code {code}: {tail}"
 
 [error.size]
 mib = "{value} MiB"

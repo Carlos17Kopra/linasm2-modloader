@@ -219,6 +219,7 @@ no_rar_tool = "kein Werkzeug zum Entpacken von .rar gefunden – bitte 'unar' od
 no_pak_in_archive = "Archiv enthält keine .pak-Datei: {path}"
 no_save_in_archive = "Archiv enthält keine Savegame-Dateien (.cfg oder .sav): {path}"
 unusable_archive = "Archiv kann nicht importiert werden: {detail}"
+update_failed = "Update fehlgeschlagen: {detail}"
 not_writable = "kein Schreibrecht für {path}"
 already_running = "{name} läuft bereits. Zwei Instanzen würden ohne Kenntnis voneinander in dieselben Dateien schreiben – bitte zuerst die laufende beenden."
 io = "E/A-Fehler bei {path}: {source}"
@@ -264,6 +265,14 @@ symlink = "Archiv enthält einen Symlink: {name}"
 invalid_path = "unzulässiger Pfad im Archiv: {name}"
 duplicate_name = "{name} kommt mehrfach im Archiv vor"
 too_large = "Archiv ist entpackt größer als {limit}"
+
+[error.update_defect]
+unreachable = "github.com war nicht erreichbar ({detail})"
+http_status = "github.com hat mit Status {status} geantwortet"
+malformed_answer = "die Antwort von github.com war nicht lesbar"
+checksum_mismatch = "das heruntergeladene Installationsskript passt nicht zu der Prüfsumme, die Release {version} dafür veröffentlicht hat"
+no_installer_for_platform = "für diese Plattform gibt es kein Installationsskript – bitte die neue Version unter {url} herunterladen"
+installer_failed = "das Installationsskript hat mit Code {code} abgebrochen: {tail}"
 
 [error.size]
 mib = "{value} MiB"

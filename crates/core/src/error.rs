@@ -24,6 +24,10 @@ pub enum Error {
     /// have to tell this one case apart from every other failure of
     /// `InstanceLock::acquire`: it is the only one that stops the program.
     AlreadyRunning,
+    /// Looking for a new version, or installing it, went wrong. Its own
+    /// defect type for the same reason as `BackupDefect`: the detail is
+    /// translated at `Display` time, not baked in where it happened.
+    Update(UpdateDefect),
     Io { path: PathBuf, source: std::io::Error },
     PlainIo(std::io::Error),
 }
@@ -86,6 +90,24 @@ pub enum YamlScalarShape {
     Object,
 }
 
+/// Why an update check or an installation failed — same idea as
+/// `BackupDefect`.
+#[derive(Debug)]
+pub enum UpdateDefect {
+    /// No route, no DNS, no answer in time. `detail` is the client's own
+    /// English wording; without it a bug report says only "it did not
+    /// work".
+    Unreachable { detail: String },
+    HttpStatus(u16),
+    MalformedAnswer,
+    /// The downloaded installer does not match the checksum the release
+    /// published for it. A truncated download is the realistic case, and
+    /// executing half a shell script is exactly what must not happen.
+    ChecksumMismatch { version: String },
+    NoInstallerForPlatform { url: String },
+    InstallerFailed { code: i32, tail: String },
+}
+
 impl BackupDefect {
     fn text(&self) -> String {
         match self {
@@ -135,6 +157,32 @@ impl ArchiveDefect {
             ArchiveDefect::TooLarge { limit } => {
                 i18n::format("error.archive_defect.too_large", &[("limit", describe_size(*limit))])
             }
+        }
+    }
+}
+
+impl UpdateDefect {
+    fn text(&self) -> String {
+        match self {
+            UpdateDefect::Unreachable { detail } => {
+                i18n::format("error.update_defect.unreachable", &[("detail", detail.clone())])
+            }
+            UpdateDefect::HttpStatus(status) => {
+                i18n::format("error.update_defect.http_status", &[("status", status.to_string())])
+            }
+            UpdateDefect::MalformedAnswer => i18n::lookup("error.update_defect.malformed_answer"),
+            UpdateDefect::ChecksumMismatch { version } => i18n::format(
+                "error.update_defect.checksum_mismatch",
+                &[("version", version.clone())],
+            ),
+            UpdateDefect::NoInstallerForPlatform { url } => i18n::format(
+                "error.update_defect.no_installer_for_platform",
+                &[("url", url.clone())],
+            ),
+            UpdateDefect::InstallerFailed { code, tail } => i18n::format(
+                "error.update_defect.installer_failed",
+                &[("code", code.to_string()), ("tail", tail.clone())],
+            ),
         }
     }
 }
@@ -220,6 +268,9 @@ impl std::fmt::Display for Error {
             }
             Error::CorruptBackup(defect) => {
                 i18n::format("error.corrupt_backup", &[("detail", defect.text())])
+            }
+            Error::Update(defect) => {
+                i18n::format("error.update_failed", &[("detail", defect.text())])
             }
             Error::UnsafeSaveDir(path) => {
                 i18n::format("error.unsafe_save_dir", &[("path", path.display().to_string())])
@@ -375,5 +426,26 @@ mod tests {
         let error = Error::io("/tmp/x", std::io::Error::new(std::io::ErrorKind::NotFound, "weg"));
 
         assert!(std::error::Error::source(&error).is_some());
+    }
+
+    /// The detail of an update failure goes through the catalogue like
+    /// every other `Display` output — a `String` payload built with
+    /// `format!` would freeze its wording in whichever language happened
+    /// to be active when the error was constructed.
+    #[test]
+    fn an_update_failure_names_the_status_it_got() {
+        let _guard = crate::i18n::language_test_lock();
+        crate::i18n::set_language(crate::i18n::Language::English);
+        let error = Error::Update(UpdateDefect::HttpStatus(403));
+        let text = error.to_string();
+        assert!(text.contains("403"), "{text}");
+    }
+
+    #[test]
+    fn an_unreachable_host_keeps_its_detail() {
+        let _guard = crate::i18n::language_test_lock();
+        crate::i18n::set_language(crate::i18n::Language::English);
+        let error = Error::Update(UpdateDefect::Unreachable { detail: "dns".into() });
+        assert!(error.to_string().contains("dns"), "{error}");
     }
 }
