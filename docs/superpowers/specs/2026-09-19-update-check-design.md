@@ -156,6 +156,27 @@ The running binary is replaced by a rename inside `install.sh`, so the
 running process keeps its inode and is unaffected. That is why "please
 restart" is a message and not a forced restart.
 
+**Amendment.** That paragraph assumes the running binary *is* the one
+`install.sh` replaces, and nothing established it. The script writes
+exactly one path, `${LINA_SM2_BIN_DIR:-$HOME/.local/bin}/lina-sm2`. A
+launcher started from a `cargo` build, a distribution package or a
+folder someone unpacked elsewhere is not that file: the installation
+would succeed, leave a *second* and newer copy in `~/.local/bin`, and
+the restart it asks for would come back on the old version with no
+error anywhere.
+
+So step 0 of `install` is `update::can_install_in_place()`, which
+resolves `std::env::current_exe()` and the managed path through their
+symlinks and compares them; a path that cannot be resolved counts as
+not managed. A refusal is `UpdateDefect::NotTheManagedBinary { url }`,
+and the interface does not show it at all — it opens the release page,
+exactly as it does where the platform has no installer. Someone with an
+unusual but genuinely managed installation is sent to the release page
+for nothing, which is the cheap direction to be wrong in.
+
+Deliberately *not* folded into `update_method()`: which binary happens
+to be running is not a property of the platform.
+
 ## Platform split
 
 Two additions to `core::platform::Platform`, so that nothing above it

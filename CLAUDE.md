@@ -104,7 +104,13 @@ of filesystem operations is the entire safety argument.
   `Settings::update_check` is `None` until then, and `None` means
   "unanswered", not "off". `update::install` never runs a script it has
   not verified against the release's `SHA256SUMS` — which is why
-  `install.sh` is a release asset.
+  `install.sh` is a release asset. It also never runs one over a binary
+  `install.sh` does not manage (`update::can_install_in_place`): that
+  would install a second copy beside the running one and report success.
+  An endpoint override that is neither HTTPS nor loopback is ignored,
+  because plaintext hands the sums and the script to the same origin.
+  A failed *automatic* check is a `tracing` line and nothing else; only
+  a check someone pressed for may say so on the screen.
 
 ## Platforms
 
@@ -141,7 +147,7 @@ almost never is — it is the fixture that cannot be built.
 
 ## Working on it
 
-    cargo test                  # 375 tests across both crates
+    cargo test                  # 390 tests across both crates
     cargo clippy --all-targets  # kept clean
     cargo run                   # GUI
     cargo run -- <subcommand>   # CLI
