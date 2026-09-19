@@ -8,16 +8,27 @@ use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind,
 use sm2_core::t;
 
 pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
+    // The last field is the dot, and only Settings ever carries one: an
+    // update is waiting behind that entry. It is not put in the count
+    // slot because a count is a number the user reads off, while this
+    // says nothing but "there is something here".
     let items = [
-        (Section::Mods, Icon::NavMods, t!("gui.side_bar.nav_mods"), mods_count(app)),
+        (Section::Mods, Icon::NavMods, t!("gui.side_bar.nav_mods"), mods_count(app), false),
         (
             Section::Profiles,
             Icon::NavProfiles,
             t!("gui.side_bar.nav_profiles"),
             app.profiles.len().to_string(),
+            false,
         ),
-        (Section::Saves, Icon::NavSaves, t!("gui.side_bar.nav_saves"), saves_count(app)),
-        (Section::Settings, Icon::NavSettings, t!("gui.side_bar.nav_settings"), String::new()),
+        (Section::Saves, Icon::NavSaves, t!("gui.side_bar.nav_saves"), saves_count(app), false),
+        (
+            Section::Settings,
+            Icon::NavSettings,
+            t!("gui.side_bar.nav_settings"),
+            String::new(),
+            app.update.has_news(),
+        ),
     ];
 
     // The status card sits at the bottom edge and is given its space
@@ -31,8 +42,8 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
             brand(ui);
             ui.spacing_mut().item_spacing.y = 2.0;
-            for (section, icon, label, count) in items {
-                if nav_item(app, ui, section, icon, &label, &count) {
+            for (section, icon, label, count, dot) in items {
+                if nav_item(app, ui, section, icon, &label, &count, dot) {
                     actions.push(Action::ShowSection(section));
                 }
             }
@@ -96,6 +107,7 @@ fn nav_item(
     icon: Icon,
     label: &str,
     count: &str,
+    dot: bool,
 ) -> bool {
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 36.0), Sense::click());
@@ -158,6 +170,16 @@ fn nav_item(
         } else {
             painter.text(pill.center(), Align2::CENTER_CENTER, count, mono(10.5), pill_fg);
         }
+    }
+
+    // The mark sits where a pill would, in the one entry that never has
+    // one — nothing has to make room for it.
+    if dot {
+        painter.circle_filled(
+            Pos2::new(rect.right() - 10.0 - 3.0, rect.center().y),
+            3.0,
+            color::ACCENT,
+        );
     }
 
     response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()

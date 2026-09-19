@@ -22,12 +22,6 @@ pub struct UpdateUi {
 impl UpdateUi {
     /// Is there a newer release to offer? `Ahead` and `UpToDate` are not
     /// news: one is a development build, the other is nothing to say.
-    ///
-    /// Not called from production code yet — the sidebar dot that reads
-    /// it is the next change on top of this one; `#[allow(dead_code)]`
-    /// says so rather than leaving a clippy warning that looks like an
-    /// oversight.
-    #[allow(dead_code)]
     pub fn has_news(&self) -> bool {
         self.known.and_then(|found| found.newer()).is_some()
     }
@@ -156,5 +150,16 @@ mod tests {
         ui.adopt_cache(&CheckCache { last_checked: 0, latest_seen: "nightly".into() });
         assert!(!ui.has_news());
         assert!(ui.known.is_none());
+    }
+
+    /// On Windows there is no `install.sh`; the button sends the user to
+    /// the release page instead of failing. The decision is the
+    /// platform's, and this is what the interface asks.
+    #[test]
+    fn the_button_installs_or_opens_the_page() {
+        use sm2_core::platform::{Current, Platform, UpdateMethod};
+        let expected =
+            if cfg!(unix) { UpdateMethod::Installer } else { UpdateMethod::ReleasePage };
+        assert_eq!(Current::update_method(), expected);
     }
 }

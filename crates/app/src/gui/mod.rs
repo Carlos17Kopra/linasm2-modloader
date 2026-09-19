@@ -49,7 +49,7 @@ use sm2_core::launch;
 use sm2_core::library::ModInfo;
 use sm2_core::pak_config::PakEntry;
 use sm2_core::paths::AppDirs;
-use sm2_core::platform::{Current, Platform};
+use sm2_core::platform::{Current, Platform, UpdateMethod};
 use sm2_core::profile::{list_profiles, Profile};
 use sm2_core::saves::{self, BackupEntry};
 use sm2_core::settings::Settings;
@@ -286,14 +286,8 @@ pub enum Action {
     DismissToast(u64),
     TriggerNotice(usize),
     CancelTask,
-    // Neither of these two is pushed anywhere yet — the settings page's
-    // update controls, which push them, are the next change on top of
-    // this one. `#[allow(dead_code)]` says so rather than leaving a
-    // clippy warning that looks like an oversight; `AnswerUpdateQuestion`
-    // needs none, since the dialog added in this change already pushes it.
-    #[allow(dead_code)]
     CheckForUpdates,
-    #[allow(dead_code)]
+    InstallUpdate,
     ToggleUpdateCheck,
     AnswerUpdateQuestion(bool),
 }
@@ -566,6 +560,21 @@ impl App {
         self.update.start_check(&self.egui_ctx, Endpoints::from_env());
     }
 
+    /// The user pressed "update". On a platform without an installer
+    /// this is where the release page is opened instead — the platform
+    /// decides, not a `cfg` here.
+    fn start_update_install(&mut self) {
+        let Some(latest) = self.update.known.and_then(|found| found.newer()) else { return };
+        let endpoints = Endpoints::from_env();
+        if Current::update_method() == UpdateMethod::ReleasePage {
+            if let Err(e) = Current::open_url(&endpoints.release_page(latest)) {
+                self.set_warning(e.to_string());
+            }
+            return;
+        }
+        self.task = Some(tasks::start_update_install(&self.egui_ctx, endpoints, latest));
+    }
+
     /// Runs once the first frame is up, from the same place that ends
     /// the splash. Three things have to be true: the user said yes, no
     /// check is running, and the last one is older than a day.
@@ -769,6 +778,7 @@ impl App {
                 }
             }
             Action::CheckForUpdates => self.start_update_check(),
+            Action::InstallUpdate => self.start_update_install(),
             Action::ToggleUpdateCheck => {
                 let on = self.settings().update_check.unwrap_or(false);
                 self.settings_mut().update_check = Some(!on);
