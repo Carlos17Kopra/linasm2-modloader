@@ -436,6 +436,8 @@ eac_available_title = "Start ohne EAC verfügbar"
 eac_available_body = "umu-run liegt im PATH. Die Option erscheint in der Startauswahl; Multiplayer ist damit nicht möglich."
 eac_unavailable_title = "Start ohne EAC nicht verfügbar"
 eac_unavailable_body = "umu-launcher wurde nicht im PATH gefunden. Die Option wird ausgeblendet, statt beim Start mit einem Fehler zu enden."
+update_checking = "Suche nach Updates …"
+update_up_to_date = "Bereits aktuell."
 
 [gui.dialog]
 cancel = "Abbrechen"
@@ -471,6 +473,10 @@ rename_backup_body = "Das Etikett steht in der Liste und im Dateinamen des Backu
 rename_backup_placeholder = "Etikett"
 delete_backup_title = "Backup löschen?"
 delete_backup_body = "Archiv und Manifest werden endgültig entfernt; zurückholen lässt sich das nicht. Die Spielstände selbst bleiben unberührt – nur diese Sicherung ist danach weg."
+update_ask_title = "Nach Updates sehen?"
+update_ask_body = "Der Launcher kann einmal täglich bei github.com nachfragen, ob es eine neuere Version gibt. Installiert wird nie von allein – das entscheidest du per Knopf. Ohne dies baut er überhaupt keine Netzverbindung auf."
+update_ask_yes = "Ja, bei jedem Start"
+update_ask_no = "Nein"
 
 [gui.message]
 ready = "Bereit."
@@ -576,3 +582,6 @@ folder_missing = "{path} nicht vorhanden – {detail}"
 folder_opened = "{path} im Dateimanager geöffnet."
 folder_open_failed = "Öffnen fehlgeschlagen – {detail}"
 profile_notice_hint = "Profil „{name}“ – mit Anwenden zurückstellen."
+update_available = "Version {version} ist verfügbar."
+update_check_failed = "Update-Prüfung fehlgeschlagen: {detail}"
+update_installed = "{version} installiert – bitte den Launcher neu starten."

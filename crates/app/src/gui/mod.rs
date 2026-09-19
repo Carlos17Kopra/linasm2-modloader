@@ -40,6 +40,7 @@ mod tasks;
 mod theme;
 mod toasts;
 mod top_bar;
+mod update;
 mod widgets;
 
 use crate::app_state::{self, AppState};
@@ -53,6 +54,10 @@ use sm2_core::profile::{list_profiles, Profile};
 use sm2_core::saves::{self, BackupEntry};
 use sm2_core::settings::Settings;
 use sm2_core::t;
+// Individual items rather than `update::{self, ...}`: this module also
+// declares `mod update;` (the interface's own `UpdateUi`), and importing
+// the crate's `update` module under that same name would collide with it.
+use sm2_core::update::{now_seconds, remember, Availability, CheckCache, Endpoints};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -176,6 +181,11 @@ pub enum Dialog {
     RenameBackup { index: usize, label: String },
     /// The "delete backup?" dialog (`gui.dialog.delete_backup_title`).
     DeleteBackup { index: usize },
+    /// The "may I look for updates on start?" question, shown once on
+    /// the first start (`gui.dialog.update_ask_title`). It is a dialog
+    /// and not a silent default because it is the only thing in this
+    /// program that talks to the network.
+    UpdateQuestion,
 }
 
 /// What a notice row offers as a button.
@@ -276,6 +286,16 @@ pub enum Action {
     DismissToast(u64),
     TriggerNotice(usize),
     CancelTask,
+    // Neither of these two is pushed anywhere yet — the settings page's
+    // update controls, which push them, are the next change on top of
+    // this one. `#[allow(dead_code)]` says so rather than leaving a
+    // clippy warning that looks like an oversight; `AnswerUpdateQuestion`
+    // needs none, since the dialog added in this change already pushes it.
+    #[allow(dead_code)]
+    CheckForUpdates,
+    #[allow(dead_code)]
+    ToggleUpdateCheck,
+    AnswerUpdateQuestion(bool),
 }
 
 /// The entire state of the interface.
@@ -322,6 +342,9 @@ pub struct App {
 
     drag: Option<Drag>,
     task: Option<tasks::Running>,
+    /// What the interface knows about updates — see `update::UpdateUi`
+    /// for why this does not go through `task` above.
+    update: update::UpdateUi,
     /// The transient messages over the lower right corner — see
     /// `toasts`. Fed by `set_status`/`set_warning`.
     toasts: toasts::Toasts,
@@ -364,6 +387,7 @@ impl App {
             steam_users: Vec::new(),
             drag: None,
             task: None,
+            update: update::UpdateUi::default(),
             toasts: toasts::Toasts::default(),
             // `blank()` is what the tests build on, and they expect a
             // struct they can act on straight away. The start-up screen is
@@ -479,6 +503,13 @@ impl App {
         self.state.as_ref().map_or(&self.fallback_settings, |s| &s.settings)
     }
 
+    /// The mutable half of `settings()`: whichever copy currently counts.
+    /// `save_settings` copies it back into `fallback_settings` afterwards,
+    /// so a caller here only ever has to touch one field.
+    fn settings_mut(&mut self) -> &mut Settings {
+        self.state.as_mut().map_or(&mut self.fallback_settings, |s| &mut s.settings)
+    }
+
     fn profiles_dir(&self) -> Option<PathBuf> {
         self.dirs.as_ref().map(|d| d.data.join("profiles"))
     }
@@ -524,6 +555,62 @@ impl App {
         self.fallback_settings = settings.clone();
         if let Err(e) = settings.save(&dirs.config.join("settings.toml")) {
             self.set_warning(t!("gui.message.settings_save_failed", detail = e));
+        }
+    }
+
+    /// A check the user asked for. It runs whatever the setting says —
+    /// pressing the button *is* the permission, and it is the only way
+    /// to check at all while the question is still unanswered.
+    fn start_update_check(&mut self) {
+        self.set_busy(t!("gui.settings.update_checking"));
+        self.update.start_check(&self.egui_ctx, Endpoints::from_env());
+    }
+
+    /// Runs once the first frame is up, from the same place that ends
+    /// the splash. Three things have to be true: the user said yes, no
+    /// check is running, and the last one is older than a day.
+    fn maybe_check_for_updates(&mut self) {
+        if self.settings().update_check != Some(true) {
+            return;
+        }
+        let Some(dirs) = self.dirs.clone() else { return };
+        let cache = CheckCache::load(&CheckCache::path(&dirs));
+        if let Some(cache) = &cache {
+            self.update.adopt_cache(cache);
+            if cache.is_fresh(now_seconds()) {
+                return;
+            }
+        }
+        self.update.start_check(&self.egui_ctx, Endpoints::from_env());
+    }
+
+    /// Reads the answer of a running check, if one has arrived.
+    fn poll_update_check(&mut self) {
+        let Some(outcome) = self.update.poll() else { return };
+        match outcome {
+            Ok(found) => {
+                if let Some(dirs) = &self.dirs {
+                    let seen = match found {
+                        Availability::UpToDate { current } => current,
+                        Availability::Newer { latest, .. } | Availability::Ahead { latest, .. } => {
+                            latest
+                        }
+                    };
+                    if let Err(e) = remember(dirs, seen) {
+                        tracing::warn!("update cache not written: {e}");
+                    }
+                }
+                match found.newer() {
+                    Some(latest) => {
+                        self.set_status(t!("gui.message.update_available", version = latest))
+                    }
+                    None => self.set_status(t!("gui.settings.update_up_to_date")),
+                }
+            }
+            // Loud, because only a check the user pressed for or one
+            // they switched on can get here, and a silent failure would
+            // look like "no update exists".
+            Err(e) => self.set_warning(t!("gui.message.update_check_failed", detail = e)),
         }
     }
 
@@ -681,6 +768,20 @@ impl App {
                     self.set_status(t!("gui.message.task_cancel_requested"));
                 }
             }
+            Action::CheckForUpdates => self.start_update_check(),
+            Action::ToggleUpdateCheck => {
+                let on = self.settings().update_check.unwrap_or(false);
+                self.settings_mut().update_check = Some(!on);
+                self.save_settings();
+            }
+            Action::AnswerUpdateQuestion(yes) => {
+                self.settings_mut().update_check = Some(yes);
+                self.save_settings();
+                self.dialog = None;
+                if yes {
+                    self.start_update_check();
+                }
+            }
         }
     }
 
@@ -827,6 +928,7 @@ impl eframe::App for App {
             return;
         }
         self.poll_task(&ctx);
+        self.poll_update_check();
 
         let mut actions: Vec<Action> = Vec::new();
 
@@ -909,6 +1011,14 @@ impl App {
         match state.step(now) {
             splash::Step::Finish => {
                 self.splash = None;
+                // The one frame this runs on: `self.splash` stays `None`
+                // from here on, so a check placed after this `match`
+                // would run again on every later frame instead of once.
+                if self.settings().update_check.is_none() {
+                    self.dialog = Some(Dialog::UpdateQuestion);
+                } else {
+                    self.maybe_check_for_updates();
+                }
                 return false;
             }
             splash::Step::Wait => {
@@ -1294,5 +1404,27 @@ mod tests {
         );
 
         set_language(Language::English);
+    }
+
+    #[test]
+    fn toggle_update_check_flips_the_setting_and_persists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = AppDirs {
+            config: tmp.path().join("config"),
+            data: tmp.path().join("data"),
+            state: tmp.path().join("state"),
+        };
+        let mut app = App::blank(egui::Context::default());
+        app.dirs = Some(dirs.clone());
+
+        app.apply(Action::ToggleUpdateCheck);
+        assert_eq!(app.settings().update_check, Some(true));
+        assert_eq!(
+            Settings::load(&dirs.config.join("settings.toml")).unwrap().update_check,
+            Some(true)
+        );
+
+        app.apply(Action::ToggleUpdateCheck);
+        assert_eq!(app.settings().update_check, Some(false));
     }
 }

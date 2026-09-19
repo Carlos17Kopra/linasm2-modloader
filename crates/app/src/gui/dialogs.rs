@@ -25,6 +25,7 @@ pub fn show(app: &App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         Dialog::DeleteProfile { .. } => 450.0,
         Dialog::RenameBackup { .. } => 460.0,
         Dialog::DeleteBackup { .. } => 470.0,
+        Dialog::UpdateQuestion => 480.0,
     };
     let border = match &dialog {
         Dialog::Restore { .. } => color::WARN_BORDER,
@@ -53,6 +54,7 @@ pub fn show(app: &App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                     rename_backup(app, ui, *index, label, actions)
                 }
                 Dialog::DeleteBackup { index } => delete_backup(app, ui, *index, actions),
+                Dialog::UpdateQuestion => update_question(ui, actions),
             }
         });
 
@@ -241,6 +243,28 @@ fn vanilla(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
                 .clicked()
             {
                 actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
+/// The "may I look for updates on start?" question
+/// (`gui.dialog.update_ask_title`), shown once on the first start.
+fn update_question(ui: &mut Ui, actions: &mut Vec<Action>) {
+    header(ui, &t!("gui.dialog.update_ask_title"), false, actions);
+    body(ui, |ui| {
+        paragraph(ui, &t!("gui.dialog.update_ask_body"));
+
+        footer(ui, |ui| {
+            if widgets::button(ui, &ButtonStyle::primary(), None, &t!("gui.dialog.update_ask_yes"), true)
+                .clicked()
+            {
+                actions.push(Action::AnswerUpdateQuestion(true));
+            }
+            if widgets::button(ui, &ButtonStyle::neutral(), None, &t!("gui.dialog.update_ask_no"), true)
+                .clicked()
+            {
+                actions.push(Action::AnswerUpdateQuestion(false));
             }
         });
     });
