@@ -98,6 +98,9 @@ impl Endpoints {
     /// understands keep their names, so a private mirror can redirect
     /// both halves of a release the same way; `LINA_SM2_RAW_BASE` is new
     /// because the script never fetches itself.
+    ///
+    /// An override that is neither HTTPS nor loopback is dropped for the
+    /// default and a line in the log — see `is_encrypted_or_loopback`.
     pub fn from_env() -> Self {
         Self {
             api: var("LINA_SM2_API_BASE", "https://api.github.com".into()),
@@ -116,7 +119,60 @@ impl Endpoints {
 }
 
 fn var(name: &str, fallback: String) -> String {
-    std::env::var(name).ok().filter(|value| !value.is_empty()).unwrap_or(fallback)
+    match std::env::var(name).ok().filter(|value| !value.is_empty()) {
+        Some(value) if is_encrypted_or_loopback(&value) => value,
+        Some(value) => {
+            tracing::warn!("{name} is not https and not loopback, ignoring it: {value}");
+            fallback
+        }
+        None => fallback,
+    }
+}
+
+/// May an override point here?
+///
+/// Only over HTTPS, or to this machine. The verification the update path
+/// does — fetch `SHA256SUMS`, fetch the script, compare — proves nothing
+/// once both come from the same plaintext origin: whoever can rewrite the
+/// script on the wire can rewrite the sums in the same breath, and the
+/// launcher would then execute what it just "verified".
+///
+/// The argument that makes these variables safe for `install.sh` does not
+/// carry over. There the person typing the one-liner sets them in the same
+/// command; here a window started from a menu entry inherits whatever is
+/// in the session's environment, set by who knows what and how long ago.
+///
+/// Loopback stays allowed because nothing leaves the machine there, and
+/// because it is how this suite serves its canned answers — though the
+/// tests build `Endpoints` directly and never come through here.
+fn is_encrypted_or_loopback(url: &str) -> bool {
+    if url.starts_with("https://") {
+        return true;
+    }
+    let Some(rest) = url.strip_prefix("http://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    // Userinfo first: `http://127.0.0.1@evil.example/` is a host of
+    // `evil.example`, and reading the part before the `@` as the host is
+    // the classic way past a check like this one.
+    let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    // A port, but only a real one: stripping after the last colon
+    // unconditionally would cut `[::1]` down to `[:`.
+    let host = match host.rsplit_once(':') {
+        Some((before, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => {
+            before
+        }
+        _ => host,
+    };
+    matches!(host, "localhost" | "[::1]") || host.strip_prefix("127.").is_some_and(is_dotted_quad)
+}
+
+/// The three numbers after `127.` — so that `127.0.0.1` passes and a host
+/// named `127.evil.example` does not.
+fn is_dotted_quad(rest: &str) -> bool {
+    let parts: Vec<&str> = rest.split('.').collect();
+    parts.len() == 3 && parts.iter().all(|part| part.parse::<u8>().is_ok())
 }
 
 /// What the check found.
@@ -681,6 +737,42 @@ mod tests {
     fn a_similar_name_is_not_a_match() {
         let sums = "aaaa  my-install.sh\n";
         assert_eq!(checksum_for("install.sh", sums), None);
+    }
+
+    /// HTTPS is the whole trust anchor of the update path. An override
+    /// that drops it hands the sums and the script to the same origin,
+    /// and the checksum then proves only that an attacker is consistent.
+    #[test]
+    fn an_endpoint_override_has_to_be_encrypted() {
+        for url in [
+            "https://api.github.com",
+            "https://mirror.example/releases/download",
+            "http://127.0.0.1:38121",
+            "http://127.0.0.1",
+            "http://localhost:8080/api",
+            "http://[::1]:38121",
+            "http://[::1]",
+        ] {
+            assert!(is_encrypted_or_loopback(url), "{url} must be allowed");
+        }
+
+        for url in [
+            "http://api.github.com",
+            "http://mirror.example/releases/download",
+            // The host is `evil.example`; the loopback address in front
+            // of the `@` is userinfo and names nothing.
+            "http://127.0.0.1@evil.example/",
+            // Not loopback, only spelled to look like it.
+            "http://127.evil.example/",
+            "http://localhost.evil.example/",
+            // `install.sh` understands these; the launcher does not, and
+            // must not execute a script that came out of one.
+            "file:///tmp/fake-release",
+            "ftp://mirror.example",
+            "api.github.com",
+        ] {
+            assert!(!is_encrypted_or_loopback(url), "{url} must be refused");
+        }
     }
 
     #[test]
