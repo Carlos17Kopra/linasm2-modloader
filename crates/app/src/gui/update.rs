@@ -11,12 +11,27 @@ use sm2_core::update::{self, Availability, CheckCache, Endpoints, Version};
 use sm2_core::Result;
 use std::sync::mpsc;
 
+/// Who asked for the check that is running. It decides how loud its
+/// answer may be: a check nobody pressed for runs once a day on its own,
+/// and a launcher started without a network would otherwise put the same
+/// warning on the screen every morning forever. A check someone pressed
+/// for wants an answer either way — that is what pressing it was for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    /// The once-a-day check on start.
+    Automatic,
+    /// "Check now", or the button in the dialog that asks the question.
+    Requested,
+}
+
 #[derive(Default)]
 pub struct UpdateUi {
     /// What the last check — or the cache from an earlier start — found.
     pub known: Option<Availability>,
-    /// The running check, if there is one.
-    checking: Option<mpsc::Receiver<Result<Availability>>>,
+    /// The running check, if there is one, together with who asked for
+    /// it. The two live in one `Option` so that the origin cannot
+    /// outlive — or fall behind — the check it belongs to.
+    checking: Option<(Origin, mpsc::Receiver<Result<Availability>>)>,
 }
 
 impl UpdateUi {
@@ -44,7 +59,7 @@ impl UpdateUi {
     /// Starts a check on a thread of its own. The context is woken when
     /// the answer arrives — without that the window would sit on the
     /// stale frame until the user moved the mouse.
-    pub fn start_check(&mut self, ctx: &egui::Context, endpoints: Endpoints) {
+    pub fn start_check(&mut self, ctx: &egui::Context, endpoints: Endpoints, origin: Origin) {
         if self.is_busy() {
             return;
         }
@@ -56,13 +71,16 @@ impl UpdateUi {
             let _ = sender.send(outcome);
             ctx.request_repaint();
         });
-        self.checking = Some(receiver);
+        self.checking = Some((origin, receiver));
     }
 
-    /// The answer, once. Returns `None` while the check is still running
-    /// and on every frame after it has been handed over.
-    pub fn poll(&mut self) -> Option<Result<Availability>> {
-        let outcome = match self.checking.as_ref()?.try_recv() {
+    /// The answer, once, with the origin of the check that produced it.
+    /// Returns `None` while the check is still running and on every frame
+    /// after it has been handed over.
+    pub fn poll(&mut self) -> Option<(Origin, Result<Availability>)> {
+        let (origin, receiver) = self.checking.as_ref()?;
+        let origin = *origin;
+        let outcome = match receiver.try_recv() {
             Ok(outcome) => outcome,
             Err(mpsc::TryRecvError::Empty) => return None,
             // The thread died without sending. Treat it as finished
@@ -76,7 +94,7 @@ impl UpdateUi {
         if let Ok(found) = &outcome {
             self.known = Some(*found);
         }
-        Some(outcome)
+        Some((origin, outcome))
     }
 }
 
@@ -150,6 +168,61 @@ mod tests {
         ui.adopt_cache(&CheckCache { last_checked: 0, latest_seen: "nightly".into() });
         assert!(!ui.has_news());
         assert!(ui.known.is_none());
+    }
+
+    /// Hands `poll` a finished check without a network anywhere near it:
+    /// the channel is the same one `start_check`'s thread would send on,
+    /// filled here instead.
+    fn finished(origin: Origin, outcome: Result<Availability>) -> UpdateUi {
+        let (sender, receiver) = mpsc::channel();
+        sender.send(outcome).unwrap();
+        UpdateUi { known: None, checking: Some((origin, receiver)) }
+    }
+
+    fn unreachable() -> Result<Availability> {
+        Err(sm2_core::Error::Update(sm2_core::error::UpdateDefect::MalformedAnswer))
+    }
+
+    /// The origin has to survive the check, because it is what decides
+    /// whether the answer may be shown. Losing it is how an automatic
+    /// check ends up warning on every offline start.
+    #[test]
+    fn the_answer_says_who_asked_for_the_check() {
+        let mut ui = finished(Origin::Automatic, unreachable());
+        let (origin, outcome) = ui.poll().expect("the answer is waiting");
+        assert_eq!(origin, Origin::Automatic);
+        assert!(outcome.is_err());
+
+        let mut ui = finished(Origin::Requested, unreachable());
+        let (origin, _) = ui.poll().expect("the answer is waiting");
+        assert_eq!(origin, Origin::Requested);
+    }
+
+    /// A found update is news whoever asked; the origin only governs how
+    /// loud an answer of "nothing found" and a failure may be. Either
+    /// way the answer is remembered, so the sidebar's dot does not
+    /// depend on who started the check.
+    #[test]
+    fn a_polled_answer_is_remembered_whoever_asked() {
+        let found = Availability::Newer {
+            current: Version::new(0, 4, 0),
+            latest: Version::new(0, 5, 0),
+        };
+        let mut ui = finished(Origin::Automatic, Ok(found));
+        let (_, outcome) = ui.poll().expect("the answer is waiting");
+        assert!(outcome.is_ok());
+        assert!(ui.has_news());
+    }
+
+    /// A failed check leaves what was known alone: a cache adopted on
+    /// start still says there is a new version, and one unreachable
+    /// morning must not take that away.
+    #[test]
+    fn a_failed_check_is_handed_over_once_and_then_forgotten() {
+        let mut ui = finished(Origin::Automatic, unreachable());
+        assert!(ui.poll().is_some());
+        assert!(!ui.is_busy());
+        assert!(ui.poll().is_none(), "the answer must not be handed over twice");
     }
 
     /// On Windows there is no `install.sh`; the button sends the user to

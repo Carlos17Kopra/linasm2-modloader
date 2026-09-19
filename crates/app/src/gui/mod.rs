@@ -557,7 +557,7 @@ impl App {
     /// to check at all while the question is still unanswered.
     fn start_update_check(&mut self) {
         self.set_busy(t!("gui.settings.update_checking"));
-        self.update.start_check(&self.egui_ctx, Endpoints::from_env());
+        self.update.start_check(&self.egui_ctx, Endpoints::from_env(), update::Origin::Requested);
     }
 
     /// The user pressed "update". On a platform without an installer
@@ -590,12 +590,23 @@ impl App {
                 return;
             }
         }
-        self.update.start_check(&self.egui_ctx, Endpoints::from_env());
+        self.update.start_check(&self.egui_ctx, Endpoints::from_env(), update::Origin::Automatic);
     }
 
     /// Reads the answer of a running check, if one has arrived.
+    ///
+    /// How loud the answer may be depends on who asked for it. A found
+    /// update is news either way. Everything else — "nothing new" and
+    /// every kind of failure — belongs to whoever pressed the button:
+    /// the automatic check runs once a day without being asked, and a
+    /// launcher that is regularly started offline would otherwise open
+    /// with the same warning every morning. Switching the setting on
+    /// once is not the same as asking for an answer now. The settings
+    /// page shows what the last check found in any case, which is where
+    /// someone who wants to know goes looking.
     fn poll_update_check(&mut self) {
-        let Some(outcome) = self.update.poll() else { return };
+        let Some((origin, outcome)) = self.update.poll() else { return };
+        let asked_for_it = origin == update::Origin::Requested;
         match outcome {
             Ok(found) => {
                 if let Some(dirs) = &self.dirs {
@@ -613,13 +624,16 @@ impl App {
                     Some(latest) => {
                         self.set_status(t!("gui.message.update_available", version = latest))
                     }
-                    None => self.set_status(t!("gui.settings.update_up_to_date")),
+                    None if asked_for_it => {
+                        self.set_status(t!("gui.settings.update_up_to_date"))
+                    }
+                    None => {}
                 }
             }
-            // Loud, because only a check the user pressed for or one
-            // they switched on can get here, and a silent failure would
-            // look like "no update exists".
-            Err(e) => self.set_warning(t!("gui.message.update_check_failed", detail = e)),
+            Err(e) if asked_for_it => {
+                self.set_warning(t!("gui.message.update_check_failed", detail = e))
+            }
+            Err(e) => tracing::info!("the automatic update check did not get through: {e}"),
         }
     }
 
