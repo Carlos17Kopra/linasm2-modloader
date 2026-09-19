@@ -136,6 +136,24 @@ impl Availability {
             _ => None,
         }
     }
+
+    /// The newest *released* version this check saw — not the one to
+    /// offer. `Ahead` saw a release older than the running build and
+    /// `UpToDate` saw its own, and both are still what the cache has to
+    /// write down: the cache answers "what was on github.com the last
+    /// time we looked", which a later start compares against whatever it
+    /// is running then.
+    ///
+    /// A method rather than the same three-arm match at each call site.
+    /// It stood twice, byte for byte, in the interface and in the command
+    /// line — written by two people who each saw only their own copy —
+    /// and if `Ahead`'s meaning ever shifts, the two must not shift apart.
+    pub fn latest_release(&self) -> Version {
+        match self {
+            Availability::UpToDate { current } => *current,
+            Availability::Newer { latest, .. } | Availability::Ahead { latest, .. } => *latest,
+        }
+    }
 }
 
 /// Asks the releases API for the newest published tag.
@@ -246,6 +264,19 @@ pub fn now_seconds() -> u64 {
 pub fn remember(dirs: &AppDirs, latest: Version) -> Result<()> {
     let cache = CheckCache { last_checked: now_seconds(), latest_seen: latest.to_string() };
     cache.save(&CheckCache::path(dirs))
+}
+
+/// What both front ends do after a check: write the answer down, and say
+/// so in the log if that did not work. The failure costs one request next
+/// time and is not worth showing anyone, let alone failing a check over.
+///
+/// Shared rather than repeated, for the same reason as
+/// `Availability::latest_release`: the interface and the command line had
+/// the same paragraph twice, down to the wording of the warning.
+pub fn remember_found(dirs: &AppDirs, found: Availability) {
+    if let Err(e) = remember(dirs, found.latest_release()) {
+        tracing::warn!("update cache not written: {e}");
+    }
 }
 
 /// The name the installer carries in the release's `SHA256SUMS`.
@@ -646,6 +677,22 @@ mod tests {
     fn a_similar_name_is_not_a_match() {
         let sums = "aaaa  my-install.sh\n";
         assert_eq!(checksum_for("install.sh", sums), None);
+    }
+
+    /// What the cache writes down is the newest release that was seen,
+    /// not the version to offer. `Ahead` is the case that separates the
+    /// two: the running build is newer than everything published, and
+    /// the release is still what github.com said.
+    #[test]
+    fn the_remembered_version_is_the_newest_release_seen() {
+        let current = Version::new(1, 0, 0);
+        let latest = Version::new(0, 9, 0);
+        assert_eq!(Availability::UpToDate { current }.latest_release(), current);
+        assert_eq!(Availability::Ahead { current, latest }.latest_release(), latest);
+        assert_eq!(
+            Availability::Newer { current: latest, latest: current }.latest_release(),
+            current
+        );
     }
 
     #[test]

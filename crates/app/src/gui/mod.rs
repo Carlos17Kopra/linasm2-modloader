@@ -57,9 +57,7 @@ use sm2_core::t;
 // Individual items rather than `update::{self, ...}`: this module also
 // declares `mod update;` (the interface's own `UpdateUi`), and importing
 // the crate's `update` module under that same name would collide with it.
-use sm2_core::update::{
-    can_install_in_place, now_seconds, remember, Availability, CheckCache, Endpoints,
-};
+use sm2_core::update::{can_install_in_place, now_seconds, remember_found, CheckCache, Endpoints};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -616,15 +614,7 @@ impl App {
         match outcome {
             Ok(found) => {
                 if let Some(dirs) = &self.dirs {
-                    let seen = match found {
-                        Availability::UpToDate { current } => current,
-                        Availability::Newer { latest, .. } | Availability::Ahead { latest, .. } => {
-                            latest
-                        }
-                    };
-                    if let Err(e) = remember(dirs, seen) {
-                        tracing::warn!("update cache not written: {e}");
-                    }
+                    remember_found(dirs, found);
                 }
                 match found.newer() {
                     Some(latest) => {

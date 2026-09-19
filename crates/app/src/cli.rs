@@ -13,7 +13,7 @@ use sm2_core::paths::GamePaths;
 use sm2_core::platform::{Current, Platform};
 use sm2_core::profile::{list_profiles, Profile};
 use sm2_core::saves::BackupEntry;
-use sm2_core::update::{self, Availability, Version};
+use sm2_core::update::{self, Version};
 use sm2_core::{import, saves, t};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -709,15 +709,7 @@ fn run_update_command(state: &AppState, check: bool) -> Result<()> {
 
     // Written before anything is printed or exited, so that a later
     // `std::process::exit` cannot skip it.
-    let seen = match found {
-        Availability::UpToDate { current } => current,
-        Availability::Newer { latest, .. } | Availability::Ahead { latest, .. } => latest,
-    };
-    if let Err(e) = update::remember(&state.dirs, seen) {
-        // A cache that cannot be written costs one request next time and
-        // is not worth failing a check the user asked for.
-        tracing::warn!("update cache not written: {e}");
-    }
+    update::remember_found(&state.dirs, found);
 
     let Some(latest) = found.newer() else {
         println!("{}", t!("cli.update.up_to_date", version = Version::running()));
