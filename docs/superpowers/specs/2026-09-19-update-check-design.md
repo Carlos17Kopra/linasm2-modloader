@@ -297,7 +297,9 @@ Command::Update { check: bool }
 ```
 
 - `update --check` prints the verdict and exits 0, 10 or 1.
-- `update` installs, or on Windows prints the release URL and exits 1.
+- `update` installs, or prints the release URL and exits 1 where it
+  cannot: on Windows, and on a copy the installer does not manage
+  (see the amendment above).
 
 `requires_exclusive_access` gets `Command::Update { check } => !check`.
 Checking changes nothing; installing does. The exhaustive match without
@@ -318,9 +320,14 @@ pub enum UpdateDefect {
     MalformedAnswer,
     ChecksumMismatch,
     NoInstallerForPlatform,
+    NotTheManagedBinary,                      // see the amendment above
     InstallerFailed { code: i32, tail: String },
 }
 ```
+
+A sketch: the variants that name something carry it as a field in the
+implementation — the URL to open, the version whose checksum did not
+match, the detail of an unreachable host.
 
 A failure of the automatic check is silent — a `tracing` line, nothing
 in the interface. A failure of a check the user asked for is loud:

@@ -147,7 +147,7 @@ almost never is — it is the fixture that cannot be built.
 
 ## Working on it
 
-    cargo test                  # 390 tests across both crates
+    cargo test                  # 392 tests across both crates
     cargo clippy --all-targets  # kept clean
     cargo run                   # GUI
     cargo run -- <subcommand>   # CLI

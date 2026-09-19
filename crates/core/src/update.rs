@@ -8,6 +8,7 @@ use crate::REPO;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
+use std::ffi::OsString;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -345,13 +346,31 @@ const TAIL_LINES: usize = 5;
 /// it — same variable name, same default. A private mirror that
 /// redirects the installation with `LINA_SM2_BIN_DIR` is recognised as
 /// the same installation, because both sides read the one variable.
-fn managed_binary() -> PathBuf {
-    let dir = std::env::var_os("LINA_SM2_BIN_DIR")
+fn managed_binary() -> Option<PathBuf> {
+    managed_binary_in(
+        std::env::var_os("LINA_SM2_BIN_DIR"),
+        std::env::var_os("HOME"),
+    )
+}
+
+/// The derivation itself, taking what the environment said instead of
+/// reading it, so that the empty cases can be tested without setting
+/// process-wide variables out from under every other test.
+///
+/// `None` when neither variable names a directory. Falling back to a
+/// relative `lina-sm2` there would be worse than having no answer: it
+/// resolves against the working directory, so a launcher started from
+/// the folder it lives in would call itself the managed binary and
+/// install over a copy the installer never placed.
+fn managed_binary_in(bin_dir: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
+    let dir = bin_dir
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/bin")))
-        .unwrap_or_default();
-    dir.join(crate::APP_SLUG)
+        .or_else(|| {
+            home.filter(|value| !value.is_empty())
+                .map(|home| PathBuf::from(home).join(".local/bin"))
+        })?;
+    Some(dir.join(crate::APP_SLUG))
 }
 
 /// Is the running program the one file `install.sh` manages?
@@ -375,6 +394,13 @@ fn managed_binary() -> PathBuf {
 /// Pure, and takes both paths, so that the decision can be tested
 /// without a `~/.local/bin` to install into.
 pub fn is_managed_binary(current_exe: &Path, managed: &Path) -> bool {
+    // A relative path canonicalises against the working directory, which
+    // would make the answer depend on where the launcher was started
+    // from. Neither side is ever meant to be relative, so treat one as
+    // another thing that cannot be told apart.
+    if !current_exe.is_absolute() || !managed.is_absolute() {
+        return false;
+    }
     let (Ok(current_exe), Ok(managed)) = (current_exe.canonicalize(), managed.canonicalize())
     else {
         return false;
@@ -391,7 +417,9 @@ pub fn is_managed_binary(current_exe: &Path, managed: &Path) -> bool {
 /// happens to be running is not a property of the platform.
 pub fn can_install_in_place() -> bool {
     Current::update_method() == UpdateMethod::Installer
-        && std::env::current_exe().is_ok_and(|exe| is_managed_binary(&exe, &managed_binary()))
+        && managed_binary().is_some_and(|managed| {
+            std::env::current_exe().is_ok_and(|exe| is_managed_binary(&exe, &managed))
+        })
 }
 
 /// Downloads the release's own installer, verifies it against the
@@ -844,6 +872,37 @@ mod tests {
         let absent = dir.path().join("nowhere").join(crate::APP_SLUG);
         assert!(!is_managed_binary(&exe, &absent));
         assert!(!is_managed_binary(&absent, &exe));
+    }
+
+    /// With neither `LINA_SM2_BIN_DIR` nor `HOME` set there is no
+    /// `~/.local/bin` to speak of, and the answer has to be "no idea"
+    /// rather than a bare `lina-sm2`: that resolves against the working
+    /// directory, so a launcher started from its own folder would decide
+    /// it was the copy the installer manages and install over it.
+    #[test]
+    fn nothing_is_the_managed_binary_without_a_directory_to_put_it_in() {
+        assert_eq!(managed_binary_in(None, None), None);
+        assert_eq!(managed_binary_in(Some(OsString::new()), Some(OsString::new())), None);
+        assert_eq!(
+            managed_binary_in(Some(OsString::from("/opt/bin")), None),
+            Some(PathBuf::from("/opt/bin").join(crate::APP_SLUG))
+        );
+        assert_eq!(
+            managed_binary_in(None, Some(OsString::from("/home/someone"))),
+            Some(PathBuf::from("/home/someone/.local/bin").join(crate::APP_SLUG))
+        );
+    }
+
+    /// The same hole one layer down, for any future caller that hands
+    /// the predicate a path it did not build itself.
+    #[test]
+    fn a_relative_path_is_not_the_managed_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join(crate::APP_SLUG);
+        std::fs::write(&exe, b"a binary").unwrap();
+        let relative = PathBuf::from(crate::APP_SLUG);
+        assert!(!is_managed_binary(&exe, &relative));
+        assert!(!is_managed_binary(&relative, &exe));
     }
 
     /// `~/.local/bin/lina-sm2` may well be a symlink to wherever the file

@@ -90,9 +90,9 @@ fn the_installer_and_the_packaging_use_the_binary_name_from_the_branding() {
 /// have to agree on an asset name are held together by tests; this is the
 /// fourth, and it had none.
 ///
-/// Matched loosely on purpose: the lines are recognised by what they do,
-/// not by their exact spelling, so reformatting the YAML or renaming the
-/// step does not fail this.
+/// Matched by what the lines do rather than by their exact spelling, so
+/// reformatting the YAML or renaming the step does not fail this — but
+/// tightly enough that a copy to the wrong destination does.
 #[test]
 fn the_release_workflow_ships_the_installer_and_checksums_it() {
     let root = repository_root();
@@ -103,14 +103,16 @@ fn the_release_workflow_ships_the_installer_and_checksums_it() {
     let lines: Vec<&str> = workflow.lines().map(str::trim).collect();
 
     // `cp install.sh dist/` — into the directory the archives are
-    // collected from, not into the unpacked archive: the launcher fetches
-    // the script as an asset of its own.
+    // collected from, not into the unpacked archive. The destination has
+    // to be `dist` itself: `dist/$name/` would put the script inside the
+    // tarball, where the launcher cannot fetch it as an asset, and would
+    // pass a test that only asked for "dist" somewhere on the line.
     assert!(
         lines.iter().any(|line| line.starts_with("cp ")
             && line.contains("install.sh")
-            && line.contains("dist")),
-        "{} must copy install.sh into dist/, or update::install downloads a script \
-         that release never published a checksum for",
+            && line.trim_end_matches('/').ends_with("dist")),
+        "{} must copy install.sh into dist/ itself, or update::install downloads a \
+         script that release never published a checksum for",
         path.display()
     );
 
