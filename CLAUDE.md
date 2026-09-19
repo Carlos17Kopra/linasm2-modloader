@@ -99,6 +99,12 @@ of filesystem operations is the entire safety argument.
   `let _ = ...` releases it on the spot. A lock that cannot be taken at
   all is a warning, not a refusal; only a lock someone else holds stops
   the program.
+- The launcher makes no network connection until the user has answered
+  the question on first start, and installs nothing without a click.
+  `Settings::update_check` is `None` until then, and `None` means
+  "unanswered", not "off". `update::install` never runs a script it has
+  not verified against the release's `SHA256SUMS` — which is why
+  `install.sh` is a release asset.
 
 ## Platforms
 
@@ -135,7 +141,7 @@ almost never is — it is the fixture that cannot be built.
 
 ## Working on it
 
-    cargo test                  # 330 tests across both crates
+    cargo test                  # 375 tests across both crates
     cargo clippy --all-targets  # kept clean
     cargo run                   # GUI
     cargo run -- <subcommand>   # CLI
@@ -167,13 +173,16 @@ README carries it. The three pieces:
   is what notices if the `.ico` stops being one.
 - `.github/workflows/release.yml` — a pushed tag `vX.Y.Z` builds on both
   platforms and uploads `lina-sm2-X.Y.Z-x86_64-linux.tar.gz`,
-  `lina-sm2-X.Y.Z-x86_64-windows.zip` and one `SHA256SUMS` covering both.
-  Linux builds on ubuntu-22.04 (glibc 2.35: the oldest base the binary
-  should still start on). Windows gets a plain ZIP and no installer — an
-  unsigned installer only adds a second SmartScreen warning to the one the
-  executable already triggers. The tag has to match the workspace version;
-  the workflow refuses otherwise, because `install.sh` compares exactly
-  those two to decide whether an update is due.
+  `lina-sm2-X.Y.Z-x86_64-windows.zip`, `install.sh` itself and one
+  `SHA256SUMS` covering all three. `install.sh` is published so that
+  `update::install` can fetch and verify the very script it is about to
+  run, rather than trusting the copy already on disk. Linux builds on
+  ubuntu-22.04 (glibc 2.35: the oldest base the binary should still start
+  on). Windows gets a plain ZIP and no installer — an unsigned installer
+  only adds a second SmartScreen warning to the one the executable
+  already triggers. The tag has to match the workspace version; the
+  workflow refuses otherwise, because `install.sh` compares exactly those
+  two to decide whether an update is due.
 - `.github/workflows/ci.yml` — builds and tests both platforms on every
   push. It is not optional: the Windows half cannot be compiled on a Linux
   machine without a C toolchain for the target (`zstd-sys` and `blake3`
