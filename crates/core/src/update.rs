@@ -375,8 +375,6 @@ fn fetch_verify_and_run(endpoints: &Endpoints, version: Version) -> Result<()> {
     let script =
         fetch_text(&format!("{}/{REPO}/v{version}/{INSTALLER_NAME}", endpoints.raw), NET_TIMEOUT)?;
 
-    // Bound, not inlined into the comparison: `Some(temp.as_str())` in an
-    // `if` condition borrows a temporary that is easy to trip over later.
     let digest = sha256_hex(script.as_bytes());
     if checksum_for(INSTALLER_NAME, &sums) != Some(digest.as_str()) {
         return Err(Error::Update(UpdateDefect::ChecksumMismatch {
@@ -425,6 +423,12 @@ fn checksum_for<'a>(name: &str, sums: &'a str) -> Option<&'a str> {
 
 /// The last few lines the installer said, stderr first — that is where
 /// `install.sh`'s own `die` writes.
+///
+/// A script that fails without a word is a real case — killed, or dying
+/// on something the shell itself swallowed — and yields the empty
+/// string here. `UpdateDefect::InstallerFailed` looks for that and says
+/// a sentence of its own instead of trailing off after its colon; the
+/// wording is the catalogue's business, not this function's.
 fn tail_of(stderr: &[u8], stdout: &[u8]) -> String {
     let text = String::from_utf8_lossy(if stderr.is_empty() { stdout } else { stderr });
     let lines: Vec<&str> = text.lines().filter(|line| !line.trim().is_empty()).collect();
@@ -677,6 +681,23 @@ mod tests {
     fn a_similar_name_is_not_a_match() {
         let sums = "aaaa  my-install.sh\n";
         assert_eq!(checksum_for("install.sh", sums), None);
+    }
+
+    #[test]
+    fn the_tail_is_the_last_few_lines_stderr_first() {
+        let stderr = b"one\ntwo\nthree\nfour\nfive\nsix\n";
+        assert_eq!(tail_of(stderr, b"ignored\n"), "two; three; four; five; six");
+        assert_eq!(tail_of(b"", b"only stdout\n"), "only stdout");
+    }
+
+    /// An installer that fails without a word — killed, or dying on
+    /// something the shell swallowed. The empty tail is what
+    /// `UpdateDefect::InstallerFailed` looks for to say a sentence of its
+    /// own instead of stopping after its colon.
+    #[test]
+    fn an_installer_that_said_nothing_has_an_empty_tail() {
+        assert_eq!(tail_of(b"", b""), "");
+        assert_eq!(tail_of(b"   \n\n", b"\n"), "", "blank lines are not output");
     }
 
     /// What the cache writes down is the newest release that was seen,

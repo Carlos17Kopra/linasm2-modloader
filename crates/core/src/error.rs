@@ -189,6 +189,16 @@ impl UpdateDefect {
                 "error.update_defect.not_the_managed_binary",
                 &[("url", url.clone())],
             ),
+            // An installer that says nothing at all — killed, or dying
+            // on something the shell swallowed — would otherwise produce
+            // a sentence that stops after its colon. Two entries rather
+            // than a placeholder filled with "nothing": the wording of
+            // the empty case is a translator's decision, and in German
+            // it is not the same sentence with a word swapped in.
+            UpdateDefect::InstallerFailed { code, tail } if tail.is_empty() => {
+                i18n::format("error.update_defect.installer_failed_silently",
+                    &[("code", code.to_string())])
+            }
             UpdateDefect::InstallerFailed { code, tail } => i18n::format(
                 "error.update_defect.installer_failed",
                 &[("code", code.to_string()), ("tail", tail.clone())],
@@ -427,6 +437,32 @@ mod tests {
 
         assert!(text.contains("slot1.sav"), "{text}");
         assert!(text.contains("more than once"), "{text}");
+    }
+
+    /// A failed installer that printed nothing used to produce "the
+    /// installer stopped with exit code 3: " and then stop — a sentence
+    /// that reads like the message got cut off. The empty tail gets a
+    /// sentence of its own, in both languages.
+    #[test]
+    fn an_installer_that_failed_without_a_word_still_finishes_its_sentence() {
+        let _guard = crate::i18n::language_test_lock();
+        let error = Error::Update(UpdateDefect::InstallerFailed { code: 3, tail: String::new() });
+
+        set_language(Language::English);
+        let english = error.to_string();
+        set_language(Language::German);
+        let german = error.to_string();
+        set_language(Language::English);
+
+        for text in [&english, &german] {
+            assert!(text.contains('3'), "{text}");
+            assert!(
+                !text.trim_end().ends_with(':'),
+                "the sentence must not trail off after its colon: {text}"
+            );
+        }
+        assert!(english.contains("without saying why"), "{english}");
+        assert!(german.contains("kommentarlos"), "{german}");
     }
 
     /// The chain has to survive the loss of `thiserror`: an I/O error still

@@ -285,6 +285,7 @@ checksum_mismatch = "das heruntergeladene Installationsskript passt nicht zu der
 no_installer_for_platform = "für diese Plattform gibt es kein Installationsskript – bitte die neue Version unter {url} herunterladen"
 not_the_managed_binary = "diese Kopie des Launchers stammt nicht vom Installationsskript und kann sich deshalb nicht selbst ersetzen – bitte die neue Version unter {url} herunterladen"
 installer_failed = "das Installationsskript hat mit Code {code} abgebrochen: {tail}"
+installer_failed_silently = "das Installationsskript hat kommentarlos mit Code {code} abgebrochen"
 
 [error.size]
 mib = "{value} MiB"
