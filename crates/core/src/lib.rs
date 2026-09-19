@@ -12,6 +12,7 @@ pub mod platform;
 pub mod profile;
 pub mod saves;
 pub mod settings;
+pub mod update;
 
 pub use branding::{APP_NAME, APP_NAME_SHORT, APP_SLUG, APP_SUBTITLE, LEGACY_APP_SLUG};
 pub use error::{Error, Result};
