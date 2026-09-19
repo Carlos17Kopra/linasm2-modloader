@@ -1,4 +1,4 @@
-//! Background jobs: import, backup, verify, restore.
+//! Background jobs: import, backup, verify, restore, update.
 //!
 //! A pak is several gigabytes in size; unpacking, copying and hashing take
 //! noticeable time. Running that on the paint thread would freeze the
@@ -19,6 +19,9 @@ use sm2_core::paths::GamePaths;
 use sm2_core::saves::{self, BackupEntry};
 use sm2_core::import;
 use sm2_core::t;
+// The crate's update module, not the interface's `gui::update`: this
+// file is a sibling of that one and never reaches it.
+use sm2_core::update::{self, Endpoints, Version};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, PoisonError};
@@ -77,6 +80,11 @@ enum Outcome {
     ImportedBackup(Result<BackupEntry, String>),
     Verified { created_at: String, result: Result<(), String> },
     Restored { created_at: String, result: Result<BackupEntry, String> },
+    /// Installing a found update. The version travels with the outcome
+    /// rather than being read back from `UpdateUi`: a check the user
+    /// started meanwhile may have replaced what is known there, and the
+    /// message has to name the version that was actually installed.
+    Updated { version: Version, result: Result<(), String> },
 }
 
 /// Starts a thread and returns the handle to it.
@@ -219,6 +227,18 @@ impl App {
                     self.set_warning(t!("gui.message.restore_failed", detail = error));
                 }
             },
+            Outcome::Updated { version, result } => match result {
+                Ok(()) => {
+                    // Before the message, so that nothing between the two
+                    // can still read the old "a newer version exists".
+                    self.update.installed(version);
+                    self.set_status(t!("gui.message.update_installed", version = version));
+                }
+                // Shown as it comes: `Error::Update` already reads
+                // "Update failed: …", so wrapping it in a second
+                // sentence would say the same thing twice.
+                Err(error) => self.set_warning(error),
+            },
         }
     }
 
@@ -359,6 +379,29 @@ impl App {
             Outcome::Restored { created_at: entry.created_at.clone(), result }
         }));
     }
+}
+
+/// Fetches the release's own installer and runs it.
+///
+/// A free function rather than a method: the caller has already decided
+/// which version to install and whether this platform installs at all
+/// (`Current::update_method`), so nothing here needs the rest of `App`.
+///
+/// Not cancellable. `install.sh` stages the new binary beside the old
+/// one and renames it over in a single step, and removes the legacy icon
+/// only once the new files are there; being killed halfway is exactly
+/// the interruption that ordering is written to survive. A cancel button
+/// would add nothing but a worse moment to stop.
+pub(super) fn start_update_install(
+    ctx: &egui::Context,
+    endpoints: Endpoints,
+    version: Version,
+) -> Running {
+    spawn(ctx.clone(), false, move |_cancel, progress| {
+        report(progress, 0.3, t!("gui.settings.update_installing"));
+        let result = update::install(&endpoints, version).map_err(|e| e.to_string());
+        Outcome::Updated { version, result }
+    })
 }
 
 /// The import itself, on the background thread.

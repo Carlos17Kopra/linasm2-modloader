@@ -5,6 +5,7 @@ use super::widgets::{self, ButtonStyle, Icon};
 use super::{Action, App};
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2};
 use sm2_core::t;
+use sm2_core::update::Version;
 use std::path::PathBuf;
 
 pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
@@ -188,7 +189,7 @@ fn path_rows(app: &App) -> Vec<PathRow> {
 }
 
 fn behaviour(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
-    let height = 44.0 + 56.0 + 56.0 + 56.0 + 62.0;
+    let height = 44.0 + 56.0 + UPDATE_BLOCK_HEIGHT + 56.0 + 56.0 + 62.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
     super::draw_card(ui, rect);
     card_title(ui, rect, &t!("gui.settings.behaviour_title"));
@@ -227,9 +228,11 @@ fn behaviour(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         actions.push(Action::ToggleAutoBackup);
     }
 
+    let update_bottom = update_block(app, ui, rect, auto.bottom(), actions);
+
     // Steam user profile.
     let user = Rect::from_min_size(
-        Pos2::new(rect.left(), auto.bottom()),
+        Pos2::new(rect.left(), update_bottom),
         Vec2::new(rect.width(), 56.0),
     );
     ui.painter().hline(user.x_range(), user.bottom(), Stroke::new(1.0, color::BORDER_ROW));
@@ -355,6 +358,170 @@ fn behaviour(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
         body_galley,
         color::TEXT_MUTED,
     );
+}
+
+/// How tall `update_block` paints: heading, the two version rows, the
+/// buttons, the toggle. The card is allocated in one piece before
+/// anything is drawn into it, so the sum has to sit next to the rows it
+/// adds up — the same arrangement the rest of `behaviour` uses.
+const UPDATE_BLOCK_HEIGHT: f32 = 38.0 + 38.0 + 38.0 + 46.0 + 56.0;
+
+/// The update rows, between the backup toggle and the Steam user.
+/// Returns the edge it drew down to, which is where the next row starts.
+fn update_block(app: &App, ui: &mut Ui, card: Rect, top: f32, actions: &mut Vec<Action>) -> f32 {
+    let heading = Rect::from_min_size(Pos2::new(card.left(), top), Vec2::new(card.width(), 38.0));
+    ui.painter().hline(heading.x_range(), heading.bottom(), Stroke::new(1.0, color::BORDER_ROW));
+    ui.painter().text(
+        Pos2::new(heading.left() + metric::CARD_PADDING, heading.center().y),
+        Align2::LEFT_CENTER,
+        t!("gui.settings.update_title"),
+        medium(12.5),
+        color::TEXT_STRONG,
+    );
+
+    // What the last check found, whatever made it run: pressing the
+    // button is a check too, so this row says something even while the
+    // automatic one is switched off. Nothing known at all is a dash
+    // rather than "up to date" — the launcher has not looked.
+    let (available, available_color) = if app.update.is_busy() {
+        (t!("gui.settings.update_checking"), color::TEXT_MUTED)
+    } else {
+        match app.update.known {
+            Some(found) => match found.newer() {
+                Some(latest) => (latest.to_string(), color::ACCENT),
+                None => (t!("gui.settings.update_up_to_date"), color::TEXT),
+            },
+            None => (t!("gui.settings.no_value"), color::TEXT_MUTED),
+        }
+    };
+    let after_installed = version_row(
+        ui,
+        card,
+        heading.bottom(),
+        &t!("gui.settings.update_row_installed"),
+        &Version::running().to_string(),
+        color::TEXT,
+    );
+    let after_available = version_row(
+        ui,
+        card,
+        after_installed,
+        &t!("gui.settings.update_row_available"),
+        &available,
+        available_color,
+    );
+
+    let buttons = Rect::from_min_size(
+        Pos2::new(card.left(), after_available),
+        Vec2::new(card.width(), 46.0),
+    );
+    ui.painter().hline(buttons.x_range(), buttons.bottom(), Stroke::new(1.0, color::BORDER_ROW));
+    ui.scope_builder(
+        UiBuilder::new()
+            .max_rect(buttons.shrink2(Vec2::new(metric::CARD_PADDING, 0.0)))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            // One long job at a time — `App::task` holds exactly one,
+            // and the status bar has room for exactly one.
+            let installable = app.update.has_news() && app.task.is_none();
+            if widgets::button(
+                ui,
+                &ButtonStyle::primary().small(),
+                None,
+                &t!("gui.settings.update_button"),
+                installable,
+            )
+            .clicked()
+            {
+                actions.push(Action::InstallUpdate);
+            }
+            if widgets::button(
+                ui,
+                &ButtonStyle::ghost().small(),
+                None,
+                &t!("gui.settings.update_check_button"),
+                !app.update.is_busy(),
+            )
+            .clicked()
+            {
+                actions.push(Action::CheckForUpdates);
+            }
+        },
+    );
+
+    let automatic = Rect::from_min_size(
+        Pos2::new(card.left(), buttons.bottom()),
+        Vec2::new(card.width(), 56.0),
+    );
+    ui.painter().hline(
+        automatic.x_range(),
+        automatic.bottom(),
+        Stroke::new(1.0, color::BORDER_ROW),
+    );
+    let row_response = ui.interact(automatic, egui::Id::new("update_check_row"), Sense::click());
+    if row_response.hovered() {
+        ui.painter().rect_filled(automatic, CornerRadius::ZERO, color::HOVER);
+    }
+    let inner = automatic.shrink2(Vec2::new(metric::CARD_PADDING, 0.0));
+    let mut toggle_ui = ui.new_child(UiBuilder::new().max_rect(Rect::from_min_size(
+        Pos2::new(inner.left(), inner.top() + 13.0),
+        Vec2::new(30.0, 17.0),
+    )));
+    // An unanswered question — the dialog was dismissed instead of
+    // answered — shows as off, which is what it is: nothing is asked of
+    // github.com until someone says so, here or there.
+    let on = app.settings().update_check.unwrap_or(false);
+    let toggled = widgets::toggle(&mut toggle_ui, on, true).clicked();
+    ui.painter().text(
+        Pos2::new(inner.left() + 42.0, inner.top() + 20.0),
+        Align2::LEFT_CENTER,
+        t!("gui.settings.update_auto_title"),
+        sans(12.5),
+        color::TEXT_STRONG,
+    );
+    ui.painter().text(
+        Pos2::new(inner.left() + 42.0, inner.top() + 38.0),
+        Align2::LEFT_CENTER,
+        t!("gui.settings.update_auto_body"),
+        sans(11.0),
+        color::TEXT_MUTED,
+    );
+    if toggled || row_response.clicked() {
+        actions.push(Action::ToggleUpdateCheck);
+    }
+
+    automatic.bottom()
+}
+
+/// One "label — value" line of the update block, in the shape the
+/// directory table above uses. Returns its bottom edge.
+fn version_row(
+    ui: &Ui,
+    card: Rect,
+    top: f32,
+    label: &str,
+    value: &str,
+    value_color: Color32,
+) -> f32 {
+    let row = Rect::from_min_size(Pos2::new(card.left(), top), Vec2::new(card.width(), 38.0));
+    ui.painter().hline(row.x_range(), row.bottom(), Stroke::new(1.0, color::BORDER_ROW));
+    let inner = row.shrink2(Vec2::new(metric::CARD_PADDING, 0.0));
+    ui.painter().text(
+        Pos2::new(inner.left(), inner.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        sans(12.0),
+        color::TEXT_DIM2,
+    );
+    ui.painter().text(
+        Pos2::new(inner.left() + 150.0 + 10.0, inner.center().y),
+        Align2::LEFT_CENTER,
+        value,
+        mono(11.0),
+        value_color,
+    );
+    row.bottom()
 }
 
 fn card_title(ui: &Ui, card: Rect, title: &str) {

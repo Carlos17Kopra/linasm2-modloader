@@ -11,7 +11,7 @@
 //! below, but nothing here has yet started a game or found a savegame on a
 //! machine that actually has Space Marine 2 installed.
 
-use super::Platform;
+use super::{Platform, UpdateMethod};
 use crate::error::{Error, Result};
 use std::ffi::OsStr;
 use std::os::windows::process::CommandExt;
@@ -153,6 +153,24 @@ impl Platform for Windows {
             Ok(out) => String::from_utf8_lossy(&out.stdout).to_lowercase().contains("steam.exe"),
             Err(_) => false,
         }
+    }
+
+    fn update_method() -> UpdateMethod {
+        UpdateMethod::ReleasePage
+    }
+
+    fn open_url(url: &str) -> Result<()> {
+        // `start` is a shell builtin, not a program, hence the detour
+        // through cmd. The empty argument is the window title `start`
+        // would otherwise take the URL for. `cmd.exe` is itself a console
+        // application, so without `CREATE_NO_WINDOW` this flashes a black
+        // window on every call, same as the `tasklist` spawn above.
+        Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(Error::PlainIo)?;
+        Ok(())
     }
 }
 

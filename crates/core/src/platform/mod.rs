@@ -41,9 +41,45 @@ pub trait Platform {
     /// cloud synchronisation can overwrite a restored save in the
     /// background.
     fn steam_is_running() -> bool;
+
+    /// How a found update is applied here.
+    fn update_method() -> UpdateMethod;
+
+    /// Opens a URL in whatever the user browses with.
+    fn open_url(url: &str) -> Result<()>;
+}
+
+/// How a found update is applied here. It describes the platform, so it
+/// lives with the trait rather than in `update`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateMethod {
+    /// Download the release's `install.sh`, verify it, run it.
+    Installer,
+    /// No installer exists here — send the user to the release page.
+    ReleasePage,
 }
 
 #[cfg(unix)]
 pub type Current = unix::Unix;
 #[cfg(windows)]
 pub type Current = windows::Windows;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Linux installs by running the release's own `install.sh`; Windows
+    /// has no such script and can only send the user to the release
+    /// page. This is the one genuinely platform-dependent piece of the
+    /// update path, and the reason it sits behind the trait instead of
+    /// behind a `cfg` somewhere above it.
+    #[test]
+    fn every_platform_says_how_it_updates() {
+        let method = Current::update_method();
+        if cfg!(unix) {
+            assert_eq!(method, UpdateMethod::Installer);
+        } else {
+            assert_eq!(method, UpdateMethod::ReleasePage);
+        }
+    }
+}

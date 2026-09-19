@@ -174,6 +174,17 @@ set = "✓ Language set to {name}"
 [cli.lang.arg]
 code = "Language code (en, de); without one the current setting is shown"
 
+[cli.update]
+about = "Looks for a new version and installs it"
+up_to_date = "{version} is the newest version."
+available = "Version {version} is available."
+installing = "Installing {version} …"
+installed = "{version} installed."
+restart_needed = "Please restart the launcher."
+
+[cli.update.arg]
+check = "Only report, do not install"
+
 [cli.play]
 about = "Starts the game"
 no_eac_unavailable = "Starting without EAC is not possible on this system – umu-launcher was not found (https://github.com/Open-Wine-Components/umu-launcher)."
@@ -219,6 +230,7 @@ no_rar_tool = "no tool for unpacking .rar found – please install 'unar' or '7z
 no_pak_in_archive = "The archive holds no .pak file: {path}"
 no_save_in_archive = "The archive holds no savegame files (.cfg or .sav): {path}"
 unusable_archive = "The archive cannot be imported: {detail}"
+update_failed = "Update failed: {detail}"
 not_writable = "no write permission for {path}"
 already_running = "{name} is already running. Two instances would write to the same files without knowing about each other – please close the running one first."
 io = "I/O error at {path}: {source}"
@@ -264,6 +276,16 @@ symlink = "the archive holds a symlink: {name}"
 invalid_path = "invalid path in the archive: {name}"
 duplicate_name = "{name} appears more than once in the archive"
 too_large = "the archive unpacks to more than {limit}"
+
+[error.update_defect]
+unreachable = "github.com could not be reached ({detail})"
+http_status = "github.com answered with status {status}"
+malformed_answer = "github.com's answer could not be read"
+checksum_mismatch = "the downloaded installer does not match the checksum published for release {version}"
+no_installer_for_platform = "there is no installer for this platform – please download the new version from {url}"
+not_the_managed_binary = "this copy of the launcher was not put there by the installer, so it cannot replace itself – please download the new version from {url}"
+installer_failed = "the installer stopped with exit code {code}: {tail}"
+installer_failed_silently = "the installer stopped with exit code {code} without saying why"
 
 [error.size]
 mib = "{value} MiB"
@@ -415,6 +437,16 @@ eac_available_title = "Launch without EAC available"
 eac_available_body = "umu-run is on the PATH. The option appears in the launch picker; multiplayer is not possible with it."
 eac_unavailable_title = "Launch without EAC not available"
 eac_unavailable_body = "umu-launcher was not found on the PATH. The option is hidden instead of ending in an error at launch."
+update_checking = "Checking for updates …"
+update_up_to_date = "Already up to date."
+update_title = "Update"
+update_row_installed = "Installed"
+update_row_available = "Available"
+update_installing = "installing the new version …"
+update_button = "Update"
+update_check_button = "Check now"
+update_auto_title = "Look for updates on start"
+update_auto_body = "Asks github.com at most once a day. Nothing is installed without your click."
 
 [gui.dialog]
 cancel = "Cancel"
@@ -450,6 +482,10 @@ rename_backup_body = "The label appears in the list and in the backup's file nam
 rename_backup_placeholder = "Label"
 delete_backup_title = "Delete backup?"
 delete_backup_body = "Archive and manifest are removed permanently; this cannot be undone. The save data itself stays untouched – only this backup is gone afterwards."
+update_ask_title = "Look for updates?"
+update_ask_body = "The launcher can ask github.com once a day whether a newer version exists. It never installs anything on its own – you decide with a button. Without this it makes no network connections at all."
+update_ask_yes = "Yes, on every start"
+update_ask_no = "No"
 
 [gui.message]
 ready = "Ready."
@@ -555,3 +591,6 @@ folder_missing = "{path} not present – {detail}"
 folder_opened = "{path} opened in the file manager."
 folder_open_failed = "Opening failed – {detail}"
 profile_notice_hint = "Profile \"{name}\" – defer with Apply."
+update_available = "Version {version} is available."
+update_check_failed = "Update check failed: {detail}"
+update_installed = "{version} installed – please restart the launcher."

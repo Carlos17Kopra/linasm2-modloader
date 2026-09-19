@@ -37,6 +37,19 @@ leaves an existing one untouched.
 Running the same line again updates an existing installation, and says so
 and stops if there is nothing newer to install.
 
+The launcher can also look for updates by itself. It asks once, the
+first time it runs, whether it may check GitHub for a newer release;
+until you answer, it makes no network connection of any kind. The
+answer, the installed and available version, and an *Update* button all
+live on the settings page, next to a *Check now* button for an
+immediate look. The command line does the same two things:
+`lina-sm2 update --check` reports without installing, exiting `10` when
+a newer version exists, and `lina-sm2 update` installs it. It replaces
+only the copy the installer itself put in place; a build from source or
+a copy unpacked somewhere else cannot be updated this way, and the
+button opens the release page instead — as it does on Windows, where
+there is no installer at all.
+
 > Piping a script from the internet into a shell means trusting whoever
 > controls that URL. The script is short and does nothing clever — if you
 > would rather read it first:

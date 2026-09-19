@@ -17,11 +17,16 @@ pub struct Settings {
     /// The language code from `Language::code`, empty until the user
     /// chooses one. See `Settings::language`.
     pub language: Option<String>,
+    /// Whether to look for a newer version on start. `None` until the
+    /// user has been asked once — the same shape as `language`, and for
+    /// the same reason: the absent value means "not decided", not "no".
+    /// Nothing goes on the network while this is `None`.
+    pub update_check: Option<bool>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { game_dir: None, auto_backup: true, steam_user: None, language: None }
+        Self { game_dir: None, auto_backup: true, steam_user: None, language: None, update_check: None }
     }
 }
 
@@ -100,6 +105,7 @@ mod tests {
             // Obviously made-up SteamID64, not a real one.
             steam_user: Some("11111111111111111".into()),
             language: None,
+            update_check: None,
         };
         settings.save(&path).unwrap();
 
@@ -172,5 +178,35 @@ mod tests {
             !message.contains(&raw),
             "the message must be composed from the catalogue, not the raw toml::de::Error text: {message}"
         );
+    }
+
+    /// `None` is "the user has not been asked yet", not "off". Until the
+    /// question has been answered nothing goes on the network, and the
+    /// interface knows from this field that it still has to ask.
+    #[test]
+    fn the_update_question_starts_unanswered() {
+        assert_eq!(Settings::default().update_check, None);
+    }
+
+    /// A settings file written by an older version has no such key. It
+    /// must read as unanswered rather than as an error, or an update
+    /// would lock the user out of their own configuration.
+    #[test]
+    fn a_settings_file_without_the_key_reads_as_unanswered() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        std::fs::write(&path, "auto_backup = false\n").unwrap();
+        let settings = Settings::load(&path).unwrap();
+        assert_eq!(settings.update_check, None);
+        assert!(!settings.auto_backup);
+    }
+
+    #[test]
+    fn an_answered_question_survives_a_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        let settings = Settings { update_check: Some(true), ..Settings::default() };
+        settings.save(&path).unwrap();
+        assert_eq!(Settings::load(&path).unwrap().update_check, Some(true));
     }
 }

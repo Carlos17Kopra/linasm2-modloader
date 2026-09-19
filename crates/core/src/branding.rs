@@ -30,6 +30,13 @@ pub const APP_SLUG: &str = "lina-sm2";
 /// `paths::migrate_legacy_dir`.
 pub const LEGACY_APP_SLUG: &str = "sm2-modloader";
 
+/// The GitHub repository, as `owner/name`. The update check asks its
+/// releases API, and the installer it downloads comes from the same
+/// place. `install.sh` names it a second time because a shell script
+/// cannot read a Rust constant — the test below is what keeps the two
+/// from drifting apart.
+pub const REPO: &str = "Carlos17Kopra/linasm2-modloader";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,5 +70,31 @@ mod tests {
     #[test]
     fn the_current_slug_differs_from_the_legacy_one() {
         assert_ne!(APP_SLUG, LEGACY_APP_SLUG);
+    }
+
+    /// `install.sh` spells the repository out too, and Rust cannot read
+    /// it from there — so it exists twice, which is the one thing this
+    /// module is against. The two are held together here instead: change
+    /// one and this test names the other. Same construction as the
+    /// coupling between `StartupWMClass` and `APP_SLUG`.
+    #[test]
+    fn install_sh_and_branding_agree_on_the_repository() {
+        let script_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
+        let script = std::fs::read_to_string(&script_path)
+            .unwrap_or_else(|e| panic!("{} is not readable: {e}", script_path.display()));
+
+        let line = script
+            .lines()
+            .find(|line| line.starts_with("REPO="))
+            .expect("install.sh must set REPO=");
+        // REPO="${LINA_SM2_REPO:-owner/name}"
+        let in_script = line
+            .split_once(":-")
+            .and_then(|(_, rest)| rest.split_once('}'))
+            .map(|(value, _)| value)
+            .expect("install.sh's REPO= must keep its ${VAR:-default} shape");
+
+        assert_eq!(in_script, REPO, "install.sh and branding.rs name different repositories");
     }
 }
