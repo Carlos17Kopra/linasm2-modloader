@@ -13,6 +13,7 @@ use sm2_core::paths::GamePaths;
 use sm2_core::platform::{Current, Platform};
 use sm2_core::profile::{list_profiles, Profile};
 use sm2_core::saves::BackupEntry;
+use sm2_core::update::{self, Availability, Version};
 use sm2_core::{import, saves, t};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -79,6 +80,12 @@ enum Command {
         /// Starts without EAC (no multiplayer)
         #[arg(long)]
         no_eac: bool,
+    },
+    /// Looks for a new version and installs it
+    Update {
+        /// Only report, do not install
+        #[arg(long)]
+        check: bool,
     },
 }
 
@@ -221,6 +228,9 @@ fn requires_exclusive_access(command: &Command) -> bool {
             | SaveCommand::Rename { .. }
             | SaveCommand::Delete { .. } => true,
         },
+        // Checking only reads; installing replaces the binary and must
+        // not run twice at once.
+        Command::Update { check } => !check,
     }
 }
 
@@ -355,6 +365,8 @@ fn run_command(state: &mut AppState, command: Command) -> Result<()> {
         Command::Lang { code } => run_lang_command(state, code)?,
 
         Command::Play { vanilla, no_eac } => run_play(state, vanilla, no_eac)?,
+
+        Command::Update { check } => run_update_command(state, check)?,
     }
 
     Ok(())
@@ -686,6 +698,46 @@ fn run_lang_command(state: &mut AppState, code: Option<String>) -> Result<()> {
     Ok(())
 }
 
+/// What `update --check` exits with when there is something to install.
+/// Not 1: `main` maps every error to 1 already, and a script has to be
+/// able to tell "a new version exists" from "the check failed".
+const EXIT_UPDATE_AVAILABLE: i32 = 10;
+
+fn run_update_command(state: &AppState, check: bool) -> Result<()> {
+    let endpoints = update::Endpoints::from_env();
+    let found = update::check(&endpoints, update::NET_TIMEOUT)?;
+
+    // Written before anything is printed or exited, so that a later
+    // `std::process::exit` cannot skip it.
+    let seen = match found {
+        Availability::UpToDate { current } => current,
+        Availability::Newer { latest, .. } | Availability::Ahead { latest, .. } => latest,
+    };
+    if let Err(e) = update::remember(&state.dirs, seen) {
+        // A cache that cannot be written costs one request next time and
+        // is not worth failing a check the user asked for.
+        tracing::warn!("update cache not written: {e}");
+    }
+
+    let Some(latest) = found.newer() else {
+        println!("{}", t!("cli.update.up_to_date", version = Version::running()));
+        return Ok(());
+    };
+
+    if check {
+        println!("{}", t!("cli.update.available", version = latest));
+        // Nothing is held at this point: `--check` takes no instance
+        // lock, and the cache above is already on disk.
+        std::process::exit(EXIT_UPDATE_AVAILABLE);
+    }
+
+    println!("{}", t!("cli.update.installing", version = latest));
+    update::install(&endpoints, latest)?;
+    println!("{}", t!("cli.update.installed", version = latest));
+    println!("{}", t!("cli.update.restart_needed"));
+    Ok(())
+}
+
 /// Resolves the 1-based backup index supplied by the user (omitted: the
 /// newest backup, i.e. 1) to a 0-based vector index.
 ///
@@ -881,6 +933,27 @@ mod tests {
                 "{args:?} changes state and must wait for the other instance"
             );
         }
+    }
+
+    /// Checking reads; installing writes the binary and must not race a
+    /// second launcher doing the same. The match in
+    /// `requires_exclusive_access` has no `_` arm, so this decision has
+    /// to be made before the crate compiles — this test records which
+    /// way it went.
+    #[test]
+    fn checking_needs_no_lock_but_installing_does() {
+        assert!(!requires_exclusive_access(&Command::Update { check: true }));
+        assert!(requires_exclusive_access(&Command::Update { check: false }));
+    }
+
+    #[test]
+    fn the_update_command_and_its_flag_have_catalogue_keys() {
+        // Covered generally by `every_command_and_argument_has_a_key`;
+        // named here so a failure points at this task.
+        let _guard = crate::app_state::language_test_lock();
+        sm2_core::i18n::set_language(sm2_core::i18n::Language::English);
+        assert_ne!(sm2_core::i18n::lookup("cli.update.about"), "cli.update.about");
+        assert_ne!(sm2_core::i18n::lookup("cli.update.arg.check"), "cli.update.arg.check");
     }
 
     #[test]
