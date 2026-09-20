@@ -25,6 +25,15 @@ pub struct FileRecord {
     pub size: u64,
 }
 
+/// What a composed backup was made of.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Composition {
+    /// `created_at` of the backup that supplied everything not listed.
+    pub base: String,
+    /// Part id to the `created_at` of the backup it came from.
+    pub parts: BTreeMap<String, String>,
+}
+
 /// Accompanies every backup and makes corruption detectable.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BackupManifest {
@@ -32,6 +41,12 @@ pub struct BackupManifest {
     pub source: String,
     #[serde(default)]
     pub label: Option<String>,
+    /// Set only on a backup that was composed out of others. Absent
+    /// everywhere else, including in every manifest written before this
+    /// field existed — hence `default` and `skip_serializing_if`, so an
+    /// ordinary backup's manifest keeps the shape it has today.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composed_from: Option<Composition>,
     /// The key is the path relative to the save directory, separated by '/'.
     pub files: BTreeMap<String, FileRecord>,
 }
@@ -228,7 +243,7 @@ fn backup_from(
     label: Option<&str>,
     source: &Path,
 ) -> Result<BackupEntry> {
-    write_backup(save_dir, backup_root, label, source.display().to_string(), now_rfc3339())
+    write_backup(save_dir, backup_root, label, source.display().to_string(), now_rfc3339(), None)
 }
 
 /// The body of `backup_from`, with the manifest's `created_at` as a
@@ -242,6 +257,7 @@ fn write_backup(
     label: Option<&str>,
     source: String,
     now: String,
+    composed_from: Option<Composition>,
 ) -> Result<BackupEntry> {
     if !save_dir.is_dir() {
         return Err(Error::io(
@@ -296,6 +312,7 @@ fn write_backup(
         created_at: now.clone(),
         source,
         label: label.map(str::to_string),
+        composed_from,
         files: records,
     };
     write_manifest(&manifest_path, &manifest)?;
@@ -909,6 +926,7 @@ fn repair_layout(entry: &BackupEntry, backup_root: &Path) -> Result<Option<Backu
         manifest.label.as_deref(),
         manifest.source.clone(),
         manifest.created_at.clone(),
+        manifest.composed_from.clone(),
     )?;
     verify(&rewritten)?;
     delete(entry)?;
@@ -1113,6 +1131,25 @@ mod tests {
         let (_tmp, saves, backups) = save_fixture();
         let entry = backup(&saves, &backups, None).unwrap();
         verify(&entry).unwrap();
+    }
+
+    #[test]
+    fn an_ordinary_backup_records_no_composition() {
+        let (_temp, save_dir, backup_root) = save_fixture();
+        let entry = backup(&save_dir, &backup_root, None).unwrap();
+        assert_eq!(read_manifest(&entry).unwrap().composed_from, None);
+    }
+
+    #[test]
+    fn a_manifest_written_before_compositions_existed_still_reads() {
+        let (_temp, save_dir, backup_root) = save_fixture();
+        let entry = backup(&save_dir, &backup_root, None).unwrap();
+
+        // Exactly the shape 0.5.1 wrote: no `composed_from` at all.
+        let text = std::fs::read_to_string(&entry.manifest).unwrap();
+        let without: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(without.get("composed_from").is_none(), "the field is written when unset");
+        assert!(read_manifest(&entry).is_ok());
     }
 
     #[test]
@@ -1391,6 +1428,7 @@ mod tests {
             created_at: created_at.to_string(),
             source: "irrelevant".to_string(),
             label: None,
+            composed_from: None,
             files: BTreeMap::new(),
         };
         std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
@@ -1499,6 +1537,7 @@ mod tests {
             created_at: now_rfc3339(),
             source: save_dir.display().to_string(),
             label: None,
+            composed_from: None,
             files,
         };
         std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
