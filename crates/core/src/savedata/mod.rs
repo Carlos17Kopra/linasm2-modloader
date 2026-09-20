@@ -2,4 +2,5 @@
 //! several backups.
 
 pub mod catalogue;
+pub mod merge;
 pub mod ssf1;

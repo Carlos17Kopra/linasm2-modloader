@@ -26,6 +26,10 @@ pub enum Error {
     /// have to tell this one case apart from every other failure of
     /// `InstanceLock::acquire`: it is the only one that stops the program.
     AlreadyRunning,
+    /// A part whose schema version differs between the two backups.
+    UnmergeablePart { part: String, base: String, source: String },
+    /// A part the backup it should come from does not hold.
+    PartMissingInSource { part: String },
     /// Looking for a new version, or installing it, went wrong. Its own
     /// defect type for the same reason as `BackupDefect`: the detail is
     /// translated at `Display` time, not baked in where it happened.
@@ -367,6 +371,13 @@ impl std::fmt::Display for Error {
                 &[("path", path.display().to_string()), ("source", source.to_string())],
             ),
             Error::PlainIo(source) => source.to_string(),
+            Error::UnmergeablePart { part, base, source } => i18n::format(
+                "error.unmergeable_part",
+                &[("part", part.clone()), ("base", base.clone()), ("source", source.clone())],
+            ),
+            Error::PartMissingInSource { part } => {
+                i18n::format("error.part_missing_in_source", &[("part", part.clone())])
+            }
         };
         f.write_str(&text)
     }

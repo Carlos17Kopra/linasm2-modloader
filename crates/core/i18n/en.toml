@@ -250,6 +250,8 @@ archive_unpack_failed = "the archive could not be unpacked – is it damaged?"
 invalid_pak_filename = "invalid file name"
 retail_exe_not_found = "Retail.exe not found – check the game directory"
 umu_run_not_found = "umu-run not found on the PATH – starting without Steam needs umu-launcher (https://github.com/Open-Wine-Components/umu-launcher)"
+unmergeable_part = "'{part}' cannot be taken over: the base holds schema version {base}, the source {source}. A game update has changed this data."
+part_missing_in_source = "The backup chosen for '{part}' does not hold that part."
 
 [error.pak_config_defect]
 invalid_yaml = "the YAML syntax is invalid (line {line}, column {column})"
