@@ -228,6 +228,21 @@ fn backup_from(
     label: Option<&str>,
     source: &Path,
 ) -> Result<BackupEntry> {
+    write_backup(save_dir, backup_root, label, source.display().to_string(), now_rfc3339())
+}
+
+/// The body of `backup_from`, with the manifest's `created_at` as a
+/// parameter as well. `repair_imported_layouts` writes a backup that
+/// already exists a second time, in the right shape, and a backup's
+/// timestamp is its identity — the UI recognizes it by that and nothing
+/// else, so a repair must not hand it a new one.
+fn write_backup(
+    save_dir: &Path,
+    backup_root: &Path,
+    label: Option<&str>,
+    source: String,
+    now: String,
+) -> Result<BackupEntry> {
     if !save_dir.is_dir() {
         return Err(Error::io(
             save_dir,
@@ -236,7 +251,6 @@ fn backup_from(
     }
     std::fs::create_dir_all(backup_root).map_err(|e| Error::io(backup_root, e))?;
 
-    let now = now_rfc3339();
     let base = backup_base_name(&now, label);
 
     // The timestamp has one-second resolution. Two backups within the same
@@ -280,7 +294,7 @@ fn backup_from(
 
     let manifest = BackupManifest {
         created_at: now.clone(),
-        source: source.display().to_string(),
+        source,
         label: label.map(str::to_string),
         files: records,
     };
@@ -684,6 +698,13 @@ const MAX_IMPORT_BYTES: u64 = 512 * 1024 * 1024;
 /// picking a mod archive.
 const SAVE_EXTENSIONS: [&str; 2] = ["cfg", "sav"];
 
+/// The one directory below the save directory that Space Marine 2 reads
+/// its savegame files from. Everything an archive carries belongs under
+/// it — `config_anchored_layout` is what makes sure it ends up there, and
+/// the doc comment there explains why an imported backup is worthless
+/// otherwise.
+const CONFIG_DIR: &str = "config";
+
 /// Imports a backup produced by another launcher: a plain ZIP whose entries
 /// are the savegame files. The archive is checked, unpacked into a
 /// temporary directory and written back out through `backup_from`, so what
@@ -717,7 +738,23 @@ fn import_archive_limited(
     if !names.iter().any(|(_, name)| has_save_extension(name)) {
         return Err(Error::NoSaveInArchive(archive.to_path_buf()));
     }
-    let prefix = common_directory_prefix(&names);
+
+    // The names the entries get in the backup. Resolved for the whole
+    // archive at once, before the first byte is unpacked: the rules in
+    // `config_anchored_layout` look at every entry to decide (a single
+    // subdirectory changes the answer for all of them).
+    let targets = config_anchored_layout(&names.iter().map(|(_, name)| name.clone()).collect::<Vec<_>>());
+
+    // Two names that differed only in the spelling of `config` are one
+    // name now. Unpacked by position, the second would silently overwrite
+    // the first — the same failure `collect_import_entries` rejects among
+    // the raw names, one step later.
+    let mut mapped = std::collections::BTreeSet::new();
+    for target in &targets {
+        if !mapped.insert(target.as_str()) {
+            return Err(Error::UnusableArchive(ArchiveDefect::DuplicateName { name: target.clone() }));
+        }
+    }
 
     // Everything is unpacked into a temporary directory first and only then
     // packed into a backup. A rejected archive therefore leaves nothing
@@ -725,12 +762,11 @@ fn import_archive_limited(
     // over the same bytes that were actually written.
     let staging = tempfile::tempdir().map_err(|e| Error::io(archive, e))?;
     let mut budget = max_bytes;
-    for (index, name) in &names {
+    for ((index, _), relative) in names.iter().zip(&targets) {
         let mut entry = zip.by_index(*index).map_err(|e| {
             Error::io(archive, std::io::Error::new(std::io::ErrorKind::InvalidData, e))
         })?;
-        let relative = strip_leading_components(name, prefix);
-        let target = resolve_target_path(staging.path(), &relative);
+        let target = resolve_target_path(staging.path(), relative);
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
         }
@@ -752,6 +788,97 @@ fn import_archive_limited(
     let fallback = archive.file_stem().map(|stem| stem.to_string_lossy().into_owned());
     let label = label.map(str::to_string).or(fallback).filter(|text| !text.trim().is_empty());
     backup_from(staging.path(), backup_root, label.as_deref(), archive)
+}
+
+/// Brings backups written before `config_anchored_layout` into the shape
+/// the game reads, and returns the ones that had to be rewritten.
+///
+/// Imports made by earlier versions had the game's `config` directory
+/// stripped off as if it were the foreign launcher's wrapper. Those
+/// backups sit on the disk with the wrong layout baked in: they verify
+/// perfectly, they restore without an error, and not one of their files
+/// reaches the game. Only a rewrite can fix that — so it happens once,
+/// unasked, and the result is reported.
+///
+/// A backup that is already right is not touched, and a backup that does
+/// not survive `verify` is left exactly as it is: rewriting damage would
+/// produce a manifest that describes the damaged bytes, and every later
+/// `verify` would call the result sound.
+///
+/// The order is write-then-delete, never the other way round: the new
+/// pair is written and verified in full before the old one is removed, so
+/// no crash point in between can leave the backup gone. The price is the
+/// file name — the new pair cannot take a name the old one still holds
+/// and gets the collision suffix `unique_backup_name` appends. Timestamp
+/// and label, which is what a backup is recognized by, are unchanged.
+///
+/// A single failure is not allowed to stop the rest: it is logged and the
+/// next backup is tried.
+pub fn repair_imported_layouts(backup_root: &Path) -> Result<Vec<BackupEntry>> {
+    let mut repaired = Vec::new();
+    for entry in list_backups(backup_root)? {
+        match repair_layout(&entry, backup_root) {
+            Ok(Some(new_entry)) => repaired.push(new_entry),
+            Ok(None) => {}
+            Err(e) => tracing::warn!(
+                archive = %entry.archive.display(),
+                error = %e,
+                "backup layout could not be repaired"
+            ),
+        }
+    }
+    Ok(repaired)
+}
+
+/// Repairs one backup, or reports with `None` that there was nothing to
+/// repair. See `repair_imported_layouts` for the ordering argument.
+fn repair_layout(entry: &BackupEntry, backup_root: &Path) -> Result<Option<BackupEntry>> {
+    let manifest = read_manifest(entry)?;
+    let names: Vec<String> = manifest.files.keys().cloned().collect();
+    let targets = config_anchored_layout(&names);
+    if targets == names {
+        return Ok(None);
+    }
+    verify(entry)?;
+
+    let staging = tempfile::tempdir().map_err(|e| Error::io(&entry.archive, e))?;
+    let file = std::fs::File::open(&entry.archive).map_err(|e| Error::io(&entry.archive, e))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|_| {
+        Error::CorruptBackup(BackupDefect::NotAZip { path: entry.archive.clone() })
+    })?;
+    for index in 0..zip.len() {
+        let mut zip_entry = zip.by_index(index).map_err(|e| {
+            Error::io(&entry.archive, std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        })?;
+        if !zip_entry.is_file() {
+            continue;
+        }
+        // `verify` has just established that every entry of this archive
+        // appears in the manifest, so the position is always found; the
+        // error arm is what makes that an argument instead of an
+        // assumption.
+        let position = names.iter().position(|name| name == zip_entry.name()).ok_or_else(|| {
+            Error::CorruptBackup(BackupDefect::UnknownEntry { name: zip_entry.name().to_string() })
+        })?;
+        let target = resolve_target_path(staging.path(), &targets[position]);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
+        }
+        let mut content = Vec::new();
+        std::io::copy(&mut zip_entry, &mut content).map_err(|e| Error::io(&target, e))?;
+        std::fs::write(&target, &content).map_err(|e| Error::io(&target, e))?;
+    }
+
+    let rewritten = write_backup(
+        staging.path(),
+        backup_root,
+        manifest.label.as_deref(),
+        manifest.source.clone(),
+        manifest.created_at.clone(),
+    )?;
+    verify(&rewritten)?;
+    delete(entry)?;
+    Ok(Some(rewritten))
 }
 
 /// Checks every entry of the archive and returns the ones to import, as
@@ -825,17 +952,59 @@ fn has_save_extension(name: &str) -> bool {
     }
 }
 
-/// The number of leading path components every entry shares. Other
-/// launchers pack their saves below a directory of their own ("Main/",
-/// "Backup/Main/"); kept as is, `restore` would create that directory
-/// inside the save directory instead of replacing the files in it.
+/// Where every entry of a foreign archive goes inside the backup.
+///
+/// Both rules here are about `CONFIG_DIR`, the only directory the game
+/// reads — and both exist because getting this wrong fails *silently*:
+/// the files land one level beside the place the game looks, the restore
+/// reports success, and the savegame is unchanged.
+///
+/// Other launchers pack their saves below a directory of their own
+/// ("Main/", "SM2 Backup/"). That wrapper is stripped; kept, `restore`
+/// would create it inside the save directory instead of replacing the
+/// files in it. `config` is never part of that wrapper, however deep it
+/// sits — counting it as one is exactly the bug this rule replaces.
+///
+/// The other direction is an archive packed from *inside* the config
+/// directory, which has no `config` component left to keep. A flat
+/// archive says what it is without ambiguity: nothing lies in a
+/// subdirectory, so what it holds is the content of `config/`, and that
+/// directory is put back rather than the user being sent off to repack
+/// the ZIP. An archive that does have subdirectories is left alone — its
+/// shape means something this function cannot know.
+fn config_anchored_layout(names: &[String]) -> Vec<String> {
+    let wrapper = wrapper_prefix(names);
+    let mut relatives: Vec<String> =
+        names.iter().map(|name| strip_leading_components(name, wrapper)).collect();
+
+    if relatives.iter().all(|relative| !relative.contains('/')) {
+        for relative in &mut relatives {
+            *relative = format!("{CONFIG_DIR}/{relative}");
+        }
+    }
+
+    relatives.iter().map(|relative| normalized_config_spelling(relative)).collect()
+}
+
+/// The number of leading components that are wrapper and nothing else:
+/// the directories *all* entries share, cut short before a `config`
+/// component.
 ///
 /// Only a directory *all* entries lie in counts — a single file next to
 /// that directory (a readme, say) would otherwise move the whole rest of
 /// the archive one level up.
-fn common_directory_prefix(names: &[(usize, String)]) -> usize {
+fn wrapper_prefix(names: &[String]) -> usize {
+    let shared = common_directory_prefix(names);
+    shared
+        .iter()
+        .position(|component| component.eq_ignore_ascii_case(CONFIG_DIR))
+        .unwrap_or(shared.len())
+}
+
+/// The leading path components every entry shares, file names excluded.
+fn common_directory_prefix(names: &[String]) -> Vec<String> {
     let mut shared: Option<Vec<&str>> = None;
-    for (_, name) in names {
+    for name in names {
         let mut directories: Vec<&str> = name.split('/').collect();
         directories.pop();
         shared = Some(match shared {
@@ -848,15 +1017,29 @@ fn common_directory_prefix(names: &[(usize, String)]) -> usize {
                 .collect(),
         });
         if shared.as_ref().is_some_and(Vec::is_empty) {
-            return 0;
+            return Vec::new();
         }
     }
-    shared.map_or(0, |prefix| prefix.len())
+    shared.map(|prefix| prefix.into_iter().map(str::to_string).collect()).unwrap_or_default()
+}
+
+/// Writes the leading `config` component the way the game spells it.
+/// A Windows packer keeps whatever capitalization it was handed, and on a
+/// case-sensitive filesystem a `Config` carried over literally would
+/// restore into a second directory beside the real one — leaving the game
+/// reading neither.
+fn normalized_config_spelling(relative: &str) -> String {
+    match relative.split_once('/') {
+        Some((first, rest)) if first.eq_ignore_ascii_case(CONFIG_DIR) => {
+            format!("{CONFIG_DIR}/{rest}")
+        }
+        _ => relative.to_string(),
+    }
 }
 
 /// Drops the first `count` components of an entry name. `count` always
-/// comes from `common_directory_prefix` and therefore never covers the file
-/// name itself, so the result is never empty.
+/// comes from `wrapper_prefix` and therefore never covers the file name
+/// itself, so the result is never empty.
 fn strip_leading_components(name: &str, count: usize) -> String {
     name.split('/').skip(count).collect::<Vec<_>>().join("/")
 }
@@ -1709,6 +1892,173 @@ mod tests {
         let manifest = manifest_of(&entry);
         assert!(manifest.files.contains_key("Main/profile.cfg"), "{:?}", manifest.files.keys());
         assert!(manifest.files.contains_key("liesmich.txt"), "{:?}", manifest.files.keys());
+    }
+
+
+    /// The bug that made every restore of an imported backup a silent
+    /// no-op. Other launchers wrap the savegame in a directory of their
+    /// own, and `config` — the one directory the game actually reads —
+    /// was counted as part of that wrapper and stripped along with it.
+    /// Every file then landed one level above where the game looks, the
+    /// restore reported success, and nothing in the game had changed.
+    #[test]
+    fn import_keeps_the_config_directory_the_whole_archive_lies_in() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("fremd.zip");
+        foreign_zip(
+            &archive,
+            &[
+                ("SM2 Backup/config/user_progression.cfg", b"FORTSCHRITT"),
+                ("SM2 Backup/config/loadouts.cfg", b"AUSRUESTUNG"),
+            ],
+        );
+
+        let entry = import_archive(&archive, &backups, None).unwrap();
+
+        let manifest = manifest_of(&entry);
+        assert!(manifest.files.contains_key("config/user_progression.cfg"), "{:?}", manifest.files.keys());
+        assert!(manifest.files.contains_key("config/loadouts.cfg"), "{:?}", manifest.files.keys());
+    }
+
+    /// The same failure from the other direction: an archive packed from
+    /// *inside* the config directory has no `config` component to keep.
+    /// A flat archive is unambiguous — nothing lies in a subdirectory, so
+    /// what it holds is the content of `config/` — and the directory is
+    /// put back rather than the user being sent to repack the ZIP.
+    #[test]
+    fn import_puts_a_flat_archive_into_the_config_directory() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("fremd.zip");
+        foreign_zip(
+            &archive,
+            &[("user_progression.cfg", b"FORTSCHRITT"), ("loadouts.cfg", b"AUSRUESTUNG")],
+        );
+
+        let entry = import_archive(&archive, &backups, None).unwrap();
+
+        let manifest = manifest_of(&entry);
+        assert!(manifest.files.contains_key("config/user_progression.cfg"), "{:?}", manifest.files.keys());
+        assert!(manifest.files.contains_key("config/loadouts.cfg"), "{:?}", manifest.files.keys());
+    }
+
+    /// A Windows packer keeps whatever capitalization it was handed. On
+    /// Linux the game reads `config`, so a `Config` carried over literally
+    /// would restore into a second directory beside the real one — and
+    /// the game would read neither.
+    #[test]
+    fn import_normalizes_the_spelling_of_the_config_directory() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("fremd.zip");
+        foreign_zip(&archive, &[("Backup/Config/user_progression.cfg", b"FORTSCHRITT")]);
+
+        let entry = import_archive(&archive, &backups, None).unwrap();
+
+        let manifest = manifest_of(&entry);
+        assert!(manifest.files.contains_key("config/user_progression.cfg"), "{:?}", manifest.files.keys());
+    }
+
+    /// Two entries that differ only in the spelling of `config` become one
+    /// name once that spelling is normalized. Unpacked by position, the
+    /// second would silently overwrite the first — the same reason
+    /// `collect_import_entries` rejects duplicates among the raw names.
+    #[test]
+    fn import_rejects_names_that_collide_after_the_config_spelling_is_normalized() {
+        let (tmp, _saves, backups) = save_fixture();
+        let archive = tmp.path().join("fremd.zip");
+        foreign_zip(
+            &archive,
+            &[("config/loadouts.cfg", b"EINS"), ("Config/loadouts.cfg", b"ZWEI")],
+        );
+
+        let error = import_archive(&archive, &backups, None).unwrap_err();
+
+        assert!(
+            matches!(error, Error::UnusableArchive(ArchiveDefect::DuplicateName { .. })),
+            "{error:?}"
+        );
+    }
+
+    /// What the two rules above are for, end to end: what a foreign
+    /// archive holds has to arrive where the game reads it.
+    #[test]
+    fn restoring_an_imported_backup_writes_into_the_games_config_directory() {
+        let (tmp, saves, backups) = save_fixture();
+        std::fs::create_dir_all(saves.join("config")).unwrap();
+        std::fs::write(saves.join("config/user_progression.cfg"), b"ALTER STAND").unwrap();
+        let archive = tmp.path().join("fremd.zip");
+        foreign_zip(&archive, &[("SM2 Backup/config/user_progression.cfg", b"NEUER STAND")]);
+        let entry = import_archive(&archive, &backups, None).unwrap();
+
+        restore(&entry, &saves, &backups).unwrap();
+
+        assert_eq!(std::fs::read(saves.join("config/user_progression.cfg")).unwrap(), b"NEUER STAND");
+        assert!(
+            !saves.join("user_progression.cfg").exists(),
+            "the file must not land beside the config directory, where the game never looks"
+        );
+    }
+
+    /// Backups imported before the fix carry the flattened layout on the
+    /// disk, and no restore of them will ever reach the game. The repair
+    /// rewrites exactly those — timestamp and label survive, because they
+    /// are what a user recognizes a backup by.
+    #[test]
+    fn repair_moves_an_earlier_import_into_the_config_directory() {
+        let (tmp, _saves, backups) = save_fixture();
+        let flat = tmp.path().join("flach");
+        std::fs::create_dir_all(&flat).unwrap();
+        std::fs::write(flat.join("user_progression.cfg"), b"FORTSCHRITT").unwrap();
+        let earlier = backup(&flat, &backups, Some("Akali")).unwrap();
+
+        let repaired = repair_imported_layouts(&backups).unwrap();
+
+        assert_eq!(repaired.len(), 1);
+        assert_eq!(repaired[0].created_at, earlier.created_at);
+        assert_eq!(repaired[0].label.as_deref(), Some("Akali"));
+        verify(&repaired[0]).unwrap();
+        let manifest = manifest_of(&repaired[0]);
+        assert!(manifest.files.contains_key("config/user_progression.cfg"), "{:?}", manifest.files.keys());
+        assert!(!earlier.archive.exists(), "the flattened archive must be gone");
+        assert!(!earlier.manifest.exists(), "the flattened manifest must be gone");
+        assert_eq!(
+            list_backups(&backups).unwrap().len(),
+            1,
+            "the repair must not leave a second copy of the backup behind"
+        );
+    }
+
+    /// A backup that already has the right shape is not touched: rewriting
+    /// it would change its file name for nothing.
+    #[test]
+    fn repair_leaves_a_correct_backup_untouched() {
+        let (_tmp, saves, backups) = save_fixture();
+        std::fs::create_dir_all(saves.join("config")).unwrap();
+        std::fs::write(saves.join("config/user_progression.cfg"), b"FORTSCHRITT").unwrap();
+        let entry = backup(&saves, &backups, None).unwrap();
+
+        assert!(repair_imported_layouts(&backups).unwrap().is_empty());
+
+        assert!(entry.archive.is_file());
+        assert!(entry.manifest.is_file());
+    }
+
+    /// Damage is never rewritten. A repair of a corrupt archive would
+    /// produce a manifest describing the damaged bytes, and `verify` would
+    /// call the result sound from then on — the one thing this module
+    /// exists to prevent.
+    #[test]
+    fn repair_does_not_rewrite_a_corrupt_backup() {
+        let (tmp, _saves, backups) = save_fixture();
+        let flat = tmp.path().join("flach");
+        std::fs::create_dir_all(&flat).unwrap();
+        std::fs::write(flat.join("user_progression.cfg"), b"FORTSCHRITT").unwrap();
+        let earlier = backup(&flat, &backups, None).unwrap();
+        foreign_zip(&earlier.archive, &[("user_progression.cfg", b"MANIPULIERT")]);
+
+        assert!(repair_imported_layouts(&backups).unwrap().is_empty());
+
+        assert!(earlier.archive.is_file(), "the damaged backup has to stay exactly where it is");
+        assert!(verify(&earlier).is_err());
     }
 
     /// Some Windows packers write '\' as the separator. Taken literally,

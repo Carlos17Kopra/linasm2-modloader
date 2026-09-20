@@ -37,7 +37,7 @@ pub struct Notice {
 }
 
 impl Notice {
-    fn info(text: impl Into<String>) -> Self {
+    pub(crate) fn info(text: impl Into<String>) -> Self {
         Self { kind: NoticeKind::Info, text: text.into() }
     }
 

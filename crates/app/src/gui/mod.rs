@@ -463,8 +463,22 @@ impl App {
         self.profiles = list_profiles(&dir).unwrap_or_default();
     }
 
+    /// Reloads the backup list — and, before that, brings backups
+    /// imported by an earlier version into the layout the game reads (see
+    /// `saves::repair_imported_layouts`). It belongs here rather than at
+    /// a startup hook of its own because this is the one place the list is
+    /// read: a repair that ran anywhere else could leave the entries on
+    /// the screen pointing at files it had just replaced. Once every
+    /// backup is in shape the call finds nothing to do, so the notice
+    /// appears exactly once.
     fn refresh_backups(&mut self) {
         let Some(dir) = self.backups_dir() else { return };
+        match saves::repair_imported_layouts(&dir) {
+            Ok(repaired) if !repaired.is_empty() => self
+                .notices
+                .push(Notice::info(t!("app.notice.backups_repaired", count = repaired.len()))),
+            _ => {}
+        }
         self.backups = saves::list_backups(&dir).unwrap_or_default();
     }
 

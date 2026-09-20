@@ -149,10 +149,21 @@ In the interface the same thing sits on the *Savegame Backups* page behind
 *Import backup*.
 
 Whether the savegames sit at the top of the ZIP or inside a folder does
-not matter — a directory that every entry shares is stripped, which is how
-other launchers pack them. What the archive does have to hold is at least
-one `.cfg` or `.sav` file; without one it is refused rather than imported
-as an empty backup. Unpacked it may come to at most 512 MB.
+not matter. A directory that every entry shares is stripped, which is how
+other launchers pack them — with one exception: `config`, the directory
+the game itself reads its savegames from, is never taken for such a
+wrapper. And an archive that has no `config` in it at all, because it was
+packed from inside that directory, gets it back. Either way the files
+arrive where the game looks for them; a backup that lands one level beside
+it restores without an error and changes nothing in the game.
+
+What the archive does have to hold is at least one `.cfg` or `.sav` file;
+without one it is refused rather than imported as an empty backup.
+Unpacked it may come to at most 512 MB.
+
+Backups imported before version 0.5.1 have that `config` directory
+stripped off and cannot restore anything. They are rewritten once, on the
+next start, and the launcher says how many it was.
 
 An imported archive does not become a backup on trust. It is unpacked to a
 temporary directory, packed again the launcher's own way and hashed in the

@@ -213,6 +213,7 @@ pak_removed_missing = "{pak} is listed in pak_config.yaml, but the file is missi
 pak_altered = "{pak} was changed outside the loader (hash differs)."
 cache_save_failed = "Cache refresh in library.json could not be saved – {detail}"
 base_dirs_context = "could not determine the base directories"
+backups_repaired = "{count} imported backup(s) were stored without the game's config directory and have been rewritten – restoring them would have reached nothing."
 
 [error]
 steam_not_found = "Steam installation not found"

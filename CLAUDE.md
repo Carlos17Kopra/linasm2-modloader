@@ -82,6 +82,15 @@ of filesystem operations is the entire safety argument.
 - Savegames live in a Proton prefix that Steam Cloud can overwrite at any
   moment. `saves::restore` always takes and verifies its own backup first;
   that is not optional and not configurable.
+- The game reads its savegames from one directory below the save
+  directory, `config`. An archive whose files end up beside it restores
+  without an error and changes nothing — the failure is entirely silent,
+  which is why `saves::config_anchored_layout` decides an imported
+  archive's layout in one place: `config` is never stripped as a foreign
+  launcher's wrapper, and a flat archive (packed from inside it) gets it
+  back. Imports written before that rule existed are rewritten once by
+  `saves::repair_imported_layouts`, which the GUI calls when it loads the
+  backup list and the CLI for every command that holds the instance lock.
 - Archive and manifest are written fsync-before-rename, and every filesystem
   sequence is ordered so that a crash between two steps leaves a readable
   state — never a half-written one. One half of that is weaker on Windows:
@@ -147,7 +156,7 @@ almost never is — it is the fixture that cannot be built.
 
 ## Working on it
 
-    cargo test                  # 392 tests across both crates
+    cargo test                  # 400 tests across both crates
     cargo clippy --all-targets  # kept clean
     cargo run                   # GUI
     cargo run -- <subcommand>   # CLI
