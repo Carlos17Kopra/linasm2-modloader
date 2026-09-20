@@ -12,6 +12,8 @@ pub enum Error {
     UnknownSaveUser { requested: String, available: Vec<String> },
     PakConfig(PakConfigDefect),
     CorruptBackup(BackupDefect),
+    /// A savegame file that cannot be read as the game wrote it.
+    UnreadableSaveData(SaveDataDefect),
     UnsafeSaveDir(PathBuf),
     RestoreFailedAfterBackup { safety_backup: PathBuf, source: Box<Error> },
     NoRarTool,
@@ -47,6 +49,47 @@ pub enum BackupDefect {
     InvalidPath { name: String },
     EmptyPath,
     OutsideSaveDir,
+}
+
+/// Why a savegame file cannot be read — same idea as `BackupDefect`.
+#[derive(Debug)]
+pub enum SaveDataDefect {
+    TooShort { len: usize },
+    NotSsf1,
+    UnsupportedEncoding { encoding: u8 },
+    PayloadLengthMismatch { declared: u64, actual: u64 },
+    ContentLengthMismatch { declared: u64, actual: u64 },
+    ChecksumMismatch,
+    NotDeflate,
+    NotJson,
+}
+
+impl SaveDataDefect {
+    fn text(&self) -> String {
+        match self {
+            SaveDataDefect::TooShort { len } => {
+                i18n::format("error.save_data_defect.too_short", &[("len", len.to_string())])
+            }
+            SaveDataDefect::NotSsf1 => i18n::lookup("error.save_data_defect.not_ssf1"),
+            SaveDataDefect::UnsupportedEncoding { encoding } => i18n::format(
+                "error.save_data_defect.unsupported_encoding",
+                &[("encoding", encoding.to_string())],
+            ),
+            SaveDataDefect::PayloadLengthMismatch { declared, actual } => i18n::format(
+                "error.save_data_defect.payload_length_mismatch",
+                &[("declared", declared.to_string()), ("actual", actual.to_string())],
+            ),
+            SaveDataDefect::ContentLengthMismatch { declared, actual } => i18n::format(
+                "error.save_data_defect.content_length_mismatch",
+                &[("declared", declared.to_string()), ("actual", actual.to_string())],
+            ),
+            SaveDataDefect::ChecksumMismatch => {
+                i18n::lookup("error.save_data_defect.checksum_mismatch")
+            }
+            SaveDataDefect::NotDeflate => i18n::lookup("error.save_data_defect.not_deflate"),
+            SaveDataDefect::NotJson => i18n::lookup("error.save_data_defect.not_json"),
+        }
+    }
 }
 
 /// Why an archive cannot be imported — same idea as `BackupDefect`.
@@ -289,6 +332,7 @@ impl std::fmt::Display for Error {
             Error::CorruptBackup(defect) => {
                 i18n::format("error.corrupt_backup", &[("detail", defect.text())])
             }
+            Error::UnreadableSaveData(defect) => defect.text(),
             Error::Update(defect) => {
                 i18n::format("error.update_failed", &[("detail", defect.text())])
             }

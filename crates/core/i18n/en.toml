@@ -271,6 +271,16 @@ invalid_path = "invalid path in the archive: {name}"
 empty_path = "invalid (empty) path in the archive"
 outside_save_dir = "path outside the save directory"
 
+[error.save_data_defect]
+too_short = "The savegame file is too short to be one: {len} bytes."
+not_ssf1 = "This is not a savegame file the game wrote."
+unsupported_encoding = "The savegame file uses encoding {encoding}, which this version cannot read."
+payload_length_mismatch = "The savegame file says it holds {declared} bytes and holds {actual}."
+content_length_mismatch = "The savegame file says it unpacks to {declared} bytes and unpacks to {actual}."
+checksum_mismatch = "The savegame file does not match its own checksum."
+not_deflate = "The savegame file cannot be unpacked. A game update may have changed the format."
+not_json = "The savegame file does not hold the data this version expects."
+
 [error.archive_defect]
 not_a_zip = "the file cannot be opened as a ZIP: {path}"
 symlink = "the archive holds a symlink: {name}"

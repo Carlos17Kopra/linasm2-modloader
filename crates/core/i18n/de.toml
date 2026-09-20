@@ -271,6 +271,16 @@ invalid_path = "unzulässiger Pfad im Archiv: {name}"
 empty_path = "unzulässiger (leerer) Pfad im Archiv"
 outside_save_dir = "Pfad außerhalb des Save-Verzeichnisses"
 
+[error.save_data_defect]
+too_short = "Die Spielstandsdatei ist zu kurz, um eine zu sein: {len} Bytes."
+not_ssf1 = "Das ist keine Spielstandsdatei des Spiels."
+unsupported_encoding = "Die Spielstandsdatei nutzt Kodierung {encoding}, die diese Version nicht lesen kann."
+payload_length_mismatch = "Die Spielstandsdatei nennt {declared} Bytes und enthält {actual}."
+content_length_mismatch = "Die Spielstandsdatei nennt {declared} Bytes nach dem Entpacken und liefert {actual}."
+checksum_mismatch = "Die Spielstandsdatei passt nicht zu ihrer eigenen Prüfsumme."
+not_deflate = "Die Spielstandsdatei lässt sich nicht entpacken. Ein Spiel-Update kann das Format geändert haben."
+not_json = "Die Spielstandsdatei enthält nicht die Daten, die diese Version erwartet."
+
 [error.archive_defect]
 not_a_zip = "Datei lässt sich nicht als ZIP öffnen: {path}"
 symlink = "Archiv enthält einen Symlink: {name}"
