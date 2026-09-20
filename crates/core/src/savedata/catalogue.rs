@@ -416,4 +416,56 @@ mod tests {
         assert!(part.selector.get(&document).is_none());
         assert!(!part.selector.set(&mut document, json!({})));
     }
+
+    #[test]
+    fn documents_decodes_a_file_shared_by_two_groups_exactly_once() {
+        // `armour_loyalist` and `armour_chaos` both read
+        // `character_customization_progression.cfg`. Without the
+        // `contains_key` skip in `documents`, the second group would
+        // decode the same bytes again; this only proves the outcome is
+        // still a single, correctly decoded entry, not that the second
+        // decode never happened, since re-decoding the same bytes yields
+        // an equal value.
+        let json = br#"{"CharacterCustomizationProgression":{"CharacterCustomization":{"teamStates":{}}}}"#;
+        let mut files = BTreeMap::new();
+        files.insert(
+            "config/character_customization_progression.cfg".to_string(),
+            ssf1::encode(json),
+        );
+
+        let documents = documents(&files).unwrap();
+
+        assert_eq!(documents.len(), 1);
+        assert_eq!(
+            documents["config/character_customization_progression.cfg"],
+            serde_json::from_slice::<Value>(json).unwrap()
+        );
+    }
+
+    #[test]
+    fn documents_leaves_out_a_catalogued_file_that_is_absent_from_files() {
+        let mut files = BTreeMap::new();
+        files.insert(
+            "config/economy.cfg".to_string(),
+            ssf1::encode(br#"{"Economy":{"systemVersion":700,"States":{}}}"#),
+        );
+
+        let documents = documents(&files).unwrap();
+
+        assert_eq!(documents.len(), 1);
+        assert!(documents.contains_key("config/economy.cfg"));
+        assert!(!documents.contains_key("config/story_progression.cfg"));
+    }
+
+    #[test]
+    fn documents_fails_on_a_catalogued_file_whose_bytes_are_not_a_valid_container() {
+        // An absent file is quietly skipped (see the test above); bytes
+        // that are present but unreadable are a different situation and
+        // must not be swallowed the same way, or a corrupt backup would
+        // silently look like one that simply predates this data.
+        let mut files = BTreeMap::new();
+        files.insert("config/economy.cfg".to_string(), b"not a savegame file".to_vec());
+
+        assert!(documents(&files).is_err());
+    }
 }
