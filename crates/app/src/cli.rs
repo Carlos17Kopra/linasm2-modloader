@@ -954,6 +954,7 @@ mod tests {
             &["lina-sm2", "open", "mods"],
             &["lina-sm2", "profile", "list"],
             &["lina-sm2", "save", "list"],
+            &["lina-sm2", "save", "parts"],
             &["lina-sm2", "lang"],
         ] {
             assert!(
