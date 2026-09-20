@@ -400,6 +400,40 @@ pub fn verify(entry: &BackupEntry) -> Result<()> {
     Ok(())
 }
 
+/// Every file of a backup, keyed by its path relative to the save
+/// directory.
+///
+/// This reads the archive without touching the save directory, which is
+/// what composing needs: it looks into several backups at once and
+/// writes a new one, never into the game's own directory. The caller
+/// runs `verify` first — this function only guards the entry names,
+/// because a name that leaves the save directory must not even become a
+/// map key.
+pub fn read_files(entry: &BackupEntry) -> Result<BTreeMap<String, Vec<u8>>> {
+    let file = std::fs::File::open(&entry.archive).map_err(|e| Error::io(&entry.archive, e))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|_| {
+        Error::CorruptBackup(BackupDefect::NotAZip { path: entry.archive.clone() })
+    })?;
+
+    let mut files = BTreeMap::new();
+    for i in 0..zip.len() {
+        let mut zip_entry = zip.by_index(i).map_err(|e| {
+            Error::io(&entry.archive, std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        })?;
+        if !zip_entry.is_file() {
+            continue;
+        }
+        let name = zip_entry.name().to_string();
+        validate_entry_name(&name)?;
+        let mut content = Vec::new();
+        std::io::copy(&mut zip_entry, &mut content).map_err(|e| Error::io(&entry.archive, e))?;
+        if files.insert(name.clone(), content).is_some() {
+            return Err(Error::CorruptBackup(BackupDefect::DuplicateEntry { name }));
+        }
+    }
+    Ok(files)
+}
+
 /// All backups under `backup_root`, newest first. A `.zip` without an
 /// accompanying `.json` (or the other way round) is silently skipped — it
 /// is not a backup created by this function.
@@ -1079,6 +1113,18 @@ mod tests {
         let (_tmp, saves, backups) = save_fixture();
         let entry = backup(&saves, &backups, None).unwrap();
         verify(&entry).unwrap();
+    }
+
+    #[test]
+    fn read_files_returns_every_file_of_a_backup_by_its_relative_path() {
+        let (_temp, save_dir, backup_root) = save_fixture();
+        std::fs::create_dir_all(save_dir.join("config")).unwrap();
+        std::fs::write(save_dir.join("config/economy.cfg"), b"payload").unwrap();
+
+        let entry = backup(&save_dir, &backup_root, None).unwrap();
+        let files = read_files(&entry).unwrap();
+
+        assert_eq!(files.get("config/economy.cfg").map(Vec::as_slice), Some(&b"payload"[..]));
     }
 
     #[test]
