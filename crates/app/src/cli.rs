@@ -12,7 +12,7 @@ use sm2_core::pak_config::PakEntry;
 use sm2_core::paths::GamePaths;
 use sm2_core::platform::{Current, Platform};
 use sm2_core::profile::{list_profiles, Profile};
-use sm2_core::savedata::{catalogue, summary};
+use sm2_core::savedata::{catalogue, compose, summary};
 use sm2_core::saves::BackupEntry;
 use sm2_core::update::{self, Version};
 use sm2_core::{import, saves, t};
@@ -201,6 +201,21 @@ enum SaveCommand {
         #[arg(long)]
         yes: bool,
     },
+    /// Composes a new backup: one backup as the base, individual parts
+    /// from others
+    Compose {
+        /// Exact timestamp from `save list` of the backup that supplies
+        /// everything not replaced
+        #[arg(long)]
+        base: String,
+        /// A part and the backup it comes from, as `<part>=<timestamp>`;
+        /// may be given several times. `save parts` lists the ids.
+        #[arg(long = "part")]
+        parts: Vec<String>,
+        /// Label for the new backup
+        #[arg(long)]
+        tag: Option<String>,
+    },
 }
 
 /// Does this command change something a second instance could overwrite?
@@ -237,7 +252,8 @@ fn requires_exclusive_access(command: &Command) -> bool {
             | SaveCommand::Restore { .. }
             | SaveCommand::Import { .. }
             | SaveCommand::Rename { .. }
-            | SaveCommand::Delete { .. } => true,
+            | SaveCommand::Delete { .. }
+            | SaveCommand::Compose { .. } => true,
         },
         // Checking only reads; installing replaces the binary and must
         // not run twice at once.
@@ -731,6 +747,30 @@ fn run_save_command_with(state: &AppState, cmd: SaveCommand, steam_running: impl
             saves::delete(entry)?;
             println!("{}", t!("cli.save.deleted", created_at = entry.created_at, label = label));
         }
+        SaveCommand::Compose { base, parts, tag } => {
+            let list = saves::list_backups(&backups)?;
+            if list.is_empty() {
+                bail!(t!("cli.save.no_backups"));
+            }
+            let base_entry = resolve_backup_selection(&list, None, Some(&base))?.clone();
+
+            let mut replacements = Vec::new();
+            for argument in &parts {
+                let (part, at) = split_replacement(argument)?;
+                let source = resolve_backup_selection(&list, None, Some(at))?.clone();
+                replacements.push((part.to_string(), source));
+            }
+
+            let composed = compose::compose(&base_entry, &replacements, &backups, tag.as_deref())?;
+            println!(
+                "{}",
+                t!(
+                    "cli.save.compose.done",
+                    path = composed.archive.display(),
+                    count = replacements.len()
+                )
+            );
+        }
     }
     Ok(())
 }
@@ -830,6 +870,20 @@ fn resolve_backup_selection<'a>(
             Ok(&list[position])
         }
     }
+}
+
+/// Splits `--part <id>=<timestamp>` into its two halves.
+///
+/// Only the first `=` separates: part ids carry a colon and timestamps
+/// carry several, but neither carries an equals sign.
+fn split_replacement(argument: &str) -> Result<(&str, &str)> {
+    let (part, at) = argument
+        .split_once('=')
+        .with_context(|| t!("cli.save.compose.malformed_part", argument = argument))?;
+    if part.is_empty() || at.is_empty() {
+        bail!(t!("cli.save.compose.malformed_part", argument = argument));
+    }
+    Ok((part, at))
 }
 
 /// On `play --vanilla`, backs up the previous state and reports the
@@ -981,6 +1035,7 @@ mod tests {
             &["lina-sm2", "save", "import", "b.zip"],
             &["lina-sm2", "save", "rename"],
             &["lina-sm2", "save", "delete", "--yes"],
+            &["lina-sm2", "save", "compose", "--base", "2026-09-16T16:57:38Z"],
         ] {
             assert!(
                 requires_exclusive_access(&command_from(args)),
@@ -1271,6 +1326,52 @@ mod tests {
         let entry = resolve_backup_selection(&list, Some(2), None).unwrap();
 
         assert_eq!(entry.created_at, "2026-01-01T00:00:00Z");
+    }
+
+    // --- split_replacement / save compose ----------------------------------
+
+    #[test]
+    fn a_replacement_splits_into_part_and_timestamp() {
+        let (part, at) = split_replacement("class_level:PVE_TANK=2026-09-16T16:57:38Z").unwrap();
+        assert_eq!(part, "class_level:PVE_TANK");
+        assert_eq!(at, "2026-09-16T16:57:38Z");
+    }
+
+    #[test]
+    fn a_replacement_splits_at_the_first_equals_only() {
+        // Part ids hold a colon, timestamps hold colons too — only the
+        // `=` separates, and only the first one.
+        let (part, at) = split_replacement("loadout:STORY_TITUS=2026-09-16T16:57:38Z").unwrap();
+        assert_eq!(part, "loadout:STORY_TITUS");
+        assert_eq!(at, "2026-09-16T16:57:38Z");
+    }
+
+    #[test]
+    fn composing_takes_the_lock_and_listing_parts_does_not() {
+        // Composing writes a backup; listing only reads. The match in
+        // `requires_exclusive_access` has no `_` arm, so a new
+        // subcommand cannot slip through without a decision — this
+        // pins the decision itself.
+        assert!(requires_exclusive_access(&Command::Save(SaveCommand::Compose {
+            base: "2026-09-16T16:57:38Z".to_string(),
+            parts: Vec::new(),
+            tag: None,
+        })));
+        assert!(!requires_exclusive_access(&Command::Save(SaveCommand::Parts {
+            index: None,
+            at: None,
+        })));
+    }
+
+    #[test]
+    fn a_replacement_without_an_equals_is_rejected() {
+        assert!(split_replacement("class_level:PVE_TANK").is_err());
+    }
+
+    #[test]
+    fn a_replacement_with_an_empty_half_is_rejected() {
+        assert!(split_replacement("=2026-09-16T16:57:38Z").is_err());
+        assert!(split_replacement("class_level:PVE_TANK=").is_err());
     }
 
     // --- run_save_command_with / --force (review point 6) -----------------

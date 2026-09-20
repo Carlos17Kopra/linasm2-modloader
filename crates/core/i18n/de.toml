@@ -173,6 +173,16 @@ index = "1-basierter Index aus `save list` (Standard: 1, das neueste)"
 at = "Exakter Zeitstempel aus `save list`"
 yes = "Bestätigt das endgültige Löschen (erforderlich)"
 
+[cli.save.compose]
+about = "Stellt ein neues Backup aus mehreren Backups zusammen"
+done = "Zusammengestelltes Backup geschrieben: {path} ({count} Bestandteile aus anderen Backups)"
+malformed_part = "'{argument}' ist keine Ersetzung. Erwartet wird <Bestandteil>=<Zeitstempel>, etwa class_level:PVE_TANK=2026-09-16T16:57:38Z."
+
+[cli.save.compose.arg]
+base = "Exakter Zeitstempel aus `save list` des Backups, das alles Nichtersetzte liefert"
+parts = "Ein Bestandteil und das Backup, aus dem er kommt, als <Bestandteil>=<Zeitstempel>; mehrfach angebbar"
+tag = "Etikett für das neue Backup"
+
 [cli.lang]
 about = "Zeigt die Sprache an oder setzt sie"
 current = "Aktuelle Sprache: {name}"

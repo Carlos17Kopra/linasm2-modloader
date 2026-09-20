@@ -173,6 +173,16 @@ index = "1-based index from `save list` (default: 1, the newest)"
 at = "Exact timestamp from `save list`"
 yes = "Confirms the permanent deletion (required)"
 
+[cli.save.compose]
+about = "Composes a new backup out of several backups"
+done = "Composed backup written: {path} ({count} parts taken from other backups)"
+malformed_part = "'{argument}' is not a replacement. Expected <part>=<timestamp>, for instance class_level:PVE_TANK=2026-09-16T16:57:38Z."
+
+[cli.save.compose.arg]
+base = "Exact timestamp from `save list` of the backup that supplies everything not replaced"
+parts = "A part and the backup it comes from, as <part>=<timestamp>; may be given several times"
+tag = "Label for the new backup"
+
 [cli.lang]
 about = "Shows or sets the language"
 current = "Current language: {name}"
