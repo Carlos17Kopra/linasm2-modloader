@@ -841,6 +841,44 @@ fn import_archive_limited(
     backup_from(staging.path(), backup_root, label.as_deref(), archive)
 }
 
+/// Writes an already composed set of files as a new backup.
+///
+/// The files are laid out in a temporary directory and then go through
+/// `write_backup` like everything else, so a composition is written by
+/// the same crash-safe sequence as an ordinary backup. The manifest's
+/// `source` names the base backup's archive, not the temporary
+/// directory, which is gone by the time anyone reads it.
+pub fn write_composition(
+    files: &BTreeMap<String, Vec<u8>>,
+    backup_root: &Path,
+    label: Option<&str>,
+    source: &Path,
+    composition: Composition,
+) -> Result<BackupEntry> {
+    let staging = tempfile::tempdir().map_err(|e| Error::io(backup_root, e))?;
+    for (name, content) in files {
+        validate_entry_name(name)?;
+        let target = resolve_and_check_target(staging.path(), name)?;
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
+        }
+        write_atomic_bytes(&target, content)?;
+    }
+    write_backup(
+        staging.path(),
+        backup_root,
+        label,
+        source.display().to_string(),
+        now_rfc3339(),
+        Some(composition),
+    )
+}
+
+/// What a backup was composed of, or `None` for an ordinary one.
+pub fn composition_of(entry: &BackupEntry) -> Result<Option<Composition>> {
+    Ok(read_manifest(entry)?.composed_from)
+}
+
 /// Brings backups written before `config_anchored_layout` into the shape
 /// the game reads, and returns the ones that had to be rewritten.
 ///

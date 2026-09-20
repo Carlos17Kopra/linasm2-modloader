@@ -252,6 +252,7 @@ retail_exe_not_found = "Retail.exe nicht gefunden – Spielverzeichnis prüfen"
 umu_run_not_found = "umu-run nicht im PATH gefunden – für den Start ohne Steam wird umu-launcher benötigt (https://github.com/Open-Wine-Components/umu-launcher)"
 unmergeable_part = "'{part}' lässt sich nicht übernehmen: die Basis führt Schemaversion {base}, die Quelle {source}. Ein Spiel-Update hat diese Daten geändert."
 part_missing_in_source = "Das für '{part}' gewählte Backup enthält diesen Bestandteil nicht."
+unknown_part = "'{part}' ist kein Bestandteil, den dieses Backup anbietet."
 
 [error.pak_config_defect]
 invalid_yaml = "die YAML-Syntax ist ungültig (Zeile {line}, Spalte {column})"
@@ -282,6 +283,7 @@ content_length_mismatch = "Die Spielstandsdatei nennt {declared} Bytes nach dem 
 checksum_mismatch = "Die Spielstandsdatei passt nicht zu ihrer eigenen Prüfsumme."
 not_deflate = "Die Spielstandsdatei lässt sich nicht entpacken. Ein Spiel-Update kann das Format geändert haben."
 not_json = "Die Spielstandsdatei enthält nicht die Daten, die diese Version erwartet."
+round_trip_failed = "{file} ließ sich nicht lesbar zurückschreiben; das Backup wurde nicht erstellt."
 
 [error.archive_defect]
 not_a_zip = "Datei lässt sich nicht als ZIP öffnen: {path}"

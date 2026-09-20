@@ -30,6 +30,8 @@ pub enum Error {
     UnmergeablePart { part: String, base: String, source: String },
     /// A part the backup it should come from does not hold.
     PartMissingInSource { part: String },
+    /// A part id that this backup does not offer.
+    UnknownPart { part: String },
     /// Looking for a new version, or installing it, went wrong. Its own
     /// defect type for the same reason as `BackupDefect`: the detail is
     /// translated at `Display` time, not baked in where it happened.
@@ -66,6 +68,11 @@ pub enum SaveDataDefect {
     ChecksumMismatch,
     NotDeflate,
     NotJson,
+    /// An encoded container did not decode back to the JSON that went
+    /// into it. `compose` checks this for every file it re-encodes, so
+    /// a broken round trip is refused instead of becoming a backup that
+    /// silently holds the wrong data.
+    RoundTripFailed { file: String },
 }
 
 impl SaveDataDefect {
@@ -92,6 +99,10 @@ impl SaveDataDefect {
             }
             SaveDataDefect::NotDeflate => i18n::lookup("error.save_data_defect.not_deflate"),
             SaveDataDefect::NotJson => i18n::lookup("error.save_data_defect.not_json"),
+            SaveDataDefect::RoundTripFailed { file } => i18n::format(
+                "error.save_data_defect.round_trip_failed",
+                &[("file", file.clone())],
+            ),
         }
     }
 }
@@ -377,6 +388,9 @@ impl std::fmt::Display for Error {
             ),
             Error::PartMissingInSource { part } => {
                 i18n::format("error.part_missing_in_source", &[("part", part.clone())])
+            }
+            Error::UnknownPart { part } => {
+                i18n::format("error.unknown_part", &[("part", part.clone())])
             }
         };
         f.write_str(&text)

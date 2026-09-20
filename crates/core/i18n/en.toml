@@ -252,6 +252,7 @@ retail_exe_not_found = "Retail.exe not found – check the game directory"
 umu_run_not_found = "umu-run not found on the PATH – starting without Steam needs umu-launcher (https://github.com/Open-Wine-Components/umu-launcher)"
 unmergeable_part = "'{part}' cannot be taken over: the base holds schema version {base}, the source {source}. A game update has changed this data."
 part_missing_in_source = "The backup chosen for '{part}' does not hold that part."
+unknown_part = "'{part}' is not a part this backup offers."
 
 [error.pak_config_defect]
 invalid_yaml = "the YAML syntax is invalid (line {line}, column {column})"
@@ -282,6 +283,7 @@ content_length_mismatch = "The savegame file says it unpacks to {declared} bytes
 checksum_mismatch = "The savegame file does not match its own checksum."
 not_deflate = "The savegame file cannot be unpacked. A game update may have changed the format."
 not_json = "The savegame file does not hold the data this version expects."
+round_trip_failed = "{file} could not be written back in a readable form; the backup was not created."
 
 [error.archive_defect]
 not_a_zip = "the file cannot be opened as a ZIP: {path}"
