@@ -1,6 +1,6 @@
 //! Command line interface: definition and execution of all subcommands.
 
-use crate::app_state::{AppState, NoticeKind};
+use crate::app_state::{AppState, Notice, NoticeKind};
 use crate::cli_help;
 use crate::vanilla;
 use anyhow::{bail, Context, Result};
@@ -266,7 +266,8 @@ pub fn run() -> Result<()> {
     // `list` and its kin have to stay usable while the interface is open.
     // The binding must be named: `let _ = ...` would drop the guard here
     // and release the lock before the command has even run.
-    let _lock = match (&loaded, requires_exclusive_access(&cli.command)) {
+    let exclusive = requires_exclusive_access(&cli.command);
+    let _lock = match (&loaded, exclusive) {
         (Some((dirs, _)), true) => InstanceLock::acquire(dirs)?,
         _ => None,
     };
@@ -275,6 +276,11 @@ pub fn run() -> Result<()> {
     // `AppState::open` applies the language from the settings file; `--lang`
     // wins over it for this run.
     i18n::set_language(effective);
+    // After the language, so the notice speaks it — and only where the
+    // lock above was taken (see `repair_backup_layouts`).
+    if exclusive {
+        repair_backup_layouts(&mut state);
+    }
     // Notices from the reconciliation first, so they come before the actual
     // command's own output — just as before, when `AppState::open()` still
     // wrote them to stderr itself.
@@ -285,6 +291,30 @@ pub fn run() -> Result<()> {
     // along the way that nobody would otherwise get to see.
     print_notices(&mut state);
     result
+}
+
+/// Brings backups imported by an earlier version into the layout the game
+/// reads (see `saves::repair_imported_layouts`) and turns the result into
+/// a notice.
+///
+/// Only for the commands that hold the instance lock: the repair rewrites
+/// files below the backup directory, and `requires_exclusive_access` is
+/// the one place that decides which commands may change something. That
+/// leaves `save list` reporting the old backups unchanged — it is also
+/// the one savegame command that does not act on them.
+///
+/// A backup that cannot be repaired is logged by the core function and
+/// skipped there; a backup directory that cannot be read at all is not
+/// reported twice here, because the command the user actually typed runs
+/// into the same directory a moment later and says so properly.
+fn repair_backup_layouts(state: &mut AppState) {
+    match saves::repair_imported_layouts(&state.backups_dir()) {
+        Ok(repaired) if !repaired.is_empty() => state
+            .notices
+            .push(Notice::info(t!("app.notice.backups_repaired", count = repaired.len()))),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "backup directory could not be read for the layout repair"),
+    }
 }
 
 /// Writes all accumulated notices to stderr and clears the buffer.
@@ -1346,7 +1376,12 @@ mod tests {
     }
 
     /// An imported backup has to be restorable like any other — that is the
-    /// whole point of importing it.
+    /// whole point of importing it, and "restorable" means the files
+    /// arrive in `config/`, the one directory the game reads. The archive
+    /// here is flat (packed from inside that directory, as the archives of
+    /// other launchers are); restored one level above it, every file would
+    /// sit in the save directory unread while the restore reported
+    /// success.
     // Unix only, see `fixture_with_save_dir` above.
     #[cfg(unix)]
     #[test]
@@ -1361,7 +1396,11 @@ mod tests {
         run_save_command_with(&state, SaveCommand::Import { archive, tag: None }, || false).unwrap();
         run_save_command_with(&state, restore_default(), || false).unwrap();
 
-        assert_eq!(std::fs::read(save_dir.join("profile.cfg")).unwrap(), b"PROFIL");
+        assert_eq!(std::fs::read(save_dir.join("config/profile.cfg")).unwrap(), b"PROFIL");
+        assert!(
+            !save_dir.join("profile.cfg").exists(),
+            "restored beside the config directory, the game would never read the file"
+        );
     }
 
     // --- find_profile_by_name (2e: an ambiguous case-insensitive ---------
