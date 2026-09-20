@@ -1127,6 +1127,20 @@ mod tests {
         assert_eq!(files.get("config/economy.cfg").map(Vec::as_slice), Some(&b"payload"[..]));
     }
 
+    /// `read_files` has its own guard against an escaping entry name — it
+    /// does not rely on the caller having run `verify` first. Without this,
+    /// a hostile archive read directly by `read_files` (skipping `verify`)
+    /// would let a path like "../entkommen.sav" become a map key, and
+    /// whatever composing does with that key next would write outside the
+    /// save directory.
+    #[test]
+    fn read_files_rejects_a_hostile_path_that_would_escape_the_save_directory() {
+        let (_tmp, saves, backups) = save_fixture();
+        let entry = write_backup_with_single_entry(&backups, &saves, "../entkommen.sav", b"BOESARTIG");
+
+        assert!(matches!(read_files(&entry).unwrap_err(), Error::CorruptBackup(_)));
+    }
+
     #[test]
     fn verify_rejects_manipulated_archive() {
         let (_tmp, saves, backups) = save_fixture();
