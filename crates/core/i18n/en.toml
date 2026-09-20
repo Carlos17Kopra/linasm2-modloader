@@ -134,6 +134,14 @@ tag = "Label for the backup"
 [cli.save.list]
 about = "Lists the backups present"
 
+[cli.save.parts]
+about = "Lists the parts a backup offers for composing"
+none = "This backup holds no parts that can be composed."
+
+[cli.save.parts.arg]
+index = "1-based index from `save list` (default: 1, the newest)"
+at = "Exact timestamp from `save list`"
+
 [cli.save.restore]
 about = "Restores a backup (default: the newest one)"
 
@@ -609,3 +617,24 @@ profile_notice_hint = "Profile \"{name}\" – defer with Apply."
 update_available = "Version {version} is available."
 update_check_failed = "Update check failed: {detail}"
 update_installed = "{version} installed – please restart the launcher."
+
+[savedata.summary]
+level = "level {level}"
+mastery_points = "{points} mastery points"
+victories = "{count} victories"
+
+[savedata.group]
+class_level = "Class level"
+armour_loyalist = "Armour (Loyalist)"
+armour_chaos = "Armour (Chaos)"
+weapon = "Weapon mastery"
+heraldry = "Heraldry"
+loadout = "Loadout"
+challenges = "Challenges"
+story = "Campaign"
+economy = "Economy"
+pve_state = "Operations"
+horde_mode = "Horde mode"
+tutorial = "Tutorial hints"
+mutators = "Mutator challenges"
+achievements = "Achievements"

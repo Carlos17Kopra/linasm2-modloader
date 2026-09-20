@@ -12,6 +12,7 @@ use sm2_core::pak_config::PakEntry;
 use sm2_core::paths::GamePaths;
 use sm2_core::platform::{Current, Platform};
 use sm2_core::profile::{list_profiles, Profile};
+use sm2_core::savedata::{catalogue, summary};
 use sm2_core::saves::BackupEntry;
 use sm2_core::update::{self, Version};
 use sm2_core::{import, saves, t};
@@ -132,6 +133,16 @@ enum SaveCommand {
     },
     /// Lists the backups present
     List,
+    /// Lists the parts a backup offers for composing (default: the
+    /// newest one)
+    Parts {
+        /// 1-based index from `save list` (default: 1, the newest)
+        #[arg(long)]
+        index: Option<usize>,
+        /// Exact timestamp from `save list`
+        #[arg(long, conflicts_with = "index")]
+        at: Option<String>,
+    },
     /// Restores a backup (default: the newest one)
     Restore {
         /// 1-based index from `save list` (default: 1, the newest)
@@ -221,7 +232,7 @@ fn requires_exclusive_access(command: &Command) -> bool {
             ProfileCommand::Save { .. } | ProfileCommand::Apply { .. } | ProfileCommand::Delete { .. } => true,
         },
         Command::Save(sub) => match sub {
-            SaveCommand::List => false,
+            SaveCommand::List | SaveCommand::Parts { .. } => false,
             SaveCommand::Backup { .. }
             | SaveCommand::Restore { .. }
             | SaveCommand::Import { .. }
@@ -627,6 +638,26 @@ fn run_save_command_with(state: &AppState, cmd: SaveCommand, steam_running: impl
             for (i, entry) in list.iter().enumerate() {
                 let label = entry.label.clone().unwrap_or_default();
                 println!("{:>2}. {}  {label}", i + 1, entry.created_at);
+            }
+        }
+        SaveCommand::Parts { index, at } => {
+            let list = saves::list_backups(&backups)?;
+            if list.is_empty() {
+                bail!(t!("cli.save.no_backups"));
+            }
+            let entry = resolve_backup_selection(&list, index, at.as_deref())?;
+            let files = saves::read_files(entry)?;
+            let documents = catalogue::documents(&files)?;
+            let parts = catalogue::parts(&documents);
+            if parts.is_empty() {
+                println!("{}", t!("cli.save.parts.none"));
+            }
+            for part in &parts {
+                let name = summary::group_name(part.group);
+                match summary::summarize(part, &documents) {
+                    Some(figure) => println!("{}  {name}  {figure}", part.id),
+                    None => println!("{}  {name}", part.id),
+                }
             }
         }
         SaveCommand::Restore { index, at, force } => {

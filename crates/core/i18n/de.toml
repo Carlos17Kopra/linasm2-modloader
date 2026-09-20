@@ -134,6 +134,14 @@ tag = "Etikett für das Backup"
 [cli.save.list]
 about = "Zeigt die vorhandenen Backups"
 
+[cli.save.parts]
+about = "Listet die Bestandteile auf, die ein Backup zum Zusammenstellen anbietet"
+none = "Dieses Backup enthält keine zusammenstellbaren Bestandteile."
+
+[cli.save.parts.arg]
+index = "1-basierter Index aus `save list` (Standard: 1, das neueste)"
+at = "Exakter Zeitstempel aus `save list`"
+
 [cli.save.restore]
 about = "Stellt ein Backup wieder her (Standard: das neueste)"
 
@@ -610,3 +618,24 @@ profile_notice_hint = "Profil „{name}“ – mit Anwenden zurückstellen."
 update_available = "Version {version} ist verfügbar."
 update_check_failed = "Update-Prüfung fehlgeschlagen: {detail}"
 update_installed = "{version} installiert – bitte den Launcher neu starten."
+
+[savedata.summary]
+level = "Stufe {level}"
+mastery_points = "{points} Meisterschaftspunkte"
+victories = "{count} Siege"
+
+[savedata.group]
+class_level = "Klassenstufe"
+armour_loyalist = "Rüstung (Loyalist)"
+armour_chaos = "Rüstung (Chaos)"
+weapon = "Waffenmeisterschaft"
+heraldry = "Wappen"
+loadout = "Ausrüstungssatz"
+challenges = "Herausforderungen"
+story = "Kampagne"
+economy = "Wirtschaft"
+pve_state = "Operationen"
+horde_mode = "Hordenmodus"
+tutorial = "Tutorial-Hinweise"
+mutators = "Mutator-Herausforderungen"
+achievements = "Erfolge"

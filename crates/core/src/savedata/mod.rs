@@ -5,3 +5,4 @@ pub mod catalogue;
 pub mod compose;
 pub mod merge;
 pub mod ssf1;
+pub mod summary;
