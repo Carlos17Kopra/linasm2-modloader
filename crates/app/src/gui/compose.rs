@@ -119,15 +119,28 @@ pub(super) struct PartRow {
 impl ComposeUi {
     /// Sets the base and, when it actually changes, drops every chosen
     /// source with it — see the test for why.
+    ///
+    /// A base already in `decoded` gets its part list straight back:
+    /// `needs` asks for no backup twice, so nothing else would ever
+    /// refill it, and a backup that was a source a moment ago would
+    /// become a base with an empty table. A base in `failed` keeps the
+    /// empty list — a read that failed stays failed for the session, so
+    /// it is the empty table that has to explain itself, not this.
     pub(super) fn set_base(&mut self, created_at: String) {
+        // Ahead of the early return: the dropdown sends this action for
+        // the row that is already ticked too, and that click has to
+        // close the menu like every other one.
+        self.picker = None;
+        self.picker_filter.clear();
         if self.base.as_deref() == Some(created_at.as_str()) {
             return;
         }
-        self.base = Some(created_at);
         self.sources.clear();
-        self.parts.clear();
-        self.picker = None;
-        self.picker_filter.clear();
+        self.parts = match self.decoded.get(&created_at) {
+            Some(documents) => catalogue::parts(documents),
+            None => Vec::new(),
+        };
+        self.base = Some(created_at);
     }
 
     /// The chosen sources as `compose::compose` wants them.
@@ -484,6 +497,41 @@ pub(crate) mod tests {
         ui.set_base("2026-09-20_100000".to_string());
 
         assert_eq!(ui.sources.len(), 1);
+    }
+
+    /// A base that was read earlier — as a source, or as the base
+    /// before last — is never asked for again, because `needs` skips
+    /// everything already in `decoded`. `set_base` is therefore the
+    /// only place that can put the part list back, and without it the
+    /// table comes up empty with no way out but a base nobody has read.
+    #[test]
+    fn a_base_that_has_already_been_read_gets_its_part_list_at_once() {
+        let mut ui = ComposeUi::default();
+        ui.set_base("2026-09-20_100000".to_string());
+        ui.decoded.insert(
+            "2026-09-19_080000".to_string(),
+            Arc::new(documents_at("config/economy.cfg", "Economy", 900)),
+        );
+
+        ui.set_base("2026-09-19_080000".to_string());
+
+        assert_eq!(ui.parts.len(), 1, "the part list comes out of the decoded base");
+        assert_eq!(ui.parts[0].id, "economy");
+    }
+
+    /// Clicking the row that is already ticked is a pick like any
+    /// other, and every other pick closes the menu.
+    #[test]
+    fn setting_the_same_base_again_closes_the_dropdown() {
+        let mut ui = ComposeUi::default();
+        ui.set_base("2026-09-20_100000".to_string());
+        ui.picker = Some(Picker::Base);
+        ui.picker_filter = "2026".to_string();
+
+        ui.set_base("2026-09-20_100000".to_string());
+
+        assert!(ui.picker.is_none(), "the dropdown must not stay open");
+        assert!(ui.picker_filter.is_empty());
     }
 
     use sm2_core::savedata::catalogue::Selector;
