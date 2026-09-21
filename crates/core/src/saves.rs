@@ -207,7 +207,8 @@ fn backup_base_name(created_at: &str, label: Option<&str>) -> String {
 /// Writes a manifest atomically.
 ///
 /// The serialization error is unreachable for the current field types
-/// (String, `Option<_>`, u64, `BTreeMap<String, _>`); the raw error is
+/// (String, `Option<_>`, u64, `BTreeMap<String, _>`, and `Composition`,
+/// which is built from those same ones); the raw error is
 /// discarded on purpose so that the message stays a catalogued,
 /// translatable one instead of the library's raw (English) text (cf.
 /// `Library::save`).
@@ -251,6 +252,12 @@ fn backup_from(
 /// already exists a second time, in the right shape, and a backup's
 /// timestamp is its identity — the UI recognizes it by that and nothing
 /// else, so a repair must not hand it a new one.
+///
+/// `composed_from` is `None` for every backup taken off a save
+/// directory and set only by `write_composition`, which is the one
+/// caller that knows what a result was made of. A repair passes the
+/// value it read back in, so a rewritten composition does not lose its
+/// provenance.
 fn write_backup(
     save_dir: &Path,
     backup_root: &Path,
@@ -392,6 +399,14 @@ pub fn verify(entry: &BackupEntry) -> Result<()> {
             .get(&name)
             .ok_or_else(|| Error::CorruptBackup(BackupDefect::UnknownEntry { name: name.clone() }))?;
 
+        // Cannot fire with zip 8.6.0: two central-directory entries of
+        // the same name collapse into one before `len()` is asked, so a
+        // name is never handed out twice. Kept as the cheap half of the
+        // defence anyway — a future zip release that stops collapsing
+        // them would otherwise let a repeated entry make up the count
+        // for a manifest file the archive lacks. The count check below
+        // catches that case today, because `seen` can never hold more
+        // names than the archive presents.
         if !seen.insert(name.clone()) {
             return Err(Error::CorruptBackup(BackupDefect::DuplicateEntry { name: name.clone() }));
         }
@@ -444,6 +459,11 @@ pub fn read_files(entry: &BackupEntry) -> Result<BTreeMap<String, Vec<u8>>> {
         validate_entry_name(&name)?;
         let mut content = Vec::new();
         std::io::copy(&mut zip_entry, &mut content).map_err(|e| Error::io(&entry.archive, e))?;
+        // Unreachable for the same reason as the twin guard in
+        // `verify`: zip 8.6.0 collapses same-named central-directory
+        // entries. It mirrors that one on purpose — the two functions
+        // read the same archives, and a reader comparing them should
+        // not have to wonder which of them is the careful one.
         if files.insert(name.clone(), content).is_some() {
             return Err(Error::CorruptBackup(BackupDefect::DuplicateEntry { name }));
         }
@@ -1255,9 +1275,14 @@ mod tests {
     /// entries of the same name (stored, uncompressed). The `zip` crate
     /// refuses this via `ZipWriter` (see `InvalidArchive("Duplicate
     /// filename")`) — but an archive built by hand (or one from another
-    /// tool that does not know this check) can contain exactly that, and
-    /// `ZipArchive::by_index` reads entries by position, not by name, so it
-    /// reads them without complaint.
+    /// tool that does not know this check) can contain exactly that.
+    ///
+    /// What the reader then makes of it is a second question, and the
+    /// answer changed: zip 8.6.0 collapses the two central-directory
+    /// records into one, so `ZipArchive::len()` reports 1 and there is
+    /// only one index to read. The archive this builds is therefore a
+    /// file the manifest describes twice and the reader offers once —
+    /// see the test below for what that pins.
     fn write_zip_with_duplicate_entry(path: &Path, name: &str, content: &[u8]) {
         let mut bytes = Vec::new();
         let mut local_offsets = Vec::new();
@@ -1317,9 +1342,14 @@ mod tests {
     }
 
     /// An archive entry that appears twice under the same name must not
-    /// mask a file that is genuinely missing: if only the number of
-    /// processed entries were counted, the total would still come out right
-    /// despite a file that the manifest lists but the archive lacks.
+    /// mask a file that is genuinely missing. What this proves with zip
+    /// 8.6.0 is the count check, not the duplicate check: the crate
+    /// collapses the two same-named records, so what reaches `verify`
+    /// is one entry where the manifest lists two, and `CountMismatch`
+    /// is the refusal. The `seen` guard cannot fire here and is not
+    /// what is under test — the property is, and the property holds
+    /// either way, because `seen` can never hold more names than the
+    /// archive presents.
     #[test]
     fn verify_rejects_duplicate_entry_masking_a_missing_file() {
         let (_tmp, saves, backups) = save_fixture();
