@@ -49,7 +49,6 @@ pub fn compose(
         let source = &sources[&source_entry.created_at];
 
         merge::apply(&mut documents, &part, source)?;
-        merge::raise_system_version(&mut documents, part.file, source);
         touched.insert(part.file.to_string());
         recorded.insert(part_id.clone(), source_entry.created_at.clone());
     }

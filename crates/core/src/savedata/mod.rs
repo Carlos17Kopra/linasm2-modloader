@@ -3,6 +3,8 @@
 
 pub mod catalogue;
 pub mod compose;
-pub mod merge;
+/// Not public: a merge is only ever reached through `compose`, which is
+/// what verifies the backups it reads and writes the result safely.
+pub(crate) mod merge;
 pub mod ssf1;
 pub mod summary;

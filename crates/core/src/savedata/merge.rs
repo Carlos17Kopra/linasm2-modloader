@@ -8,7 +8,7 @@
 //! result.
 
 use crate::error::{Error, Result};
-use crate::savedata::catalogue::{system_key, Documents, Part};
+use crate::savedata::catalogue::{Documents, Part, Selector};
 use serde_json::Value;
 
 /// The schema version a node carries, if it carries one.
@@ -18,11 +18,17 @@ fn schema_version(node: &Value) -> Option<u64> {
 
 /// Takes one part out of `source` and puts it into `base`.
 ///
+/// This is the whole merge, `systemVersion` included, and deliberately
+/// not a pair of calls a caller could order the wrong way round: a
+/// whole-file part overwrites the very object that counter sits in, so
+/// anything raising it afterwards would already be comparing the
+/// source's value with itself.
+///
 /// The schema versions have to match. `json_version` sits on the node
 /// itself, so two backups from different game builds can disagree about
 /// one part while agreeing about every other — which is why this is
 /// decided per part and not per file.
-pub fn apply(base: &mut Documents, part: &Part, source: &Documents) -> Result<()> {
+pub(crate) fn apply(base: &mut Documents, part: &Part, source: &Documents) -> Result<()> {
     let source_document = source
         .get(part.file)
         .ok_or_else(|| Error::PartMissingInSource { part: part.id.clone() })?;
@@ -48,41 +54,47 @@ pub fn apply(base: &mut Documents, part: &Part, source: &Documents) -> Result<()
         });
     }
 
+    // Read before the write, and from both sides: a whole-file part
+    // takes the system object with it, counter included, so afterwards
+    // there is nothing left to compare the source against.
+    let highest = system_version(base, part.file).max(system_version(source, part.file));
+
     let base_document = base.get_mut(part.file).expect("checked above");
     if !part.selector.set(base_document, incoming) {
         return Err(Error::PartMissingInSource { part: part.id.clone() });
     }
+
+    if let Some(version) = highest {
+        raise_system_version(base, part.file, version);
+    }
     Ok(())
 }
 
-/// Lifts a file's `systemVersion` to the highest of base and source.
+/// The `systemVersion` a file's system object carries, if it carries
+/// one.
+fn system_version(documents: &Documents, file: &str) -> Option<u64> {
+    Selector::Whole.get(documents.get(file)?)?.get("systemVersion")?.as_u64()
+}
+
+/// Lifts a file's `systemVersion` to `version`.
 ///
 /// The counter is the engine's "how new is this" marker — it complains
 /// that provided data is older than what it holds. A merged file is at
 /// least as new as everything that went into it, so the highest value
-/// wins. A file without the field is left alone.
-pub fn raise_system_version(base: &mut Documents, file: &str, source: &Documents) {
-    let Some(incoming) = source
-        .get(file)
-        .and_then(|document| {
-            let key = system_key(document)?;
-            document.get(key)?.get("systemVersion")?.as_u64()
-        })
-    else {
-        return;
-    };
+/// wins. A file without the field is left alone: the field is never
+/// created, because a value this code invented would claim an age the
+/// save never had.
+fn raise_system_version(base: &mut Documents, file: &str, version: u64) {
     let Some(document) = base.get_mut(file) else {
         return;
     };
-    let Some(key) = system_key(document).map(str::to_string) else {
-        return;
-    };
-    let Some(slot) = document.get_mut(&key).and_then(|system| system.get_mut("systemVersion"))
+    let Some(slot) =
+        Selector::Whole.get_mut(document).and_then(|system| system.get_mut("systemVersion"))
     else {
         return;
     };
-    if slot.as_u64().is_some_and(|present| present < incoming) {
-        *slot = Value::from(incoming);
+    if slot.as_u64().is_some_and(|present| present < version) {
+        *slot = Value::from(version);
     }
 }
 
@@ -91,6 +103,17 @@ mod tests {
     use super::*;
     use crate::savedata::catalogue::{part_by_id, Documents};
     use serde_json::json;
+
+    /// A backup holding one whole-file group, so that the part under
+    /// test replaces the very object the counter sits in.
+    fn economy(version: u64, credits: u64) -> Documents {
+        let mut documents = Documents::new();
+        documents.insert(
+            "config/economy.cfg".to_string(),
+            json!({"Economy": {"systemVersion": version, "credits": credits}}),
+        );
+        documents
+    }
 
     fn progression(version: u64, level: u64, schema: u64) -> Documents {
         let mut documents = Documents::new();
@@ -148,7 +171,10 @@ mod tests {
     fn the_system_version_becomes_the_highest_of_the_two() {
         let mut base = progression(700, 5, 3);
         let source = progression(890, 42, 3);
-        raise_system_version(&mut base, "config/user_progression.cfg", &source);
+        let part = part_by_id(&base, "class_level:PVE_TANK").unwrap();
+
+        apply(&mut base, &part, &source).unwrap();
+
         assert_eq!(base["config/user_progression.cfg"]["UserProgression"]["systemVersion"], json!(890));
     }
 
@@ -156,7 +182,38 @@ mod tests {
     fn a_lower_system_version_in_the_source_leaves_the_base_alone() {
         let mut base = progression(900, 5, 3);
         let source = progression(700, 42, 3);
-        raise_system_version(&mut base, "config/user_progression.cfg", &source);
+        let part = part_by_id(&base, "class_level:PVE_TANK").unwrap();
+
+        apply(&mut base, &part, &source).unwrap();
+
         assert_eq!(base["config/user_progression.cfg"]["UserProgression"]["systemVersion"], json!(900));
+    }
+
+    /// The direction that was wrong: a whole-file part replaces the very
+    /// object the counter sits in, so by the time anything could compare
+    /// the two values the base's own is already gone. Reading it before
+    /// the write is the only order that can answer this.
+    #[test]
+    fn a_whole_file_part_does_not_lower_the_base_system_version() {
+        let mut base = economy(900, 5);
+        let source = economy(700, 42);
+        let part = part_by_id(&base, "economy").unwrap();
+
+        apply(&mut base, &part, &source).unwrap();
+
+        let file = &base["config/economy.cfg"]["Economy"];
+        assert_eq!(file["systemVersion"], json!(900));
+        assert_eq!(file["credits"], json!(42), "the payload still comes from the source");
+    }
+
+    #[test]
+    fn a_whole_file_part_takes_the_higher_system_version_of_the_source() {
+        let mut base = economy(700, 5);
+        let source = economy(900, 42);
+        let part = part_by_id(&base, "economy").unwrap();
+
+        apply(&mut base, &part, &source).unwrap();
+
+        assert_eq!(base["config/economy.cfg"]["Economy"]["systemVersion"], json!(900));
     }
 }

@@ -139,47 +139,39 @@ impl Selector {
         }
     }
 
+    /// The same value, to be changed in place.
+    ///
+    /// The mutable twin of `get`, and the only other walk there is: a
+    /// second hand-rolled copy of this navigation is a second place to
+    /// get the single-key rule of `system_key` wrong.
+    pub fn get_mut<'a>(&self, document: &'a mut Value) -> Option<&'a mut Value> {
+        match self {
+            Selector::Whole => {
+                // The key has to be copied out: `system_key` borrows the
+                // document, and the lookup below needs it mutably.
+                let key = system_key(document).map(str::to_string)?;
+                document.get_mut(&key)
+            }
+            Selector::Member { container, key } => {
+                document.pointer_mut(container)?.get_mut(key)
+            }
+            Selector::ListItem { container, key_field, id } => document
+                .pointer_mut(container)?
+                .as_array_mut()?
+                .iter_mut()
+                .find(|element| element.get(key_field).and_then(Value::as_str) == Some(id)),
+        }
+    }
+
     /// Replaces that value. `false` means the target is not there and
     /// nothing was written — no node is ever created.
     pub fn set(&self, document: &mut Value, value: Value) -> bool {
-        match self {
-            Selector::Whole => {
-                let Some(key) = system_key(document).map(str::to_string) else {
-                    return false;
-                };
-                match document.get_mut(&key) {
-                    Some(slot) => {
-                        *slot = value;
-                        true
-                    }
-                    None => false,
-                }
+        match self.get_mut(document) {
+            Some(slot) => {
+                *slot = value;
+                true
             }
-            Selector::Member { container, key } => {
-                match document.pointer_mut(container).and_then(|node| node.get_mut(key)) {
-                    Some(slot) => {
-                        *slot = value;
-                        true
-                    }
-                    None => false,
-                }
-            }
-            Selector::ListItem { container, key_field, id } => {
-                let Some(array) = document.pointer_mut(container).and_then(Value::as_array_mut)
-                else {
-                    return false;
-                };
-                match array
-                    .iter_mut()
-                    .find(|element| element.get(key_field).and_then(Value::as_str) == Some(id))
-                {
-                    Some(slot) => {
-                        *slot = value;
-                        true
-                    }
-                    None => false,
-                }
-            }
+            None => false,
         }
     }
 }
