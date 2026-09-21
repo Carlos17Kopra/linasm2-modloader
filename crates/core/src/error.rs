@@ -12,6 +12,8 @@ pub enum Error {
     UnknownSaveUser { requested: String, available: Vec<String> },
     PakConfig(PakConfigDefect),
     CorruptBackup(BackupDefect),
+    /// A savegame file that cannot be read as the game wrote it.
+    UnreadableSaveData(SaveDataDefect),
     UnsafeSaveDir(PathBuf),
     RestoreFailedAfterBackup { safety_backup: PathBuf, source: Box<Error> },
     NoRarTool,
@@ -24,6 +26,33 @@ pub enum Error {
     /// have to tell this one case apart from every other failure of
     /// `InstanceLock::acquire`: it is the only one that stops the program.
     AlreadyRunning,
+    /// A part whose schema version differs between the two backups.
+    UnmergeablePart { part: String, base: String, source: String },
+    /// A part the backup it should come from does not hold.
+    PartMissingInSource { part: String },
+    /// A part the base backup does not hold. Its own variant because
+    /// the two absences send the reader to different backups, and being
+    /// sent to the wrong one costs an afternoon of swapping sources
+    /// that were never at fault.
+    PartMissingInBase { part: String },
+    /// A part id that this backup does not offer.
+    UnknownPart { part: String },
+    /// The same part asked for from two backups at once. Refused
+    /// rather than resolved by order: the last one would win, one of
+    /// them would be recorded, and the count reported back would name
+    /// more parts than the composition actually took.
+    PartGivenTwice { part: String },
+    /// A part id that this backup offers more than once, because two
+    /// entries of a list carry the same key. Its own variant rather
+    /// than `UnknownPart`: the backup does hold that part — twice —
+    /// and picking either one would compose data nobody asked for.
+    AmbiguousPart { part: String },
+    /// The same ambiguity on the other side: the backup a part is taken
+    /// *from* holds it twice. Its own variant for the reason
+    /// `PartMissingInBase` has one — the catalogue only ever reads the
+    /// base, so a message about "this backup" would send the reader to
+    /// the one that is fine.
+    AmbiguousPartInSource { part: String },
     /// Looking for a new version, or installing it, went wrong. Its own
     /// defect type for the same reason as `BackupDefect`: the detail is
     /// translated at `Display` time, not baked in where it happened.
@@ -47,6 +76,56 @@ pub enum BackupDefect {
     InvalidPath { name: String },
     EmptyPath,
     OutsideSaveDir,
+}
+
+/// Why a savegame file cannot be read — same idea as `BackupDefect`.
+#[derive(Debug)]
+pub enum SaveDataDefect {
+    TooShort { len: usize },
+    NotSsf1,
+    UnsupportedEncoding { encoding: u8 },
+    PayloadLengthMismatch { declared: u64, actual: u64 },
+    ContentLengthMismatch { declared: u64, actual: u64 },
+    ChecksumMismatch,
+    NotDeflate,
+    NotJson,
+    /// An encoded container did not decode back to the JSON that went
+    /// into it. `compose` checks this for every file it re-encodes, so
+    /// a broken round trip is refused instead of becoming a backup that
+    /// silently holds the wrong data.
+    RoundTripFailed { file: String },
+}
+
+impl SaveDataDefect {
+    fn text(&self) -> String {
+        match self {
+            SaveDataDefect::TooShort { len } => {
+                i18n::format("error.save_data_defect.too_short", &[("len", len.to_string())])
+            }
+            SaveDataDefect::NotSsf1 => i18n::lookup("error.save_data_defect.not_ssf1"),
+            SaveDataDefect::UnsupportedEncoding { encoding } => i18n::format(
+                "error.save_data_defect.unsupported_encoding",
+                &[("encoding", encoding.to_string())],
+            ),
+            SaveDataDefect::PayloadLengthMismatch { declared, actual } => i18n::format(
+                "error.save_data_defect.payload_length_mismatch",
+                &[("declared", declared.to_string()), ("actual", actual.to_string())],
+            ),
+            SaveDataDefect::ContentLengthMismatch { declared, actual } => i18n::format(
+                "error.save_data_defect.content_length_mismatch",
+                &[("declared", declared.to_string()), ("actual", actual.to_string())],
+            ),
+            SaveDataDefect::ChecksumMismatch => {
+                i18n::lookup("error.save_data_defect.checksum_mismatch")
+            }
+            SaveDataDefect::NotDeflate => i18n::lookup("error.save_data_defect.not_deflate"),
+            SaveDataDefect::NotJson => i18n::lookup("error.save_data_defect.not_json"),
+            SaveDataDefect::RoundTripFailed { file } => i18n::format(
+                "error.save_data_defect.round_trip_failed",
+                &[("file", file.clone())],
+            ),
+        }
+    }
 }
 
 /// Why an archive cannot be imported — same idea as `BackupDefect`.
@@ -289,6 +368,7 @@ impl std::fmt::Display for Error {
             Error::CorruptBackup(defect) => {
                 i18n::format("error.corrupt_backup", &[("detail", defect.text())])
             }
+            Error::UnreadableSaveData(defect) => defect.text(),
             Error::Update(defect) => {
                 i18n::format("error.update_failed", &[("detail", defect.text())])
             }
@@ -323,6 +403,28 @@ impl std::fmt::Display for Error {
                 &[("path", path.display().to_string()), ("source", source.to_string())],
             ),
             Error::PlainIo(source) => source.to_string(),
+            Error::UnmergeablePart { part, base, source } => i18n::format(
+                "error.unmergeable_part",
+                &[("part", part.clone()), ("base", base.clone()), ("source", source.clone())],
+            ),
+            Error::PartMissingInSource { part } => {
+                i18n::format("error.part_missing_in_source", &[("part", part.clone())])
+            }
+            Error::PartMissingInBase { part } => {
+                i18n::format("error.part_missing_in_base", &[("part", part.clone())])
+            }
+            Error::UnknownPart { part } => {
+                i18n::format("error.unknown_part", &[("part", part.clone())])
+            }
+            Error::PartGivenTwice { part } => {
+                i18n::format("error.part_given_twice", &[("part", part.clone())])
+            }
+            Error::AmbiguousPart { part } => {
+                i18n::format("error.ambiguous_part", &[("part", part.clone())])
+            }
+            Error::AmbiguousPartInSource { part } => {
+                i18n::format("error.ambiguous_part_in_source", &[("part", part.clone())])
+            }
         };
         f.write_str(&text)
     }

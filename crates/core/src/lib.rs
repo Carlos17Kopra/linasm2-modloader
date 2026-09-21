@@ -10,6 +10,7 @@ pub mod pak_config;
 pub mod paths;
 pub mod platform;
 pub mod profile;
+pub mod savedata;
 pub mod saves;
 pub mod settings;
 pub mod update;

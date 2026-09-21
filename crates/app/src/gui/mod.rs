@@ -26,6 +26,8 @@
 //! error or a half-drawn row.
 
 mod commands;
+mod compose;
+mod compose_page;
 mod dialogs;
 mod format;
 mod icons;
@@ -290,6 +292,22 @@ pub enum Action {
     InstallUpdate,
     ToggleUpdateCheck,
     AnswerUpdateQuestion(bool),
+    ShowSavesTab(compose::SavesTab),
+    PickComposeBase(String),
+    PickPartSource { part: String, backup: String },
+    PickGroupSource { group: &'static str, backup: String },
+    ResetPart(String),
+    ResetComposition,
+    SetPartFilter(String),
+    /// The filter inside an open dropdown, which is a different field
+    /// from the table's filter and must not share it.
+    SetPickerFilter(String),
+    ToggleOnlyReplaced,
+    ToggleGroup(&'static str),
+    OpenComposePicker(compose::Picker),
+    CloseComposePicker,
+    SetComposeLabel(String),
+    Compose,
 }
 
 /// The entire state of the interface.
@@ -333,6 +351,10 @@ pub struct App {
     saves_blocked: Option<String>,
     /// The Steam user profiles found in the prefix, for the picker.
     steam_users: Vec<String>,
+    /// The state behind the "compose a save" tab.
+    compose: compose::ComposeUi,
+    /// Which half of the savegame page is showing.
+    saves_tab: compose::SavesTab,
 
     drag: Option<Drag>,
     task: Option<tasks::Running>,
@@ -379,6 +401,8 @@ impl App {
             verified: HashSet::new(),
             saves_blocked: None,
             steam_users: Vec::new(),
+            compose: compose::ComposeUi::default(),
+            saves_tab: compose::SavesTab::default(),
             drag: None,
             task: None,
             update: update::UpdateUi::default(),
@@ -816,6 +840,44 @@ impl App {
                     self.start_update_check();
                 }
             }
+            Action::ShowSavesTab(tab) => {
+                self.saves_tab = tab;
+                self.compose.picker = None;
+            }
+            Action::PickComposeBase(created_at) => {
+                self.compose.set_base(created_at);
+            }
+            Action::PickPartSource { part, backup } => self.compose.set_source(part, backup),
+            Action::PickGroupSource { group, backup } => {
+                self.compose.set_group_source(group, backup);
+            }
+            Action::ResetPart(part) => {
+                self.compose.sources.remove(&part);
+                self.compose.picker = None;
+            }
+            Action::ResetComposition => {
+                self.compose.sources.clear();
+                self.compose.picker = None;
+            }
+            Action::SetPartFilter(filter) => self.compose.part_filter = filter,
+            Action::SetPickerFilter(filter) => self.compose.picker_filter = filter,
+            Action::ToggleOnlyReplaced => {
+                self.compose.only_replaced = !self.compose.only_replaced;
+            }
+            Action::ToggleGroup(group) => {
+                if !self.compose.open_groups.remove(group) {
+                    self.compose.open_groups.insert(group);
+                }
+            }
+            Action::OpenComposePicker(picker) => {
+                // Clicking the open dropdown closes it again.
+                self.compose.picker =
+                    (self.compose.picker.as_ref() != Some(&picker)).then_some(picker);
+                self.compose.picker_filter.clear();
+            }
+            Action::CloseComposePicker => self.compose.picker = None,
+            Action::SetComposeLabel(label) => self.compose.label = label,
+            Action::Compose => self.start_compose(),
         }
     }
 
@@ -963,6 +1025,21 @@ impl eframe::App for App {
         }
         self.poll_task(&ctx);
         self.poll_update_check();
+        if self.compose.poll() {
+            ctx.request_repaint();
+        }
+        if self.section == Section::Saves && self.saves_tab == compose::SavesTab::Compose {
+            // The base defaults to the newest backup, which is what the
+            // Backups tab shows first too.
+            if self.compose.base.is_none() {
+                if let Some(newest) = self.backups.first() {
+                    self.compose.set_base(newest.created_at.clone());
+                }
+            }
+            if let Some(entry) = self.compose.needs(&self.backups) {
+                self.compose.start_read(&entry, &ctx);
+            }
+        }
 
         let mut actions: Vec<Action> = Vec::new();
 
@@ -1138,9 +1215,21 @@ impl App {
 /// A heading and its explanatory text above a card — profiles and savegames
 /// use the same shape.
 fn page_heading(ui: &mut egui::Ui, title: &str, description: &str, max_width: f32) {
+    page_title(ui, title);
+    page_body(ui, description, max_width);
+}
+
+/// The title line of a page, on its own — the savegame page puts its tab
+/// strip between the title and the line below it, and which line that is
+/// depends on the tab.
+fn page_title(ui: &mut egui::Ui, title: &str) {
     ui.label(
         egui::RichText::new(title).font(theme::medium(15.0)).color(theme::color::TEXT_STRONG),
     );
+}
+
+/// The explanatory line under a page's title, and the gap to the content.
+fn page_body(ui: &mut egui::Ui, description: &str, max_width: f32) {
     ui.add_space(4.0);
     let width = max_width.min(ui.available_width());
     let galley = ui.painter().layout(
@@ -1460,5 +1549,58 @@ mod tests {
 
         app.apply(Action::ToggleUpdateCheck);
         assert_eq!(app.settings().update_check, Some(false));
+    }
+
+    /// Picking a base and then a source for a part leaves exactly the
+    /// state `compose` is asked for — the path a click takes, without a
+    /// screen.
+    #[test]
+    fn picking_a_base_and_a_source_builds_the_composition() {
+        let mut app = App::blank(egui::Context::default());
+
+        app.apply(Action::PickComposeBase("2026-09-20_100000".to_string()));
+        app.apply(Action::PickPartSource {
+            part: "class_level:PVE_TANK".to_string(),
+            backup: "2026-09-19_080000".to_string(),
+        });
+
+        assert_eq!(app.compose.base.as_deref(), Some("2026-09-20_100000"));
+        assert_eq!(
+            app.compose.sources.get("class_level:PVE_TANK").map(String::as_str),
+            Some("2026-09-19_080000")
+        );
+        assert!(app.compose.picker.is_none(), "a pick closes the dropdown");
+    }
+
+    #[test]
+    fn resetting_one_part_puts_it_back_on_the_base() {
+        let mut app = App::blank(egui::Context::default());
+        app.apply(Action::PickComposeBase("2026-09-20_100000".to_string()));
+        app.apply(Action::PickPartSource {
+            part: "class_level:PVE_TANK".to_string(),
+            backup: "2026-09-19_080000".to_string(),
+        });
+
+        app.apply(Action::ResetPart("class_level:PVE_TANK".to_string()));
+
+        assert!(app.compose.sources.is_empty());
+    }
+
+    /// A group's dropdown assigns the whole group at once — the point of
+    /// having one.
+    #[test]
+    fn picking_a_group_source_assigns_every_part_of_that_group() {
+        let mut app = App::blank(egui::Context::default());
+        app.apply(Action::PickComposeBase("2026-09-20_100000".to_string()));
+        // What a read of the base would have filled in (Task 6): the group
+        // dropdown assigns every part the base offers in that group.
+        app.compose.parts = crate::gui::compose::tests::sample_parts();
+
+        app.apply(Action::PickGroupSource {
+            group: "class_level",
+            backup: "2026-09-19_080000".to_string(),
+        });
+
+        assert_eq!(app.compose.sources.len(), 2, "both class levels, not the economy part");
     }
 }

@@ -2105,7 +2105,7 @@ dependencies = [
 
 [[package]]
 name = "lina-sm2"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2186,6 +2186,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
  "regex-automata",
+]
+
+[[package]]
+name = "md-5"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69b6441f590336821bb897fb28fc622898ccceb1d6cea3fde5ea86b090c4de98"
+dependencies = [
+ "cfg-if",
+ "digest",
 ]
 
 [[package]]
@@ -3353,6 +3363,7 @@ version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
 dependencies = [
+ "indexmap",
  "itoa",
  "memchr",
  "serde",
@@ -3500,11 +3511,13 @@ dependencies = [
 
 [[package]]
 name = "sm2-core"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "blake3",
  "directories",
+ "flate2",
  "fs4",
+ "md-5",
  "serde",
  "serde_json",
  "sevenz-rust2",

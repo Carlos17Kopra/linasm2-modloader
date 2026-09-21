@@ -25,6 +25,15 @@ pub struct FileRecord {
     pub size: u64,
 }
 
+/// What a composed backup was made of.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Composition {
+    /// `created_at` of the backup that supplied everything not listed.
+    pub base: String,
+    /// Part id to the `created_at` of the backup it came from.
+    pub parts: BTreeMap<String, String>,
+}
+
 /// Accompanies every backup and makes corruption detectable.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BackupManifest {
@@ -32,6 +41,12 @@ pub struct BackupManifest {
     pub source: String,
     #[serde(default)]
     pub label: Option<String>,
+    /// Set only on a backup that was composed out of others. Absent
+    /// everywhere else, including in every manifest written before this
+    /// field existed — hence `default` and `skip_serializing_if`, so an
+    /// ordinary backup's manifest keeps the shape it has today.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composed_from: Option<Composition>,
     /// The key is the path relative to the save directory, separated by '/'.
     pub files: BTreeMap<String, FileRecord>,
 }
@@ -192,7 +207,8 @@ fn backup_base_name(created_at: &str, label: Option<&str>) -> String {
 /// Writes a manifest atomically.
 ///
 /// The serialization error is unreachable for the current field types
-/// (String, `Option<_>`, u64, `BTreeMap<String, _>`); the raw error is
+/// (String, `Option<_>`, u64, `BTreeMap<String, _>`, and `Composition`,
+/// which is built from those same ones); the raw error is
 /// discarded on purpose so that the message stays a catalogued,
 /// translatable one instead of the library's raw (English) text (cf.
 /// `Library::save`).
@@ -228,7 +244,7 @@ fn backup_from(
     label: Option<&str>,
     source: &Path,
 ) -> Result<BackupEntry> {
-    write_backup(save_dir, backup_root, label, source.display().to_string(), now_rfc3339())
+    write_backup(save_dir, backup_root, label, source.display().to_string(), now_rfc3339(), None)
 }
 
 /// The body of `backup_from`, with the manifest's `created_at` as a
@@ -236,12 +252,19 @@ fn backup_from(
 /// already exists a second time, in the right shape, and a backup's
 /// timestamp is its identity — the UI recognizes it by that and nothing
 /// else, so a repair must not hand it a new one.
+///
+/// `composed_from` is `None` for every backup taken off a save
+/// directory and set only by `write_composition`, which is the one
+/// caller that knows what a result was made of. A repair passes the
+/// value it read back in, so a rewritten composition does not lose its
+/// provenance.
 fn write_backup(
     save_dir: &Path,
     backup_root: &Path,
     label: Option<&str>,
     source: String,
     now: String,
+    composed_from: Option<Composition>,
 ) -> Result<BackupEntry> {
     if !save_dir.is_dir() {
         return Err(Error::io(
@@ -296,6 +319,7 @@ fn write_backup(
         created_at: now.clone(),
         source,
         label: label.map(str::to_string),
+        composed_from,
         files: records,
     };
     write_manifest(&manifest_path, &manifest)?;
@@ -375,6 +399,14 @@ pub fn verify(entry: &BackupEntry) -> Result<()> {
             .get(&name)
             .ok_or_else(|| Error::CorruptBackup(BackupDefect::UnknownEntry { name: name.clone() }))?;
 
+        // Cannot fire with zip 8.6.0: two central-directory entries of
+        // the same name collapse into one before `len()` is asked, so a
+        // name is never handed out twice. Kept as the cheap half of the
+        // defence anyway — a future zip release that stops collapsing
+        // them would otherwise let a repeated entry make up the count
+        // for a manifest file the archive lacks. The count check below
+        // catches that case today, because `seen` can never hold more
+        // names than the archive presents.
         if !seen.insert(name.clone()) {
             return Err(Error::CorruptBackup(BackupDefect::DuplicateEntry { name: name.clone() }));
         }
@@ -398,6 +430,45 @@ pub fn verify(entry: &BackupEntry) -> Result<()> {
         }));
     }
     Ok(())
+}
+
+/// Every file of a backup, keyed by its path relative to the save
+/// directory.
+///
+/// This reads the archive without touching the save directory, which is
+/// what composing needs: it looks into several backups at once and
+/// writes a new one, never into the game's own directory. The caller
+/// runs `verify` first — this function only guards the entry names,
+/// because a name that leaves the save directory must not even become a
+/// map key.
+pub fn read_files(entry: &BackupEntry) -> Result<BTreeMap<String, Vec<u8>>> {
+    let file = std::fs::File::open(&entry.archive).map_err(|e| Error::io(&entry.archive, e))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|_| {
+        Error::CorruptBackup(BackupDefect::NotAZip { path: entry.archive.clone() })
+    })?;
+
+    let mut files = BTreeMap::new();
+    for i in 0..zip.len() {
+        let mut zip_entry = zip.by_index(i).map_err(|e| {
+            Error::io(&entry.archive, std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        })?;
+        if !zip_entry.is_file() {
+            continue;
+        }
+        let name = zip_entry.name().to_string();
+        validate_entry_name(&name)?;
+        let mut content = Vec::new();
+        std::io::copy(&mut zip_entry, &mut content).map_err(|e| Error::io(&entry.archive, e))?;
+        // Unreachable for the same reason as the twin guard in
+        // `verify`: zip 8.6.0 collapses same-named central-directory
+        // entries. It mirrors that one on purpose — the two functions
+        // read the same archives, and a reader comparing them should
+        // not have to wonder which of them is the careful one.
+        if files.insert(name.clone(), content).is_some() {
+            return Err(Error::CorruptBackup(BackupDefect::DuplicateEntry { name }));
+        }
+    }
+    Ok(files)
 }
 
 /// All backups under `backup_root`, newest first. A `.zip` without an
@@ -790,6 +861,51 @@ fn import_archive_limited(
     backup_from(staging.path(), backup_root, label.as_deref(), archive)
 }
 
+/// Writes an already composed set of files as a new backup.
+///
+/// The files are laid out in a temporary directory and then go through
+/// `write_backup` like everything else, so a composition is written by
+/// the same crash-safe sequence as an ordinary backup. The manifest's
+/// `source` names the base backup's archive, not the temporary
+/// directory, which is gone by the time anyone reads it.
+///
+/// Not public: the bytes handed in here become a backup unexamined,
+/// and what makes them trustworthy happens in `savedata::compose` —
+/// the sources are verified, the parts are merged through one selector
+/// and every re-encoded file is read back before it gets this far. A
+/// caller reaching past that could turn an arbitrary byte map into a
+/// backup that verifies perfectly and holds nothing the game can read.
+pub(crate) fn write_composition(
+    files: &BTreeMap<String, Vec<u8>>,
+    backup_root: &Path,
+    label: Option<&str>,
+    source: &Path,
+    composition: Composition,
+) -> Result<BackupEntry> {
+    let staging = tempfile::tempdir().map_err(|e| Error::io(backup_root, e))?;
+    for (name, content) in files {
+        validate_entry_name(name)?;
+        let target = resolve_and_check_target(staging.path(), name)?;
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
+        }
+        write_atomic_bytes(&target, content)?;
+    }
+    write_backup(
+        staging.path(),
+        backup_root,
+        label,
+        source.display().to_string(),
+        now_rfc3339(),
+        Some(composition),
+    )
+}
+
+/// What a backup was composed of, or `None` for an ordinary one.
+pub fn composition_of(entry: &BackupEntry) -> Result<Option<Composition>> {
+    Ok(read_manifest(entry)?.composed_from)
+}
+
 /// Brings backups written before `config_anchored_layout` into the shape
 /// the game reads, and returns the ones that had to be rewritten.
 ///
@@ -875,6 +991,7 @@ fn repair_layout(entry: &BackupEntry, backup_root: &Path) -> Result<Option<Backu
         manifest.label.as_deref(),
         manifest.source.clone(),
         manifest.created_at.clone(),
+        manifest.composed_from.clone(),
     )?;
     verify(&rewritten)?;
     delete(entry)?;
@@ -1082,6 +1199,51 @@ mod tests {
     }
 
     #[test]
+    fn an_ordinary_backup_records_no_composition() {
+        let (_temp, save_dir, backup_root) = save_fixture();
+        let entry = backup(&save_dir, &backup_root, None).unwrap();
+        assert_eq!(read_manifest(&entry).unwrap().composed_from, None);
+    }
+
+    #[test]
+    fn a_manifest_written_before_compositions_existed_still_reads() {
+        let (_temp, save_dir, backup_root) = save_fixture();
+        let entry = backup(&save_dir, &backup_root, None).unwrap();
+
+        // Exactly the shape 0.5.1 wrote: no `composed_from` at all.
+        let text = std::fs::read_to_string(&entry.manifest).unwrap();
+        let without: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(without.get("composed_from").is_none(), "the field is written when unset");
+        assert!(read_manifest(&entry).is_ok());
+    }
+
+    #[test]
+    fn read_files_returns_every_file_of_a_backup_by_its_relative_path() {
+        let (_temp, save_dir, backup_root) = save_fixture();
+        std::fs::create_dir_all(save_dir.join("config")).unwrap();
+        std::fs::write(save_dir.join("config/economy.cfg"), b"payload").unwrap();
+
+        let entry = backup(&save_dir, &backup_root, None).unwrap();
+        let files = read_files(&entry).unwrap();
+
+        assert_eq!(files.get("config/economy.cfg").map(Vec::as_slice), Some(&b"payload"[..]));
+    }
+
+    /// `read_files` has its own guard against an escaping entry name — it
+    /// does not rely on the caller having run `verify` first. Without this,
+    /// a hostile archive read directly by `read_files` (skipping `verify`)
+    /// would let a path like "../entkommen.sav" become a map key, and
+    /// whatever composing does with that key next would write outside the
+    /// save directory.
+    #[test]
+    fn read_files_rejects_a_hostile_path_that_would_escape_the_save_directory() {
+        let (_tmp, saves, backups) = save_fixture();
+        let entry = write_backup_with_single_entry(&backups, &saves, "../entkommen.sav", b"BOESARTIG");
+
+        assert!(matches!(read_files(&entry).unwrap_err(), Error::CorruptBackup(_)));
+    }
+
+    #[test]
     fn verify_rejects_manipulated_archive() {
         let (_tmp, saves, backups) = save_fixture();
         let entry = backup(&saves, &backups, None).unwrap();
@@ -1113,9 +1275,14 @@ mod tests {
     /// entries of the same name (stored, uncompressed). The `zip` crate
     /// refuses this via `ZipWriter` (see `InvalidArchive("Duplicate
     /// filename")`) — but an archive built by hand (or one from another
-    /// tool that does not know this check) can contain exactly that, and
-    /// `ZipArchive::by_index` reads entries by position, not by name, so it
-    /// reads them without complaint.
+    /// tool that does not know this check) can contain exactly that.
+    ///
+    /// What the reader then makes of it is a second question, and the
+    /// answer changed: zip 8.6.0 collapses the two central-directory
+    /// records into one, so `ZipArchive::len()` reports 1 and there is
+    /// only one index to read. The archive this builds is therefore a
+    /// file the manifest describes twice and the reader offers once —
+    /// see the test below for what that pins.
     fn write_zip_with_duplicate_entry(path: &Path, name: &str, content: &[u8]) {
         let mut bytes = Vec::new();
         let mut local_offsets = Vec::new();
@@ -1175,9 +1342,14 @@ mod tests {
     }
 
     /// An archive entry that appears twice under the same name must not
-    /// mask a file that is genuinely missing: if only the number of
-    /// processed entries were counted, the total would still come out right
-    /// despite a file that the manifest lists but the archive lacks.
+    /// mask a file that is genuinely missing. What this proves with zip
+    /// 8.6.0 is the count check, not the duplicate check: the crate
+    /// collapses the two same-named records, so what reaches `verify`
+    /// is one entry where the manifest lists two, and `CountMismatch`
+    /// is the refusal. The `seen` guard cannot fire here and is not
+    /// what is under test — the property is, and the property holds
+    /// either way, because `seen` can never hold more names than the
+    /// archive presents.
     #[test]
     fn verify_rejects_duplicate_entry_masking_a_missing_file() {
         let (_tmp, saves, backups) = save_fixture();
@@ -1331,6 +1503,7 @@ mod tests {
             created_at: created_at.to_string(),
             source: "irrelevant".to_string(),
             label: None,
+            composed_from: None,
             files: BTreeMap::new(),
         };
         std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
@@ -1439,6 +1612,7 @@ mod tests {
             created_at: now_rfc3339(),
             source: save_dir.display().to_string(),
             label: None,
+            composed_from: None,
             files,
         };
         std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();

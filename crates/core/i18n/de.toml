@@ -134,6 +134,14 @@ tag = "Etikett für das Backup"
 [cli.save.list]
 about = "Zeigt die vorhandenen Backups"
 
+[cli.save.parts]
+about = "Listet die Bestandteile auf, die ein Backup zum Zusammenstellen anbietet (Standard: das neueste)"
+none = "Dieses Backup enthält keine zusammenstellbaren Bestandteile."
+
+[cli.save.parts.arg]
+index = "1-basierter Index aus `save list` (Standard: 1, das neueste)"
+at = "Exakter Zeitstempel aus `save list`"
+
 [cli.save.restore]
 about = "Stellt ein Backup wieder her (Standard: das neueste)"
 
@@ -164,6 +172,16 @@ about = "Löscht ein Backup endgültig (Standard: das neueste)"
 index = "1-basierter Index aus `save list` (Standard: 1, das neueste)"
 at = "Exakter Zeitstempel aus `save list`"
 yes = "Bestätigt das endgültige Löschen (erforderlich)"
+
+[cli.save.compose]
+about = "Stellt ein neues Backup aus mehreren Backups zusammen"
+done = "Zusammengestelltes Backup geschrieben: {path} ({count} Bestandteile aus anderen Backups)"
+malformed_part = "'{argument}' ist keine Ersetzung. Erwartet wird <Bestandteil>=<Zeitstempel>, etwa class_level:PVE_TANK=2026-09-16T16:57:38Z."
+
+[cli.save.compose.arg]
+base = "Exakter Zeitstempel aus `save list` des Backups, das alles Nichtersetzte liefert"
+parts = "Ein Bestandteil und das Backup, aus dem er kommt, als <Bestandteil>=<Zeitstempel>; mehrfach angebbar"
+tag = "Etikett für das neue Backup"
 
 [cli.lang]
 about = "Zeigt die Sprache an oder setzt sie"
@@ -250,6 +268,13 @@ archive_unpack_failed = "Archiv konnte nicht entpackt werden – ist es beschäd
 invalid_pak_filename = "ungültiger Dateiname"
 retail_exe_not_found = "Retail.exe nicht gefunden – Spielverzeichnis prüfen"
 umu_run_not_found = "umu-run nicht im PATH gefunden – für den Start ohne Steam wird umu-launcher benötigt (https://github.com/Open-Wine-Components/umu-launcher)"
+unmergeable_part = "'{part}' lässt sich nicht übernehmen: die Basis führt Schemaversion {base}, die Quelle {source}. Ein Spiel-Update hat diese Daten geändert."
+part_missing_in_source = "Das für '{part}' gewählte Backup enthält diesen Bestandteil nicht."
+part_missing_in_base = "Das Basis-Backup enthält '{part}' nicht. Bitte ein anderes Basis-Backup wählen – das Backup, aus dem der Bestandteil kommt, ist nicht die Ursache."
+unknown_part = "'{part}' ist kein Bestandteil, den dieses Backup anbietet."
+part_given_twice = "'{part}' wurde mehrfach angegeben. Jeder Bestandteil kann nur aus einem Backup kommen."
+ambiguous_part = "'{part}' kommt in diesem Backup mehrfach vor, damit ist nicht eindeutig, welcher gemeint ist. Dieser Bestandteil lässt sich nicht zusammenstellen."
+ambiguous_part_in_source = "'{part}' kommt in dem Backup, aus dem es übernommen werden soll, mehrfach vor, damit ist nicht eindeutig, welcher gemeint ist. Bitte für diesen Bestandteil ein anderes Backup wählen – das Basis-Backup ist nicht die Ursache."
 
 [error.pak_config_defect]
 invalid_yaml = "die YAML-Syntax ist ungültig (Zeile {line}, Spalte {column})"
@@ -270,6 +295,17 @@ count_mismatch = "Archiv enthält {found} von {expected} erwarteten Dateien"
 invalid_path = "unzulässiger Pfad im Archiv: {name}"
 empty_path = "unzulässiger (leerer) Pfad im Archiv"
 outside_save_dir = "Pfad außerhalb des Save-Verzeichnisses"
+
+[error.save_data_defect]
+too_short = "Die Spielstandsdatei ist zu kurz, um eine zu sein: {len} Bytes."
+not_ssf1 = "Das ist keine Spielstandsdatei des Spiels."
+unsupported_encoding = "Die Spielstandsdatei nutzt Kodierung {encoding}, die diese Version nicht lesen kann."
+payload_length_mismatch = "Die Spielstandsdatei nennt {declared} Bytes und enthält {actual}."
+content_length_mismatch = "Die Spielstandsdatei nennt {declared} Bytes nach dem Entpacken und liefert {actual}."
+checksum_mismatch = "Die Spielstandsdatei passt nicht zu ihrer eigenen Prüfsumme."
+not_deflate = "Die Spielstandsdatei lässt sich nicht entpacken. Ein Spiel-Update kann das Format geändert haben."
+not_json = "Die Spielstandsdatei enthält nicht die Daten, die diese Version erwartet."
+round_trip_failed = "{file} ließ sich nicht lesbar zurückschreiben; das Backup wurde nicht erstellt."
 
 [error.archive_defect]
 not_a_zip = "Datei lässt sich nicht als ZIP öffnen: {path}"
@@ -414,6 +450,40 @@ menu_rename = "Umbenennen …"
 menu_show_in_files = "Im Dateimanager zeigen"
 menu_restore = "Wiederherstellen …"
 menu_delete = "Löschen …"
+
+[gui.compose]
+tab = "Save zusammenstellen"
+tab_backups = "Backups"
+intro = "Ein Basis-Save liefert alle Bestandteile. Einzelne Bestandteile lassen sich aus anderen Backups holen. Das Ergebnis wird als neues Backup abgelegt — die echten Spielstände bleiben unberührt, bis es wiederhergestellt wird."
+base = "Basis-Save"
+base_meta = "{size} · {parts} Bestandteile"
+reset_all = "Alles auf Basis zurücksetzen"
+filter_placeholder = "Bestandteile filtern"
+only_replaced = "Nur ersetzte"
+count = "{shown} von {total} Bestandteilen"
+col_part = "BESTANDTEIL"
+col_source = "QUELLE"
+col_value = "STAND"
+from_base = "Basis-Save"
+replaced_badge = "ersetzt"
+older_badge = "ältere Spielversion"
+group_mixed = "gemischt"
+group_replaced = "{replaced} ersetzt"
+picker_placeholder = "Backups filtern"
+picker_empty = "Kein Backup passt zum Filter."
+parts_empty = "Kein Bestandteil passt zum Filter."
+base_unreadable = "Dieses Basis-Save ließ sich nicht lesen, daher gibt es keine Bestandteile zur Auswahl."
+loading = "Backup wird gelesen …"
+label_placeholder = "Etikett des neuen Backups"
+create_button = "Backup erzeugen"
+no_backups = "Es gibt noch kein Backup, aus dem sich etwas zusammenstellen ließe."
+summary_none = "Alles stammt aus dem Basis-Save."
+summary_one = "1 Bestandteil aus einem anderen Backup."
+summary_many_one_source = "{parts} Bestandteile aus 1 anderen Backup."
+summary_many = "{parts} Bestandteile aus {backups} anderen Backups."
+version_warning_one = "Ein Bestandteil stammt aus einer älteren Spielversion. Er wird auf der Version des Basis-Saves geschrieben."
+version_warning_many = "{count} Bestandteile stammen aus einer älteren Spielversion. Sie werden auf der Version des Basis-Saves geschrieben."
+read_failed = "Dieses Backup ließ sich nicht lesen: {detail}"
 
 [gui.settings]
 directories_title = "Erkannte Verzeichnisse"
@@ -596,3 +666,29 @@ profile_notice_hint = "Profil „{name}“ – mit Anwenden zurückstellen."
 update_available = "Version {version} ist verfügbar."
 update_check_failed = "Update-Prüfung fehlgeschlagen: {detail}"
 update_installed = "{version} installiert – bitte den Launcher neu starten."
+compose_done = "Zusammengestelltes Backup {created_at} erstellt."
+compose_failed = "Zusammenstellen fehlgeschlagen: {detail}"
+compose_running = "Backup wird zusammengestellt …"
+compose_base_gone = "Das Basis-Backup gibt es nicht mehr. Es wurde nichts zusammengestellt."
+compose_source_gone = "Ein Backup, aus dem ein Bestandteil stammen sollte, gibt es nicht mehr. Es wurde nichts zusammengestellt."
+
+[savedata.summary]
+level = "Stufe {level}"
+mastery_points = "{points} Meisterschaftspunkte"
+victories = "{count} Siege"
+
+[savedata.group]
+class_level = "Klassenstufe"
+armour_loyalist = "Rüstung (Loyalist)"
+armour_chaos = "Rüstung (Chaos)"
+weapon = "Waffenmeisterschaft"
+heraldry = "Wappen"
+loadout = "Ausrüstungssatz"
+challenges = "Herausforderungen"
+story = "Kampagne"
+economy = "Wirtschaft"
+pve_state = "Operationen"
+horde_mode = "Hordenmodus"
+tutorial = "Tutorial-Hinweise"
+mutators = "Mutator-Herausforderungen"
+achievements = "Erfolge"

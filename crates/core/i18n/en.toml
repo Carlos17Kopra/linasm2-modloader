@@ -134,6 +134,14 @@ tag = "Label for the backup"
 [cli.save.list]
 about = "Lists the backups present"
 
+[cli.save.parts]
+about = "Lists the parts a backup offers for composing (default: the newest one)"
+none = "This backup holds no parts that can be composed."
+
+[cli.save.parts.arg]
+index = "1-based index from `save list` (default: 1, the newest)"
+at = "Exact timestamp from `save list`"
+
 [cli.save.restore]
 about = "Restores a backup (default: the newest one)"
 
@@ -164,6 +172,16 @@ about = "Deletes a backup for good (default: the newest one)"
 index = "1-based index from `save list` (default: 1, the newest)"
 at = "Exact timestamp from `save list`"
 yes = "Confirms the permanent deletion (required)"
+
+[cli.save.compose]
+about = "Composes a new backup out of several backups"
+done = "Composed backup written: {path} ({count} parts taken from other backups)"
+malformed_part = "'{argument}' is not a replacement. Expected <part>=<timestamp>, for instance class_level:PVE_TANK=2026-09-16T16:57:38Z."
+
+[cli.save.compose.arg]
+base = "Exact timestamp from `save list` of the backup that supplies everything not replaced"
+parts = "A part and the backup it comes from, as <part>=<timestamp>; may be given several times"
+tag = "Label for the new backup"
 
 [cli.lang]
 about = "Shows or sets the language"
@@ -250,6 +268,13 @@ archive_unpack_failed = "the archive could not be unpacked – is it damaged?"
 invalid_pak_filename = "invalid file name"
 retail_exe_not_found = "Retail.exe not found – check the game directory"
 umu_run_not_found = "umu-run not found on the PATH – starting without Steam needs umu-launcher (https://github.com/Open-Wine-Components/umu-launcher)"
+unmergeable_part = "'{part}' cannot be taken over: the base holds schema version {base}, the source {source}. A game update has changed this data."
+part_missing_in_source = "The backup chosen for '{part}' does not hold that part."
+part_missing_in_base = "The base backup does not hold '{part}'. Choose a different base backup — the backup the part comes from is not the problem."
+unknown_part = "'{part}' is not a part this backup offers."
+part_given_twice = "'{part}' was given more than once. Each part can come from only one backup."
+ambiguous_part = "'{part}' occurs more than once in this backup, so it is not clear which one is meant. This part cannot be composed."
+ambiguous_part_in_source = "'{part}' occurs more than once in the backup it is taken from, so it is not clear which one is meant. Choose a different backup for this part — the base backup is not the problem."
 
 [error.pak_config_defect]
 invalid_yaml = "the YAML syntax is invalid (line {line}, column {column})"
@@ -270,6 +295,17 @@ count_mismatch = "the archive holds {found} of {expected} expected files"
 invalid_path = "invalid path in the archive: {name}"
 empty_path = "invalid (empty) path in the archive"
 outside_save_dir = "path outside the save directory"
+
+[error.save_data_defect]
+too_short = "The savegame file is too short to be one: {len} bytes."
+not_ssf1 = "This is not a savegame file the game wrote."
+unsupported_encoding = "The savegame file uses encoding {encoding}, which this version cannot read."
+payload_length_mismatch = "The savegame file says it holds {declared} bytes and holds {actual}."
+content_length_mismatch = "The savegame file says it unpacks to {declared} bytes and unpacks to {actual}."
+checksum_mismatch = "The savegame file does not match its own checksum."
+not_deflate = "The savegame file cannot be unpacked. A game update may have changed the format."
+not_json = "The savegame file does not hold the data this version expects."
+round_trip_failed = "{file} could not be written back in a readable form; the backup was not created."
 
 [error.archive_defect]
 not_a_zip = "the file cannot be opened as a ZIP: {path}"
@@ -413,6 +449,40 @@ menu_rename = "Rename …"
 menu_show_in_files = "Show in file manager"
 menu_restore = "Restore …"
 menu_delete = "Delete …"
+
+[gui.compose]
+tab = "Compose a save"
+tab_backups = "Backups"
+intro = "The base save supplies every part. Individual parts can be taken from other backups. The result is put away as a new backup — the real save data stays untouched until it is restored."
+base = "Base save"
+base_meta = "{size} · {parts} parts"
+reset_all = "Reset everything to the base"
+filter_placeholder = "Filter parts"
+only_replaced = "Only replaced"
+count = "{shown} of {total} parts"
+col_part = "PART"
+col_source = "SOURCE"
+col_value = "VALUE"
+from_base = "Base save"
+replaced_badge = "replaced"
+older_badge = "older game version"
+group_mixed = "mixed"
+group_replaced = "{replaced} replaced"
+picker_placeholder = "Filter backups"
+picker_empty = "No backup matches the filter."
+parts_empty = "No part matches the filter."
+base_unreadable = "This base save could not be read, so there is no part to choose from."
+loading = "Reading backup …"
+label_placeholder = "Label of the new backup"
+create_button = "Create backup"
+no_backups = "There is no backup to compose from yet."
+summary_none = "Everything comes from the base save."
+summary_one = "1 part from another backup."
+summary_many_one_source = "{parts} parts from 1 other backup."
+summary_many = "{parts} parts from {backups} other backups."
+version_warning_one = "One part comes from an older game version. It is written at the base's version."
+version_warning_many = "{count} parts come from an older game version. They are written at the base's version."
+read_failed = "This backup could not be read: {detail}"
 
 [gui.settings]
 directories_title = "Detected directories"
@@ -595,3 +665,29 @@ profile_notice_hint = "Profile \"{name}\" – defer with Apply."
 update_available = "Version {version} is available."
 update_check_failed = "Update check failed: {detail}"
 update_installed = "{version} installed – please restart the launcher."
+compose_done = "Composed backup {created_at} created."
+compose_failed = "Composing failed: {detail}"
+compose_running = "Composing the backup …"
+compose_base_gone = "The base backup no longer exists. Nothing was composed."
+compose_source_gone = "A backup one part was to come from no longer exists. Nothing was composed."
+
+[savedata.summary]
+level = "level {level}"
+mastery_points = "{points} mastery points"
+victories = "{count} victories"
+
+[savedata.group]
+class_level = "Class level"
+armour_loyalist = "Armour (Loyalist)"
+armour_chaos = "Armour (Chaos)"
+weapon = "Weapon mastery"
+heraldry = "Heraldry"
+loadout = "Loadout"
+challenges = "Challenges"
+story = "Campaign"
+economy = "Economy"
+pve_state = "Operations"
+horde_mode = "Horde mode"
+tutorial = "Tutorial hints"
+mutators = "Mutator challenges"
+achievements = "Achievements"
