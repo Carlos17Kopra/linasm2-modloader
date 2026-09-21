@@ -1607,8 +1607,11 @@ mod tests {
             lines.iter().any(|line| line.starts_with("class_level:PVE_TANK")),
             "{lines:?}"
         );
+        // The fixture stores 42 and the line says 43: class levels are
+        // counted from zero in the save and from one in the game, and
+        // `summarize` reports what the game shows.
         assert!(
-            lines.iter().any(|line| line.contains("Class level") && line.contains("level 42")),
+            lines.iter().any(|line| line.contains("Class level") && line.contains("level 43")),
             "{lines:?}"
         );
     }

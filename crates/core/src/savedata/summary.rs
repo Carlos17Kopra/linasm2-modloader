@@ -14,7 +14,15 @@ type Rule = (&'static str, fn(u64) -> String);
 /// Which field sums a group's parts up, and how it is worded.
 fn rule(group: &str) -> Option<Rule> {
     match group {
-        "class_level" => Some(("currentLevel", |value| crate::t!("savedata.summary.level", level = value))),
+        // The save counts class levels from zero, the game shows them
+        // from one: a class nobody has played stores 0 and reads as
+        // level 1 on the screen, and the cap of 25 is stored as 24.
+        // Reporting the stored number would have someone compare a
+        // backup against a figure the game never showed them.
+        // `saturating_add` because the number comes off a disk.
+        "class_level" => Some(("currentLevel", |value: u64| {
+            crate::t!("savedata.summary.level", level = value.saturating_add(1))
+        })),
         "weapon" => {
             Some(("masteryPoints", |value| crate::t!("savedata.summary.mastery_points", points = value)))
         }
@@ -168,13 +176,41 @@ mod tests {
         }
     }
 
+    /// The save counts class levels from zero and the game shows them
+    /// from one, so a stored 21 is level 22 on the screen. Reporting the
+    /// stored number would have someone compare a backup against a
+    /// figure the game never showed them.
     #[test]
-    fn a_class_part_is_summed_up_by_its_level() {
+    fn a_class_part_is_summed_up_by_the_level_the_game_shows() {
         let _guard = crate::i18n::language_test_lock();
         crate::i18n::set_language(crate::i18n::Language::English);
         let documents = documents_fixture();
         let part = part_by_id(&documents, "class_level:PVE_TANK").unwrap();
-        assert_eq!(summarize(&part, &documents).unwrap(), "level 21");
+        assert_eq!(summarize(&part, &documents).unwrap(), "level 22");
+    }
+
+    /// The common case, and the one that would look wrong first: a class
+    /// nobody has played is level 1 in the game, not level 0.
+    #[test]
+    fn a_class_that_was_never_played_is_level_one() {
+        let _guard = crate::i18n::language_test_lock();
+        crate::i18n::set_language(crate::i18n::Language::English);
+        let mut documents = documents_fixture();
+        documents.get_mut("config/user_progression.cfg").unwrap()["UserProgression"]["UserMastery"]
+            ["masteryStates"]["PVE_TANK"]["currentLevel"] = json!(0);
+        let part = part_by_id(&documents, "class_level:PVE_TANK").unwrap();
+        assert_eq!(summarize(&part, &documents).unwrap(), "level 1");
+    }
+
+    /// Mastery points and victories are counts, not levels — nothing is
+    /// added to those.
+    #[test]
+    fn a_count_is_reported_as_it_stands() {
+        let _guard = crate::i18n::language_test_lock();
+        crate::i18n::set_language(crate::i18n::Language::English);
+        let documents = documents_fixture();
+        let part = part_by_id(&documents, "weapon:hgun_volkite_pistol").unwrap();
+        assert_eq!(summarize(&part, &documents).unwrap(), "4 mastery points");
     }
 
     #[test]

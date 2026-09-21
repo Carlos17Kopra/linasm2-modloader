@@ -39,7 +39,10 @@ before this was designed, because two of them decided the architecture:
 - `summary::summarize` yields a figure for three groups only — class
   level, weapon mastery, heraldry victories. For the other eleven the
   STAND column stays empty, deliberately: a field an older build did
-  not record must not be shown as a zero.
+  not record must not be shown as a zero. Class levels are stored from
+  zero and shown from one, so the figure is the stored number plus one
+  — the level the game itself displays. The other two are counts and
+  are reported as they stand.
 
 ## The shape of the tab
 
