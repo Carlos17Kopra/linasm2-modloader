@@ -348,14 +348,7 @@ fn table(
     );
     ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
         if rows.is_empty() {
-            // Nothing at all rather than "no match" while the base is
-            // still being decoded: there is no part list yet to filter.
-            let hint = if app.compose.parts.is_empty() && app.compose.loading.is_some() {
-                t!("gui.compose.loading")
-            } else {
-                t!("gui.compose.parts_empty")
-            };
-            super::empty_hint(ui, &hint);
+            super::empty_hint(ui, &app.compose.table_empty_hint());
             return;
         }
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {

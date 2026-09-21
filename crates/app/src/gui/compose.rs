@@ -274,6 +274,26 @@ impl ComposeUi {
         }
     }
 
+    /// What an empty table says, if the table is empty.
+    ///
+    /// "No part matches the filter" is only true when there is a part
+    /// list to filter at all. There is none while the base is still
+    /// being decoded, and there never will be one when its read failed
+    /// — and that case cannot lean on the banner above the table
+    /// either, because the banner is cleared by the next read that
+    /// succeeds while the base stays unreadable.
+    pub(super) fn table_empty_hint(&self) -> String {
+        if self.parts.is_empty() {
+            if self.loading.is_some() {
+                return t!("gui.compose.loading");
+            }
+            if self.base.as_ref().is_some_and(|base| self.failed.contains(base)) {
+                return t!("gui.compose.base_unreadable");
+            }
+        }
+        t!("gui.compose.parts_empty")
+    }
+
     /// What the footer says about the composition as it stands.
     ///
     /// Four whole sentences rather than fragments assembled from
@@ -823,6 +843,45 @@ pub(crate) mod tests {
         set_language(Language::German);
         assert_eq!(ui.summary(), "1 Bestandteil aus einem anderen Backup.");
         set_language(Language::English);
+    }
+
+    /// While the base is being decoded there is no part list yet, so
+    /// the filter cannot be what the table is empty for.
+    #[test]
+    fn an_empty_table_says_the_base_is_being_read_while_it_is() {
+        let _held = language_test_lock();
+        let mut ui = ComposeUi::default();
+        ui.set_base("2026-09-20_100000".to_string());
+        ui.loading = Some("2026-09-20_100000".to_string());
+
+        assert_eq!(ui.table_empty_hint(), t!("gui.compose.loading"));
+    }
+
+    /// A base whose read failed has no part list and will get none this
+    /// session. Blaming the filter sends the reader to the filter field,
+    /// and the banner that carries the real reason is gone the moment
+    /// another read succeeds.
+    #[test]
+    fn an_empty_table_after_a_failed_base_read_does_not_blame_the_filter() {
+        let _held = language_test_lock();
+        let mut ui = ComposeUi::default();
+        ui.set_base("2026-09-20_100000".to_string());
+        ui.failed.insert("2026-09-20_100000".to_string());
+
+        assert_eq!(ui.table_empty_hint(), t!("gui.compose.base_unreadable"));
+    }
+
+    /// With a part list in hand the filter really is the only reason
+    /// the table can be empty.
+    #[test]
+    fn an_empty_table_with_a_part_list_blames_the_filter() {
+        let _held = language_test_lock();
+        let mut ui = ui_with_base();
+        ui.parts = sample_parts();
+        ui.part_filter = "nothing matches this".to_string();
+
+        assert!(ui.rows(&ui.parts).is_empty());
+        assert_eq!(ui.table_empty_hint(), t!("gui.compose.parts_empty"));
     }
 
     #[test]
