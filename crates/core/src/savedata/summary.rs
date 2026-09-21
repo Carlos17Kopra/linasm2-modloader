@@ -76,6 +76,27 @@ mod tests {
         documents
     }
 
+    /// `group_name` falls back to the raw id, so a group added to
+    /// `GROUPS` without an arm here prints `pve_state` where "Operations"
+    /// belongs, and nothing else notices: the i18n test proves that every
+    /// key used in the sources exists, never that every group uses one.
+    /// This is that missing half — the same decision
+    /// `requires_exclusive_access` makes impossible to forget by refusing
+    /// to compile.
+    #[test]
+    fn every_group_in_the_table_has_a_name_of_its_own() {
+        for group in crate::savedata::catalogue::GROUPS {
+            let key = std::format!("savedata.group.{}", group.id);
+            assert!(crate::i18n::has_key(&key), "no catalogue entry {key}");
+            assert_ne!(
+                group_name(group.id),
+                group.id,
+                "group_name has no arm for '{}' and prints its id",
+                group.id
+            );
+        }
+    }
+
     #[test]
     fn a_class_part_is_summed_up_by_its_level() {
         let _guard = crate::i18n::language_test_lock();

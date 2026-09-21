@@ -135,7 +135,7 @@ tag = "Label for the backup"
 about = "Lists the backups present"
 
 [cli.save.parts]
-about = "Lists the parts a backup offers for composing"
+about = "Lists the parts a backup offers for composing (default: the newest one)"
 none = "This backup holds no parts that can be composed."
 
 [cli.save.parts.arg]

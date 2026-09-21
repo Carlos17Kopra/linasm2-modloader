@@ -135,7 +135,7 @@ tag = "Etikett für das Backup"
 about = "Zeigt die vorhandenen Backups"
 
 [cli.save.parts]
-about = "Listet die Bestandteile auf, die ein Backup zum Zusammenstellen anbietet"
+about = "Listet die Bestandteile auf, die ein Backup zum Zusammenstellen anbietet (Standard: das neueste)"
 none = "Dieses Backup enthält keine zusammenstellbaren Bestandteile."
 
 [cli.save.parts.arg]
