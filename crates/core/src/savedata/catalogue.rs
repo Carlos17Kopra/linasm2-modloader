@@ -198,7 +198,24 @@ pub fn documents(files: &BTreeMap<String, Vec<u8>>) -> Result<Documents> {
 }
 
 /// Every part these documents offer, in the order of `GROUPS`.
+///
+/// An id that occurs more than once is left out entirely rather than
+/// offered once: see `part_by_id`.
 pub fn parts(documents: &Documents) -> Vec<Part> {
+    let found = discover(documents);
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for part in &found {
+        *counts.entry(part.id.as_str()).or_default() += 1;
+    }
+    found.iter().filter(|part| counts[part.id.as_str()] == 1).cloned().collect()
+}
+
+/// Every part the data yields, repeated ids included.
+///
+/// The ids come out of the save, not out of the table, so nothing here
+/// can promise they are distinct — `parts` and `part_by_id` decide what
+/// to do about that, and they have to decide it the same way.
+fn discover(documents: &Documents) -> Vec<Part> {
     let mut parts = Vec::new();
     for group in GROUPS {
         let Some(document) = documents.get(group.file) else {
@@ -249,9 +266,23 @@ pub fn parts(documents: &Documents) -> Vec<Part> {
     parts
 }
 
-/// The part with this id, if these documents offer it.
-pub fn part_by_id(documents: &Documents, id: &str) -> Option<Part> {
-    parts(documents).into_iter().find(|part| part.id == id)
+/// The part with this id, and only if exactly one node answers to it.
+///
+/// Two elements of a list can carry the same key field — `masteryUid`
+/// is an assumption about reverse-engineered data, not a guarantee the
+/// format makes. Where that happens, taking the first match would write
+/// one of the two and leave the other, and the composed backup would
+/// hold half of each with nothing said about it. Refusing by name is
+/// the only answer this tool is allowed to give.
+pub fn part_by_id(documents: &Documents, id: &str) -> Result<Part> {
+    let mut matching = discover(documents).into_iter().filter(|part| part.id == id);
+    let Some(part) = matching.next() else {
+        return Err(Error::UnknownPart { part: id.to_string() });
+    };
+    if matching.next().is_some() {
+        return Err(Error::AmbiguousPart { part: id.to_string() });
+    }
+    Ok(part)
 }
 
 #[cfg(test)]
@@ -357,6 +388,48 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Nothing in the data stops two list elements from carrying the
+    /// same key field, and then one id names two nodes. Writing into
+    /// the first of them is the one outcome that must not happen: the
+    /// composed backup would be half from one save and half from the
+    /// other, with no error and no warning. So the id is not offered,
+    /// and naming it anyway is refused as ambiguous rather than as
+    /// unknown — the backup does hold it, twice.
+    #[test]
+    fn an_id_two_list_elements_share_is_refused_instead_of_resolved_to_the_first() {
+        let mut documents = documents_fixture();
+        documents.insert(
+            "config/loadouts.cfg".to_string(),
+            json!({"Loadouts": {"systemVersion": 1277, "Sets": {"loadoutSets": [
+                {"json_version": 2, "masteryUid": "STORY_TITUS", "slot": 1},
+                {"json_version": 2, "masteryUid": "STORY_TITUS", "slot": 2},
+                {"json_version": 2, "masteryUid": "STORY_GADRIEL"}
+            ]}}}),
+        );
+
+        let offered = parts(&documents);
+        let ids: Vec<&str> = offered.iter().map(|p| p.id.as_str()).collect();
+        assert!(
+            !ids.contains(&"loadout:STORY_TITUS"),
+            "an id that names two nodes names neither: {ids:?}"
+        );
+        assert!(ids.contains(&"loadout:STORY_GADRIEL"), "the unambiguous neighbour is still offered");
+
+        assert!(matches!(
+            part_by_id(&documents, "loadout:STORY_TITUS").unwrap_err(),
+            Error::AmbiguousPart { .. }
+        ));
+    }
+
+    #[test]
+    fn an_id_the_documents_do_not_offer_is_refused_as_unknown() {
+        let documents = documents_fixture();
+        assert!(matches!(
+            part_by_id(&documents, "loadout:NOBODY").unwrap_err(),
+            Error::UnknownPart { .. }
+        ));
     }
 
     #[test]

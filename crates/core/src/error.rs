@@ -32,6 +32,11 @@ pub enum Error {
     PartMissingInSource { part: String },
     /// A part id that this backup does not offer.
     UnknownPart { part: String },
+    /// A part id that this backup offers more than once, because two
+    /// entries of a list carry the same key. Its own variant rather
+    /// than `UnknownPart`: the backup does hold that part — twice —
+    /// and picking either one would compose data nobody asked for.
+    AmbiguousPart { part: String },
     /// Looking for a new version, or installing it, went wrong. Its own
     /// defect type for the same reason as `BackupDefect`: the detail is
     /// translated at `Display` time, not baked in where it happened.
@@ -391,6 +396,9 @@ impl std::fmt::Display for Error {
             }
             Error::UnknownPart { part } => {
                 i18n::format("error.unknown_part", &[("part", part.clone())])
+            }
+            Error::AmbiguousPart { part } => {
+                i18n::format("error.ambiguous_part", &[("part", part.clone())])
             }
         };
         f.write_str(&text)

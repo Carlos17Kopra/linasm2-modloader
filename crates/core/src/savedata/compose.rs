@@ -38,8 +38,7 @@ pub fn compose(
     let mut recorded: BTreeMap<String, String> = BTreeMap::new();
 
     for (part_id, source_entry) in replacements {
-        let part = catalogue::part_by_id(&documents, part_id)
-            .ok_or_else(|| Error::UnknownPart { part: part_id.clone() })?;
+        let part = catalogue::part_by_id(&documents, part_id)?;
 
         if !sources.contains_key(&source_entry.created_at) {
             saves::verify(source_entry)?;
