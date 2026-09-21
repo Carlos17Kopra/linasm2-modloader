@@ -250,6 +250,27 @@ impl ComposeUi {
             count => Some(t!("gui.compose.version_warning_many", count = count)),
         }
     }
+
+    /// What the footer says about the composition as it stands.
+    ///
+    /// Four whole sentences rather than fragments assembled from
+    /// counts: "1 Bestandteil aus einem anderen Backup" and "2
+    /// Bestandteile aus 1 anderen Backup" do not share a shape, and
+    /// English does not share one with either.
+    pub(super) fn summary(&self) -> String {
+        let parts = self.sources.len();
+        if parts == 0 {
+            return t!("gui.compose.summary_none");
+        }
+        if parts == 1 {
+            return t!("gui.compose.summary_one");
+        }
+        let backups: BTreeSet<&String> = self.sources.values().collect();
+        if backups.len() == 1 {
+            return t!("gui.compose.summary_many_one_source", parts = parts);
+        }
+        t!("gui.compose.summary_many", parts = parts, backups = backups.len())
+    }
 }
 
 #[cfg(test)]
@@ -568,5 +589,67 @@ mod tests {
         let ui = ui_with_base();
 
         assert_eq!(ui.version_warning(&sample_parts()), None);
+    }
+
+    #[test]
+    fn the_summary_says_nothing_is_replaced_in_both_languages() {
+        let _held = language_test_lock();
+        let ui = ui_with_base();
+
+        set_language(Language::English);
+        assert_eq!(ui.summary(), "Everything comes from the base save.");
+        set_language(Language::German);
+        assert_eq!(ui.summary(), "Alles stammt aus dem Basis-Save.");
+        set_language(Language::English);
+    }
+
+    #[test]
+    fn the_summary_counts_parts_and_the_backups_they_come_from() {
+        let _held = language_test_lock();
+        let mut ui = ui_with_base();
+        ui.sources
+            .insert("class_level:PVE_TANK".to_string(), "2026-09-19_080000".to_string());
+        ui.sources
+            .insert("class_level:PVE_SNIPER".to_string(), "2026-09-18_070000".to_string());
+
+        set_language(Language::English);
+        assert_eq!(ui.summary(), "2 parts from 2 other backups.");
+        set_language(Language::German);
+        assert_eq!(ui.summary(), "2 Bestandteile aus 2 anderen Backups.");
+        set_language(Language::English);
+    }
+
+    /// Two parts out of one backup: the sentence counts backups, not
+    /// picks, so the same source twice is still one backup.
+    #[test]
+    fn the_summary_counts_a_backup_once_however_many_parts_come_from_it() {
+        let _held = language_test_lock();
+        let mut ui = ui_with_base();
+        for id in ["class_level:PVE_TANK", "class_level:PVE_SNIPER"] {
+            ui.sources.insert(id.to_string(), "2026-09-19_080000".to_string());
+        }
+
+        set_language(Language::English);
+        assert_eq!(ui.summary(), "2 parts from 1 other backup.");
+        set_language(Language::German);
+        assert_eq!(ui.summary(), "2 Bestandteile aus 1 anderen Backup.");
+        set_language(Language::English);
+    }
+
+    /// One part from one backup: both counts are singular, and German and
+    /// English word that differently enough that a composed sentence would
+    /// go wrong — hence four complete sentences rather than fragments.
+    #[test]
+    fn the_summary_has_its_own_sentence_for_a_single_part() {
+        let _held = language_test_lock();
+        let mut ui = ui_with_base();
+        ui.sources
+            .insert("class_level:PVE_TANK".to_string(), "2026-09-19_080000".to_string());
+
+        set_language(Language::English);
+        assert_eq!(ui.summary(), "1 part from another backup.");
+        set_language(Language::German);
+        assert_eq!(ui.summary(), "1 Bestandteil aus einem anderen Backup.");
+        set_language(Language::English);
     }
 }
