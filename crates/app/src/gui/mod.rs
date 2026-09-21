@@ -26,6 +26,7 @@
 //! error or a half-drawn row.
 
 mod commands;
+mod compose;
 mod dialogs;
 mod format;
 mod icons;
@@ -333,6 +334,8 @@ pub struct App {
     saves_blocked: Option<String>,
     /// The Steam user profiles found in the prefix, for the picker.
     steam_users: Vec<String>,
+    /// The state behind the "compose a save" tab.
+    compose: compose::ComposeUi,
 
     drag: Option<Drag>,
     task: Option<tasks::Running>,
@@ -379,6 +382,7 @@ impl App {
             verified: HashSet::new(),
             saves_blocked: None,
             steam_users: Vec::new(),
+            compose: compose::ComposeUi::default(),
             drag: None,
             task: None,
             update: update::UpdateUi::default(),
