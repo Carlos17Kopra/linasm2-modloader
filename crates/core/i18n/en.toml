@@ -457,6 +457,7 @@ summary_many_one_source = "{parts} parts from 1 other backup."
 summary_many = "{parts} parts from {backups} other backups."
 version_warning_one = "One part comes from an older game version. It is written at the base's version."
 version_warning_many = "{count} parts come from an older game version. They are written at the base's version."
+read_failed = "This backup could not be read: {detail}"
 
 [gui.settings]
 directories_title = "Detected directories"

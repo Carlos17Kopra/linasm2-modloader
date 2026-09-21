@@ -4,7 +4,9 @@
 //! visible, which parts are replaced, what the footer says — and is
 //! tested that way. `compose_page` draws it.
 
+use sm2_core::savedata::catalogue;
 use sm2_core::savedata::catalogue::{system_version, Documents, Part};
+use sm2_core::saves;
 use sm2_core::saves::BackupEntry;
 use sm2_core::t;
 use std::collections::{BTreeMap, BTreeSet};
@@ -270,6 +272,96 @@ impl ComposeUi {
             return t!("gui.compose.summary_many_one_source", parts = parts);
         }
         t!("gui.compose.summary_many", parts = parts, backups = backups.len())
+    }
+
+    /// The next backup that has to be read, if any.
+    ///
+    /// The base comes first: without it there is no part list, and a
+    /// source is only ever chosen for a part the base offers. One read
+    /// at a time — two threads decoding 3.6 MB of JSON each buy nothing
+    /// and the second one is usually for a choice already superseded.
+    pub(super) fn needs(&self, backups: &[BackupEntry]) -> Option<BackupEntry> {
+        if self.loading.is_some() {
+            return None;
+        }
+        let wanted = std::iter::once(self.base.as_ref()?)
+            .chain(self.sources.values())
+            .find(|created_at| {
+                !self.decoded.contains_key(*created_at) && !self.failed.contains(*created_at)
+            })?;
+        backups.iter().find(|entry| &entry.created_at == wanted).cloned()
+    }
+
+    /// Reads one backup on a worker thread.
+    ///
+    /// `verify` first, and that is not optional: `read_files` checks the
+    /// bytes against nothing, the manifest is what says they are still
+    /// the ones that were backed up. Without it a damaged backup offers
+    /// a part list that looks perfectly ordinary, and `compose`, which
+    /// does verify, refuses the very ids this table just offered. The
+    /// order is `cli::part_lines`'s.
+    pub(super) fn start_read(&mut self, entry: &BackupEntry, ctx: &egui::Context) {
+        let (sender, receiver) = mpsc::channel();
+        let entry = entry.clone();
+        let created_at = entry.created_at.clone();
+        let ctx = ctx.clone();
+
+        self.loading = Some(created_at.clone());
+        self.incoming = Some(receiver);
+        std::thread::spawn(move || {
+            let result = saves::verify(&entry)
+                .and_then(|()| saves::read_files(&entry))
+                .and_then(|files| catalogue::documents(&files))
+                .map_err(|e| e.to_string());
+            // The receiver is gone if the window was closed meanwhile —
+            // not an error, just a result nobody picks up any more.
+            let _ = sender.send(Loaded { created_at, result });
+            ctx.request_repaint();
+        });
+    }
+
+    /// Takes a finished read, if one has arrived. `true` when something
+    /// changed and the caller should redraw.
+    pub(super) fn poll(&mut self) -> bool {
+        let Some(incoming) = &self.incoming else { return false };
+        match incoming.try_recv() {
+            Ok(loaded) => {
+                self.incoming = None;
+                self.accept(loaded);
+                true
+            }
+            Err(mpsc::TryRecvError::Empty) => false,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.incoming = None;
+                self.loading = None;
+                true
+            }
+        }
+    }
+
+    fn accept(&mut self, loaded: Loaded) {
+        self.loading = None;
+        match loaded.result {
+            Ok(documents) => {
+                // The base is also what the part list comes from, and
+                // it is the only backup that may fill it: a source
+                // offers parts the base does not have, and offering
+                // those would produce ids `compose` refuses.
+                if self.base.as_deref() == Some(loaded.created_at.as_str()) {
+                    self.parts = catalogue::parts(&documents);
+                }
+                self.decoded.insert(loaded.created_at, Arc::new(documents));
+                self.error = None;
+            }
+            Err(detail) => {
+                // Every part that named this backup goes back to the
+                // base. Leaving them pointing at a backup that cannot
+                // be read would offer a button that is certain to fail.
+                self.sources.retain(|_, created_at| created_at != &loaded.created_at);
+                self.failed.insert(loaded.created_at);
+                self.error = Some(t!("gui.compose.read_failed", detail = detail));
+            }
+        }
     }
 }
 
@@ -651,5 +743,89 @@ mod tests {
         set_language(Language::German);
         assert_eq!(ui.summary(), "1 Bestandteil aus einem anderen Backup.");
         set_language(Language::English);
+    }
+
+    #[test]
+    fn the_base_is_what_is_wanted_first() {
+        let backups = [entry("2026-09-20_100000"), entry("2026-09-19_080000")];
+        let mut ui = ComposeUi::default();
+        ui.set_base("2026-09-20_100000".to_string());
+
+        assert_eq!(ui.needs(&backups).map(|e| e.created_at), Some("2026-09-20_100000".to_string()));
+    }
+
+    #[test]
+    fn a_chosen_source_is_wanted_once_the_base_is_there() {
+        let backups = [entry("2026-09-20_100000"), entry("2026-09-19_080000")];
+        let mut ui = ComposeUi::default();
+        ui.set_base("2026-09-20_100000".to_string());
+        ui.decoded.insert("2026-09-20_100000".to_string(), Arc::new(Documents::new()));
+        ui.sources
+            .insert("class_level:PVE_TANK".to_string(), "2026-09-19_080000".to_string());
+
+        assert_eq!(ui.needs(&backups).map(|e| e.created_at), Some("2026-09-19_080000".to_string()));
+    }
+
+    #[test]
+    fn nothing_is_wanted_while_a_read_is_running() {
+        let backups = [entry("2026-09-20_100000")];
+        let mut ui = ComposeUi::default();
+        ui.set_base("2026-09-20_100000".to_string());
+        ui.loading = Some("2026-09-20_100000".to_string());
+
+        assert!(ui.needs(&backups).is_none());
+    }
+
+    /// A backup that failed to read must not be asked for again on the very
+    /// next frame — that would be a loop hammering a damaged archive.
+    #[test]
+    fn a_backup_that_failed_is_not_wanted_again() {
+        let backups = [entry("2026-09-20_100000")];
+        let mut ui = ComposeUi::default();
+        ui.set_base("2026-09-20_100000".to_string());
+        ui.failed.insert("2026-09-20_100000".to_string());
+
+        assert!(ui.needs(&backups).is_none());
+    }
+
+    #[test]
+    fn a_failed_read_puts_the_part_back_on_the_base_and_states_why() {
+        let _held = language_test_lock();
+        set_language(Language::English);
+        let mut ui = ComposeUi::default();
+        ui.set_base("2026-09-20_100000".to_string());
+        ui.decoded.insert("2026-09-20_100000".to_string(), Arc::new(Documents::new()));
+        ui.sources
+            .insert("class_level:PVE_TANK".to_string(), "2026-09-19_080000".to_string());
+        ui.loading = Some("2026-09-19_080000".to_string());
+
+        ui.accept(Loaded {
+            created_at: "2026-09-19_080000".to_string(),
+            result: Err("archive damaged".to_string()),
+        });
+
+        assert!(ui.sources.is_empty(), "the part goes back to the base");
+        assert_eq!(
+            ui.error.as_deref(),
+            Some("This backup could not be read: archive damaged")
+        );
+        assert!(ui.loading.is_none());
+    }
+
+    #[test]
+    fn a_successful_read_clears_the_error_and_keeps_the_documents() {
+        let mut ui = ComposeUi::default();
+        ui.set_base("2026-09-20_100000".to_string());
+        ui.loading = Some("2026-09-20_100000".to_string());
+        ui.error = Some("something earlier".to_string());
+
+        ui.accept(Loaded {
+            created_at: "2026-09-20_100000".to_string(),
+            result: Ok(Documents::new()),
+        });
+
+        assert!(ui.decoded.contains_key("2026-09-20_100000"));
+        assert!(ui.error.is_none());
+        assert!(ui.loading.is_none());
     }
 }

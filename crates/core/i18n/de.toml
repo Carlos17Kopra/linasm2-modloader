@@ -458,6 +458,7 @@ summary_many_one_source = "{parts} Bestandteile aus 1 anderen Backup."
 summary_many = "{parts} Bestandteile aus {backups} anderen Backups."
 version_warning_one = "Ein Bestandteil stammt aus einer älteren Spielversion. Er wird auf der Version des Basis-Saves geschrieben."
 version_warning_many = "{count} Bestandteile stammen aus einer älteren Spielversion. Sie werden auf der Version des Basis-Saves geschrieben."
+read_failed = "Dieses Backup ließ sich nicht lesen: {detail}"
 
 [gui.settings]
 directories_title = "Erkannte Verzeichnisse"
