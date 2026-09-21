@@ -274,6 +274,7 @@ part_missing_in_base = "Das Basis-Backup enthält '{part}' nicht. Bitte ein ande
 unknown_part = "'{part}' ist kein Bestandteil, den dieses Backup anbietet."
 part_given_twice = "'{part}' wurde mehrfach angegeben. Jeder Bestandteil kann nur aus einem Backup kommen."
 ambiguous_part = "'{part}' kommt in diesem Backup mehrfach vor, damit ist nicht eindeutig, welcher gemeint ist. Dieser Bestandteil lässt sich nicht zusammenstellen."
+ambiguous_part_in_source = "'{part}' kommt in dem Backup, aus dem es übernommen werden soll, mehrfach vor, damit ist nicht eindeutig, welcher gemeint ist. Bitte für diesen Bestandteil ein anderes Backup wählen – das Basis-Backup ist nicht die Ursache."
 
 [error.pak_config_defect]
 invalid_yaml = "die YAML-Syntax ist ungültig (Zeile {line}, Spalte {column})"

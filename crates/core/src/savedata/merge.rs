@@ -16,6 +16,25 @@ fn schema_version(node: &Value) -> Option<u64> {
     node.get("json_version")?.as_u64()
 }
 
+/// How many nodes a part's selector names in `document`.
+///
+/// Only a list item can name more than one: a member is an object key,
+/// and a whole file is the single system object. The catalogue refuses
+/// an ambiguous id when it reads the base, but it never sees a source —
+/// so this is where the source's side of that rule is kept.
+fn named_nodes(selector: &Selector, document: &Value) -> usize {
+    let Selector::ListItem { container, key_field, id } = selector else {
+        return usize::from(selector.get(document).is_some());
+    };
+    let Some(elements) = document.pointer(container).and_then(Value::as_array) else {
+        return 0;
+    };
+    elements
+        .iter()
+        .filter(|element| element.get(key_field).and_then(Value::as_str) == Some(id.as_str()))
+        .count()
+}
+
 /// Takes one part out of `source` and puts it into `base`.
 ///
 /// This is the whole merge, `systemVersion` included, and deliberately
@@ -57,6 +76,9 @@ pub(crate) fn apply(base: &mut Documents, part: &Part, source: &Documents) -> Re
     let source_document = source
         .get(part.file)
         .ok_or_else(|| Error::PartMissingInSource { part: part.id.clone() })?;
+    if named_nodes(&part.selector, source_document) > 1 {
+        return Err(Error::AmbiguousPartInSource { part: part.id.clone() });
+    }
     let incoming = part
         .selector
         .get(source_document)
@@ -140,6 +162,17 @@ mod tests {
         documents
     }
 
+    /// A backup holding one list-item group, the only kind whose id can
+    /// name more than one node.
+    fn loadouts(sets: Value) -> Documents {
+        let mut documents = Documents::new();
+        documents.insert(
+            "config/loadouts.cfg".to_string(),
+            json!({"Loadouts": {"Sets": {"loadoutSets": sets}}}),
+        );
+        documents
+    }
+
     fn progression(version: u64, level: u64, schema: u64) -> Documents {
         let mut documents = Documents::new();
         documents.insert(
@@ -197,6 +230,27 @@ mod tests {
         apply(&mut base, &part, &source).unwrap();
 
         assert_eq!(base["config/economy.cfg"]["Economy"]["credits"], json!(42));
+    }
+
+    /// A list the source holds twice, where the base holds it once.
+    /// The catalogue's own ambiguity guard only ever reads the base, so
+    /// without this one the source's first entry is taken by position
+    /// and the second silently dropped — a guess, where this module's
+    /// rule is to refuse.
+    #[test]
+    fn a_part_the_source_holds_twice_is_refused() {
+        let mut base = loadouts(json!([{"masteryUid": "STORY_TITUS", "slot": 1}]));
+        let source = loadouts(json!([
+            {"masteryUid": "STORY_TITUS", "slot": 2},
+            {"masteryUid": "STORY_TITUS", "slot": 3}
+        ]));
+        let part = part_by_id(&base, "loadout:STORY_TITUS").unwrap();
+
+        let error = apply(&mut base, &part, &source).unwrap_err();
+        assert!(matches!(error, Error::AmbiguousPartInSource { .. }), "got {error:?}");
+
+        let sets = &base["config/loadouts.cfg"]["Loadouts"]["Sets"]["loadoutSets"];
+        assert_eq!(sets[0]["slot"], json!(1), "base was changed anyway");
     }
 
     #[test]

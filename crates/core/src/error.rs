@@ -47,6 +47,12 @@ pub enum Error {
     /// than `UnknownPart`: the backup does hold that part — twice —
     /// and picking either one would compose data nobody asked for.
     AmbiguousPart { part: String },
+    /// The same ambiguity on the other side: the backup a part is taken
+    /// *from* holds it twice. Its own variant for the reason
+    /// `PartMissingInBase` has one — the catalogue only ever reads the
+    /// base, so a message about "this backup" would send the reader to
+    /// the one that is fine.
+    AmbiguousPartInSource { part: String },
     /// Looking for a new version, or installing it, went wrong. Its own
     /// defect type for the same reason as `BackupDefect`: the detail is
     /// translated at `Display` time, not baked in where it happened.
@@ -415,6 +421,9 @@ impl std::fmt::Display for Error {
             }
             Error::AmbiguousPart { part } => {
                 i18n::format("error.ambiguous_part", &[("part", part.clone())])
+            }
+            Error::AmbiguousPartInSource { part } => {
+                i18n::format("error.ambiguous_part_in_source", &[("part", part.clone())])
             }
         };
         f.write_str(&text)

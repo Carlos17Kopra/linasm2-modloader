@@ -274,6 +274,7 @@ part_missing_in_base = "The base backup does not hold '{part}'. Choose a differe
 unknown_part = "'{part}' is not a part this backup offers."
 part_given_twice = "'{part}' was given more than once. Each part can come from only one backup."
 ambiguous_part = "'{part}' occurs more than once in this backup, so it is not clear which one is meant. This part cannot be composed."
+ambiguous_part_in_source = "'{part}' occurs more than once in the backup it is taken from, so it is not clear which one is meant. Choose a different backup for this part — the base backup is not the problem."
 
 [error.pak_config_defect]
 invalid_yaml = "the YAML syntax is invalid (line {line}, column {column})"
