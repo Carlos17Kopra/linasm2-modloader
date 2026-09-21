@@ -450,6 +450,10 @@ menu_show_in_files = "Show in file manager"
 menu_restore = "Restore …"
 menu_delete = "Delete …"
 
+[gui.compose]
+version_warning_one = "One part comes from an older game version. It is written at the base's version."
+version_warning_many = "{count} parts come from an older game version. They are written at the base's version."
+
 [gui.settings]
 directories_title = "Detected directories"
 change_button = "Change"

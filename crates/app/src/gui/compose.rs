@@ -4,8 +4,9 @@
 //! visible, which parts are replaced, what the footer says — and is
 //! tested that way. `compose_page` draws it.
 
-use sm2_core::savedata::catalogue::{Documents, Part};
+use sm2_core::savedata::catalogue::{system_version, Documents, Part};
 use sm2_core::saves::BackupEntry;
+use sm2_core::t;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -211,11 +212,51 @@ impl ComposeUi {
             _ => GroupSource::Mixed,
         }
     }
+
+    /// Does this part come from a build older than the base's?
+    ///
+    /// Both numbers are the `systemVersion` of the same file, which is
+    /// the number `merge` raises to the base's when it writes the
+    /// result. A source that has not been read yet answers `false`:
+    /// a badge on a guess sends someone hunting for a problem that is
+    /// not there.
+    pub(super) fn is_older(&self, part: &PartRow) -> bool {
+        let Some(source) = &part.source else { return false };
+        let Some(base) = &self.base else { return false };
+        let (Some(base_documents), Some(source_documents)) =
+            (self.decoded.get(base), self.decoded.get(source))
+        else {
+            return false;
+        };
+        match (
+            system_version(base_documents, part.file),
+            system_version(source_documents, part.file),
+        ) {
+            (Some(base_version), Some(source_version)) => source_version < base_version,
+            _ => false,
+        }
+    }
+
+    /// The one line under the table when any chosen part comes from an
+    /// older build.
+    pub(super) fn version_warning(&self, parts: &[Part]) -> Option<String> {
+        let older = parts
+            .iter()
+            .filter(|part| self.is_older(&self.part_row(part, false)))
+            .count();
+        match older {
+            0 => None,
+            1 => Some(t!("gui.compose.version_warning_one")),
+            count => Some(t!("gui.compose.version_warning_many", count = count)),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_state::language_test_lock;
+    use sm2_core::i18n::{set_language, Language};
     use sm2_core::saves::BackupEntry;
     use std::path::PathBuf;
 
@@ -432,5 +473,100 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(matches!(&rows[0], Row::Group(header) if header.open));
         assert!(matches!(&rows[1], Row::Part(part) if part.id == "class_level:PVE_TANK"));
+    }
+
+    /// A `Documents` holding one file at one version.
+    ///
+    /// Built through the core's own encoder and decoder rather than
+    /// `serde_json::json!`: `crates/app` does not depend on `serde_json`
+    /// and must not start to for a fixture.
+    fn documents_at(file: &str, root: &str, version: u64) -> Documents {
+        let text = format!(r#"{{"{root}":{{"systemVersion":{version}}}}}"#);
+        let files =
+            BTreeMap::from([(file.to_string(), sm2_core::savedata::ssf1::encode(text.as_bytes()))]);
+        sm2_core::savedata::catalogue::documents(&files).expect("the fixture must decode")
+    }
+
+    #[test]
+    fn a_part_from_a_source_with_an_older_version_is_marked() {
+        let mut ui = ui_with_base();
+        let file = "config/user_progression.cfg";
+        ui.decoded.insert(
+            "2026-09-20_100000".to_string(),
+            Arc::new(documents_at(file, "UserProgression", 900)),
+        );
+        ui.decoded.insert(
+            "2026-09-19_080000".to_string(),
+            Arc::new(documents_at(file, "UserProgression", 890)),
+        );
+        ui.sources
+            .insert("class_level:PVE_TANK".to_string(), "2026-09-19_080000".to_string());
+        ui.open_groups.insert("class_level");
+
+        let rows = ui.rows(&sample_parts());
+        let Row::Part(part) = &rows[1] else { panic!("the open group's first part") };
+
+        assert!(ui.is_older(part));
+    }
+
+    #[test]
+    fn a_part_from_the_base_is_never_marked_as_older() {
+        let mut ui = ui_with_base();
+        ui.decoded.insert(
+            "2026-09-20_100000".to_string(),
+            Arc::new(documents_at("config/user_progression.cfg", "UserProgression", 900)),
+        );
+        ui.open_groups.insert("class_level");
+
+        let rows = ui.rows(&sample_parts());
+        let Row::Part(part) = &rows[1] else { panic!("the open group's first part") };
+
+        assert!(!ui.is_older(part));
+    }
+
+    /// A source that has not been read yet, or a file without a version,
+    /// says nothing rather than "older" — a badge on a guess would send
+    /// someone hunting for a problem that is not there.
+    #[test]
+    fn an_unread_source_is_not_marked_as_older() {
+        let mut ui = ui_with_base();
+        ui.sources
+            .insert("class_level:PVE_TANK".to_string(), "2026-09-19_080000".to_string());
+        ui.open_groups.insert("class_level");
+
+        let rows = ui.rows(&sample_parts());
+        let Row::Part(part) = &rows[1] else { panic!("the open group's first part") };
+
+        assert!(!ui.is_older(part));
+    }
+
+    #[test]
+    fn the_warning_appears_once_for_any_part_from_an_older_build() {
+        let _held = language_test_lock();
+        set_language(Language::English);
+        let mut ui = ui_with_base();
+        let file = "config/user_progression.cfg";
+        ui.decoded.insert(
+            "2026-09-20_100000".to_string(),
+            Arc::new(documents_at(file, "UserProgression", 900)),
+        );
+        ui.decoded.insert(
+            "2026-09-19_080000".to_string(),
+            Arc::new(documents_at(file, "UserProgression", 890)),
+        );
+        ui.sources
+            .insert("class_level:PVE_TANK".to_string(), "2026-09-19_080000".to_string());
+
+        assert_eq!(
+            ui.version_warning(&sample_parts()).as_deref(),
+            Some("One part comes from an older game version. It is written at the base's version.")
+        );
+    }
+
+    #[test]
+    fn without_an_older_source_there_is_no_warning() {
+        let ui = ui_with_base();
+
+        assert_eq!(ui.version_warning(&sample_parts()), None);
     }
 }

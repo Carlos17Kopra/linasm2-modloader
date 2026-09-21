@@ -451,6 +451,10 @@ menu_show_in_files = "Im Dateimanager zeigen"
 menu_restore = "Wiederherstellen …"
 menu_delete = "Löschen …"
 
+[gui.compose]
+version_warning_one = "Ein Bestandteil stammt aus einer älteren Spielversion. Er wird auf der Version des Basis-Saves geschrieben."
+version_warning_many = "{count} Bestandteile stammen aus einer älteren Spielversion. Sie werden auf der Version des Basis-Saves geschrieben."
+
 [gui.settings]
 directories_title = "Erkannte Verzeichnisse"
 change_button = "Ändern"
