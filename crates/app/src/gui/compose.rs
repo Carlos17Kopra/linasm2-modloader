@@ -758,6 +758,35 @@ pub(crate) mod tests {
         assert!(!ui.is_older(part));
     }
 
+    /// The comparison is one-sided on purpose: a part from a *newer*
+    /// build carries no badge, although `merge` writes the composed
+    /// file at `max(base, source)` and so lifts its `systemVersion`
+    /// above the base's. The design spec names that case as known and
+    /// unhandled; this test is what fails first if the comparison ever
+    /// quietly widens to "different".
+    #[test]
+    fn a_part_from_a_newer_source_is_not_marked() {
+        let mut ui = ui_with_base();
+        let file = "config/user_progression.cfg";
+        ui.decoded.insert(
+            "2026-09-20_100000".to_string(),
+            Arc::new(documents_at(file, "UserProgression", 890)),
+        );
+        ui.decoded.insert(
+            "2026-09-19_080000".to_string(),
+            Arc::new(documents_at(file, "UserProgression", 900)),
+        );
+        ui.sources
+            .insert("class_level:PVE_TANK".to_string(), "2026-09-19_080000".to_string());
+        ui.open_groups.insert("class_level");
+
+        let rows = ui.rows(&sample_parts());
+        let Row::Part(part) = &rows[1] else { panic!("the open group's first part") };
+
+        assert!(!ui.is_older(part));
+        assert_eq!(ui.version_warning(&sample_parts()), None);
+    }
+
     /// A source that has not been read yet, or a file without a version,
     /// says nothing rather than "older" — a badge on a guess would send
     /// someone hunting for a problem that is not there.

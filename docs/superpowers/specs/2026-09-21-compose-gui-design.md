@@ -76,8 +76,10 @@ From top to bottom, as the mockup has it:
    is also exactly what `merge` raises.
 3. The part table with its filter field, a "only replaced" toggle and a
    count.
-4. The mixed-version warning, when a chosen source has a different game
-   version than the base.
+4. The mixed-version warning, when a chosen source has an *older* game
+   version than the base — `source_version < base_version`, not
+   "different". See "The version comparison is one-sided" below for
+   what that leaves out.
 5. The footer: a summary of what has been chosen, the label field for
    the new backup, and "Backup erzeugen".
 
@@ -110,6 +112,26 @@ and the collapsed state is remembered rather than overwritten: clearing
 the filter puts the table back the way the user left it. Without this a
 filter that matches only parts inside collapsed groups looks like a
 filter that does nothing.
+
+### The version comparison is one-sided
+
+Both the "ältere Spielversion" badge and the warning line under the
+table fire on `source_version < base_version` only. A part taken from a
+*newer* build than the base gets no badge, no warning and no mention in
+the footer.
+
+That asymmetry has a sharp edge, because `merge::apply` writes the
+composed file at `max(base, source)`: a part from a newer build silently
+lifts the composed file's `systemVersion` above the base's. The warning
+promises the opposite for the case it does cover — "Er wird auf der
+Version des Basis-Saves geschrieben" — and for a newer source that
+sentence would simply be false.
+
+This is known and unhandled. Narrowing the comparison to "older" was
+deliberate: the badge exists to warn that a part is about to be carried
+forward into a newer save, which is the direction that loses data. What
+to say about the other direction — whether to warn, and with which
+wording — is a product decision, not a defect to be fixed in passing.
 
 ## State
 
@@ -220,8 +242,8 @@ egui harness. Written test-first.
   collapsed
 - a group header counts its replaced parts and reads "gemischt" when
   two sources are in play within one group
-- the mixed-version warning appears exactly when a chosen source has a
-  different game version than the base
+- the mixed-version warning appears exactly when a chosen source has an
+  older game version than the base, and stays silent for a newer one
 - the summary line ("2 Bestandteile aus 1 anderen Backup") in both
   languages, holding `language_test_lock()`
 
