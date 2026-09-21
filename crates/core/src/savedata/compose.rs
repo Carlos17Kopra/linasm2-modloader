@@ -28,6 +28,16 @@ pub fn compose(
     backup_root: &Path,
     label: Option<&str>,
 ) -> Result<BackupEntry> {
+    // Before a single archive is opened: the same part from two
+    // backups is not a choice anyone can have meant, and letting the
+    // later one win would report more parts taken than were taken.
+    let mut asked_for: BTreeSet<&str> = BTreeSet::new();
+    for (part_id, _) in replacements {
+        if !asked_for.insert(part_id.as_str()) {
+            return Err(Error::PartGivenTwice { part: part_id.clone() });
+        }
+    }
+
     saves::verify(base)?;
     let mut files = saves::read_files(base)?;
     let mut documents = catalogue::documents(&files)?;
@@ -40,6 +50,14 @@ pub fn compose(
     for (part_id, source_entry) in replacements {
         let part = catalogue::part_by_id(&documents, part_id)?;
 
+        // The base is verified up front, each source only when a part
+        // first needs it. That is no weaker than verifying everything
+        // at the start: nothing is written until every part has gone
+        // through, so the last source is still verified before the
+        // first byte of the result exists. It is cheaper — a source
+        // named only by a part that is refused earlier is never hashed
+        // at all — and it reports the refusal that comes first rather
+        // than the one that happens to be cheapest to find.
         if !sources.contains_key(&source_entry.created_at) {
             saves::verify(source_entry)?;
             let source_files = saves::read_files(source_entry)?;
@@ -205,6 +223,34 @@ mod tests {
             compose(&base, &[("no_such_part".to_string(), other)], &backups, None).unwrap_err();
 
         assert!(matches!(error, Error::UnknownPart { .. }), "got {error:?}");
+        assert_eq!(crate::saves::list_backups(&backups).unwrap().len(), before);
+    }
+
+    /// Taking the same part from two backups is not a choice anyone can
+    /// have meant. Applied in order it would have been merged twice,
+    /// recorded once and reported as two parts taken — a message that
+    /// lies about a backup already on the disk.
+    #[test]
+    fn the_same_part_asked_for_twice_is_refused_before_anything_is_written() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = backup_fixture(temp.path(), "base", 5, b"opaque");
+        let other = backup_fixture(temp.path(), "other", 42, b"different");
+        let third = backup_fixture(temp.path(), "third", 7, b"third");
+        let backups = temp.path().join("backups");
+        let before = crate::saves::list_backups(&backups).unwrap().len();
+
+        let error = compose(
+            &base,
+            &[
+                ("class_level:PVE_TANK".to_string(), other),
+                ("class_level:PVE_TANK".to_string(), third),
+            ],
+            &backups,
+            None,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, Error::PartGivenTwice { .. }), "got {error:?}");
         assert_eq!(crate::saves::list_backups(&backups).unwrap().len(), before);
     }
 

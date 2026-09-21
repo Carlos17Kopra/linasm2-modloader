@@ -272,6 +272,7 @@ unmergeable_part = "'{part}' lässt sich nicht übernehmen: die Basis führt Sch
 part_missing_in_source = "Das für '{part}' gewählte Backup enthält diesen Bestandteil nicht."
 part_missing_in_base = "Das Basis-Backup enthält '{part}' nicht. Bitte ein anderes Basis-Backup wählen – das Backup, aus dem der Bestandteil kommt, ist nicht die Ursache."
 unknown_part = "'{part}' ist kein Bestandteil, den dieses Backup anbietet."
+part_given_twice = "'{part}' wurde mehrfach angegeben. Jeder Bestandteil kann nur aus einem Backup kommen."
 ambiguous_part = "'{part}' kommt in diesem Backup mehrfach vor, damit ist nicht eindeutig, welcher gemeint ist. Dieser Bestandteil lässt sich nicht zusammenstellen."
 
 [error.pak_config_defect]

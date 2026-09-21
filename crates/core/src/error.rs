@@ -37,6 +37,11 @@ pub enum Error {
     PartMissingInBase { part: String },
     /// A part id that this backup does not offer.
     UnknownPart { part: String },
+    /// The same part asked for from two backups at once. Refused
+    /// rather than resolved by order: the last one would win, one of
+    /// them would be recorded, and the count reported back would name
+    /// more parts than the composition actually took.
+    PartGivenTwice { part: String },
     /// A part id that this backup offers more than once, because two
     /// entries of a list carry the same key. Its own variant rather
     /// than `UnknownPart`: the backup does hold that part — twice —
@@ -404,6 +409,9 @@ impl std::fmt::Display for Error {
             }
             Error::UnknownPart { part } => {
                 i18n::format("error.unknown_part", &[("part", part.clone())])
+            }
+            Error::PartGivenTwice { part } => {
+                i18n::format("error.part_given_twice", &[("part", part.clone())])
             }
             Error::AmbiguousPart { part } => {
                 i18n::format("error.ambiguous_part", &[("part", part.clone())])

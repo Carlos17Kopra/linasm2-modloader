@@ -848,7 +848,14 @@ fn import_archive_limited(
 /// the same crash-safe sequence as an ordinary backup. The manifest's
 /// `source` names the base backup's archive, not the temporary
 /// directory, which is gone by the time anyone reads it.
-pub fn write_composition(
+///
+/// Not public: the bytes handed in here become a backup unexamined,
+/// and what makes them trustworthy happens in `savedata::compose` —
+/// the sources are verified, the parts are merged through one selector
+/// and every re-encoded file is read back before it gets this far. A
+/// caller reaching past that could turn an arbitrary byte map into a
+/// backup that verifies perfectly and holds nothing the game can read.
+pub(crate) fn write_composition(
     files: &BTreeMap<String, Vec<u8>>,
     backup_root: &Path,
     label: Option<&str>,
