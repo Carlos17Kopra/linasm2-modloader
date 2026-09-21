@@ -6,6 +6,7 @@
 
 use sm2_core::savedata::catalogue;
 use sm2_core::savedata::catalogue::{system_version, Documents, Part};
+use sm2_core::savedata::summary;
 use sm2_core::saves;
 use sm2_core::saves::BackupEntry;
 use sm2_core::t;
@@ -108,7 +109,11 @@ pub(super) enum GroupSource {
 
 pub(super) struct PartRow {
     pub(super) id: String,
-    pub(super) group: &'static str,
+    /// What the row is called, from `summary::display_name` — the id
+    /// taken apart and tidied, never a name invented here.
+    pub(super) name: String,
+    /// Which file the part lives in. Not drawn: `is_older` compares the
+    /// version of this file on both sides.
     pub(super) file: &'static str,
     /// The backup this part comes from, or `None` for the base.
     pub(super) source: Option<String>,
@@ -183,9 +188,15 @@ impl ComposeUi {
         !self.part_filter.trim().is_empty() || self.only_replaced
     }
 
+    /// Both the name the table shows and the id below it are searched.
+    /// The name alone would not find `PVE_TANK` typed from the command
+    /// line, and the id alone would not find "thunder hammer", which is
+    /// what the row says.
     fn shown(&self, part: &Part) -> bool {
         let needle = self.part_filter.trim().to_lowercase();
-        let matches = needle.is_empty() || part.id.to_lowercase().contains(&needle);
+        let matches = needle.is_empty()
+            || part.id.to_lowercase().contains(&needle)
+            || summary::display_name(part).to_lowercase().contains(&needle);
         matches && (!self.only_replaced || self.sources.contains_key(&part.id))
     }
 
@@ -231,7 +242,7 @@ impl ComposeUi {
     fn part_row(&self, part: &Part, indented: bool) -> PartRow {
         PartRow {
             id: part.id.clone(),
-            group: part.group,
+            name: summary::display_name(part),
             file: part.file,
             source: self.sources.get(&part.id).cloned(),
             indented,
@@ -682,6 +693,48 @@ pub(crate) mod tests {
         assert!(matches!(&rows[0], Row::Group(header) if header.open && header.total == 2));
         assert!(matches!(&rows[1], Row::Part(part) if part.id == "class_level:PVE_SNIPER"));
         assert!(ui.open_groups.is_empty(), "the collapsed state is remembered, not overwritten");
+    }
+
+    /// The row carries the name the table draws, so the drawing has no
+    /// say in how a name is made — the same split the rest of this
+    /// module keeps.
+    #[test]
+    fn a_row_carries_the_name_the_table_draws() {
+        let ui = ui_with_base();
+
+        let rows = ui.rows(&sample_parts());
+
+        let Row::Part(economy) = &rows[1] else { panic!("the single-part group is a plain row") };
+        assert_eq!(economy.name, sm2_core::savedata::summary::group_name("economy"));
+
+        let mut open = ui_with_base();
+        open.open_groups.insert("class_level");
+        let rows = open.rows(&sample_parts());
+        let Row::Part(tank) = &rows[1] else { panic!("the open group's first part") };
+        assert_eq!(tank.name, "Tank (PvE)");
+    }
+
+    /// The table shows a part's name, so the filter has to look at the
+    /// name too. "thunder hammer" is the discriminating case: the id
+    /// spells it `melee_thunder_hammer`, so a filter that only reads
+    /// ids finds nothing while the row is plainly on the screen.
+    #[test]
+    fn a_filter_finds_a_part_by_the_name_the_table_shows() {
+        let parts = vec![Part {
+            id: "weapon:melee_thunder_hammer".to_string(),
+            group: "weapon",
+            file: "config/weapon_progression.cfg",
+            selector: Selector::Member {
+                container: "/WeaponProgression/WeaponMastery/weaponStates",
+                key: "melee_thunder_hammer".to_string(),
+            },
+        }];
+        let mut ui = ui_with_base();
+        ui.part_filter = "thunder hammer".to_string();
+
+        let rows = ui.rows(&parts);
+
+        assert_eq!(rows.len(), 1, "the row its name matches has to survive the filter");
     }
 
     #[test]

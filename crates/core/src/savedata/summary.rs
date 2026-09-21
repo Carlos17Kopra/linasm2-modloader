@@ -32,6 +32,77 @@ pub fn summarize(part: &Part, documents: &Documents) -> Option<String> {
     Some(word(node.get(field)?.as_u64()?))
 }
 
+/// The mode an id carries in front of it, and how it reads behind the
+/// name. Upper case throughout, which is what keeps the campaign's
+/// weapons (`hwpn_story_heavy_bolter`) out of it.
+const MODES: &[(&str, &str)] = &[("PVE_", "PvE"), ("PVP_", "PvP"), ("STORY_", "Story")];
+
+/// The categories a weapon id carries in front of its name.
+///
+/// Only these are dropped. A first word that is not in this list stays
+/// where it is: a category the game adds in a later build would
+/// otherwise be swallowed, and an id that loses a word reads as a
+/// different weapon — worse than reading awkwardly.
+const WEAPON_CATEGORIES: &[&str] =
+    &["arifle", "brifle", "equipment", "hgun", "hwpn", "melee", "pc", "pwpn", "shotgun", "smg"];
+
+/// A part's name, for a list a person reads.
+///
+/// The game's own words, taken apart and tidied — never replaced. A
+/// table of invented names would have to claim which class
+/// `CHARACTER_MOD_2` is, and a wrong claim beside a level sends someone
+/// to the wrong backup; the id says less and never lies. That is also
+/// why nothing here is a catalogue entry: this is data out of the save,
+/// like the id below it, and the mode in brackets reads the same in
+/// every language.
+pub fn display_name(part: &Part) -> String {
+    // The eight whole-file groups carry their group's id as their own.
+    // Its translated name is already the right wording, and "Economy"
+    // would throw that translation away.
+    if part.id == part.group {
+        return group_name(part.group);
+    }
+
+    let bare = part.id.split_once(':').map_or(part.id.as_str(), |(_, rest)| rest);
+    let (mut bare, mode) = MODES
+        .iter()
+        .find_map(|(prefix, mode)| bare.strip_prefix(prefix).map(|rest| (rest, Some(*mode))))
+        .unwrap_or((bare, None));
+    // Two ids carry two categories (`melee_pc_helbrute_hammer`).
+    while let Some((head, rest)) = bare.split_once('_') {
+        if !WEAPON_CATEGORIES.contains(&head) {
+            break;
+        }
+        bare = rest;
+    }
+
+    let mut name = capitalised(bare);
+    if let Some(mode) = mode {
+        name.push_str(" (");
+        name.push_str(mode);
+        name.push(')');
+    }
+    name
+}
+
+/// `thunder_hammer` and `CHARACTER_MOD_1` both become `Thunder Hammer`
+/// and `Character Mod 1`.
+fn capitalised(bare: &str) -> String {
+    bare.split('_')
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut letters = word.chars();
+            match letters.next() {
+                Some(first) => {
+                    first.to_uppercase().collect::<String>() + &letters.as_str().to_lowercase()
+                }
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// The name of a group, for a list a person reads.
 pub fn group_name(group: &str) -> String {
     match group {
@@ -115,6 +186,82 @@ mod tests {
         assert_eq!(summarize(&part, &documents).unwrap(), "4 mastery points");
     }
 
+    /// A part with nothing in it but the two fields a name is made of.
+    fn named(id: &str, group: &'static str) -> Part {
+        Part {
+            id: id.to_string(),
+            group,
+            file: "config/user_progression.cfg",
+            selector: crate::savedata::catalogue::Selector::Whole,
+        }
+    }
+
+    #[test]
+    fn a_class_part_reads_as_its_class_with_the_mode_behind_it() {
+        assert_eq!(display_name(&named("class_level:PVE_TANK", "class_level")), "Tank (PvE)");
+        assert_eq!(display_name(&named("class_level:PVP_SNIPER", "class_level")), "Sniper (PvP)");
+        assert_eq!(display_name(&named("loadout:STORY_GADRIEL", "loadout")), "Gadriel (Story)");
+    }
+
+    #[test]
+    fn a_weapon_loses_the_category_its_id_carries() {
+        assert_eq!(
+            display_name(&named("weapon:melee_thunder_hammer", "weapon")),
+            "Thunder Hammer"
+        );
+        assert_eq!(display_name(&named("weapon:hgun_volkite_pistol", "weapon")), "Volkite Pistol");
+    }
+
+    /// Two of the forty-five weapon ids carry two categories, and one
+    /// carries a word that only looks like one: `hwpn_story_…` is the
+    /// campaign's version of a weapon, not a category, and has to
+    /// survive.
+    #[test]
+    fn a_weapon_loses_every_category_in_front_of_its_name() {
+        assert_eq!(
+            display_name(&named("weapon:melee_pc_helbrute_hammer", "weapon")),
+            "Helbrute Hammer"
+        );
+        assert_eq!(
+            display_name(&named("weapon:pc_helbrute_plasma_cannon", "weapon")),
+            "Helbrute Plasma Cannon"
+        );
+        assert_eq!(
+            display_name(&named("weapon:hwpn_story_heavy_bolter", "weapon")),
+            "Story Heavy Bolter"
+        );
+    }
+
+    /// A category the game adds in a later build must not be mistaken
+    /// for a known one and swallowed: an id that loses its first word
+    /// reads as a different weapon, which is worse than reading
+    /// awkwardly.
+    #[test]
+    fn an_unknown_category_stays_in_the_name() {
+        assert_eq!(display_name(&named("weapon:xyz_new_gun", "weapon")), "Xyz New Gun");
+    }
+
+    #[test]
+    fn an_id_with_neither_mode_nor_category_is_only_tidied_up() {
+        assert_eq!(display_name(&named("heraldry:TANK", "heraldry")), "Tank");
+        assert_eq!(
+            display_name(&named("class_level:PVE_CHARACTER_MOD_1", "class_level")),
+            "Character Mod 1 (PvE)"
+        );
+    }
+
+    /// The eight groups that are a single part carry the group's id as
+    /// their own. Their translated group name is already the right
+    /// wording, and "Economy" would throw a translation away.
+    #[test]
+    fn a_part_that_is_its_whole_group_keeps_the_translated_group_name() {
+        let _guard = crate::i18n::language_test_lock();
+        crate::i18n::set_language(crate::i18n::Language::German);
+        assert_eq!(display_name(&named("economy", "economy")), group_name("economy"));
+        assert_ne!(display_name(&named("economy", "economy")), "Economy");
+        crate::i18n::set_language(crate::i18n::Language::English);
+    }
+
     #[test]
     fn a_part_whose_field_is_absent_is_summed_up_as_nothing_rather_than_zero() {
         let _guard = crate::i18n::language_test_lock();
@@ -129,3 +276,4 @@ mod tests {
         assert_eq!(summarize(&part, &documents), None);
     }
 }
+

@@ -33,9 +33,9 @@ before this was designed, because two of them decided the architecture:
 - A backup offers **163 parts in 14 groups**: 45 weapons, 29 loadouts,
   29 class levels, 29 loyalist armour sets, 13 heraldries, 10 chaos
   armour sets, and eight groups that are a single part each.
-- A part is named by its raw game id (`class_level:PVE_TANK`). There is
-  no display name for the 163 ids and inventing a table of them is not
-  part of this work.
+- A part is named by its raw game id (`class_level:PVE_TANK`). The
+  table derives a readable name from it — see "The names in the table"
+  below — but never invents one.
 - `summary::summarize` yields a figure for three groups only — class
   level, weapon mastery, heraldry victories. For the other eleven the
   STAND column stays empty, deliberately: a field an older build did
@@ -112,6 +112,36 @@ and the collapsed state is remembered rather than overwritten: clearing
 the filter puts the table back the way the user left it. Without this a
 filter that matches only parts inside collapsed groups looks like a
 filter that does nothing.
+
+### The names in the table
+
+`class_level:STORY_GADRIEL` is not a label. `summary::display_name`
+derives one from the id, by taking it apart rather than replacing it:
+
+- the group prefix goes, because the heading above the row says it
+- a leading `PVE_`/`PVP_`/`STORY_` moves to the end as ` (PvE)`,
+  ` (PvP)`, ` (Story)`
+- a known weapon category (`arifle`, `brifle`, `equipment`, `hgun`,
+  `hwpn`, `melee`, `pc`, `pwpn`, `shotgun`, `smg`) goes, repeatedly —
+  two ids carry two of them
+- what is left loses its underscores and gets a capital per word
+
+So `Gadriel (Story)`, `Thunder Hammer`, `Character Mod 2 (PvE)`. The
+eight whole-file groups keep their translated group name, which is
+already the right wording.
+
+Nothing here is translated and nothing is a catalogue entry, and both
+are deliberate. A table of 163 invented names would have to claim which
+class `CHARACTER_MOD_2` is; a wrong claim beside a level sends someone
+to the wrong backup, which is worse than an awkward name. The
+comparison the launcher can honestly offer is the game's own word. For
+the same reason an unknown prefix is kept rather than dropped: a
+category added by a later build must not be mistaken for part of a
+name and swallowed.
+
+The raw id stays under the name in the table. It is what
+`save compose --part <id>=<timestamp>` wants typed, and it is what lets
+a reader check the derivation. The filter searches both.
 
 ### The version comparison is one-sided
 
@@ -251,7 +281,9 @@ egui harness. Written test-first.
 
 - No Steam user profile picker. Out of scope in the savegame merge
   spec, and unchanged here.
-- No display names for the 163 part ids.
+- No invented names for the 163 part ids, and no claim about which
+  class an internal name stands for. The table derives its labels from
+  the ids themselves; see "The names in the table".
 - No preview of what a composition would do beyond the per-part figure
   the catalogue already yields.
 - No verification that the game accepts a composed save. That is open

@@ -501,16 +501,8 @@ fn part_row(
     let upper = name.center().y - 10.0;
     let lower = name.center().y + 10.0;
 
-    // A part whose id is its group's own is one of the whole-file
-    // groups, and its id reads `tutorial`. With no header above the row
-    // to name it, the group's own name is what the reader needs.
-    let title = if part.id == part.group {
-        summary::group_name(part.group)
-    } else {
-        part.id.clone()
-    };
     let title_galley =
-        widgets::truncated(ui, &title, sans(12.5), color::TEXT_STRONG, name.width() - 130.0);
+        widgets::truncated(ui, &part.name, sans(12.5), color::TEXT_STRONG, name.width() - 130.0);
     let title_width = title_galley.size().x;
     ui.painter().galley(
         Pos2::new(name.left(), upper - title_galley.size().y / 2.0),
@@ -550,15 +542,14 @@ fn part_row(
         }
     }
 
-    let file_rect =
+    // The raw id under the name, not the file: the name is derived from
+    // the id, so showing it is what lets a reader check the derivation —
+    // and it is what `save compose --part <id>=<timestamp>` wants typed.
+    // The file is the same for every row of a group and says nothing the
+    // group heading does not.
+    let id_rect =
         Rect::from_min_max(Pos2::new(name.left(), lower - 8.0), Pos2::new(name.right(), lower + 8.0));
-    widgets::column_text(
-        ui,
-        file_rect,
-        part.file,
-        mono(11.0),
-        color::TEXT_FAINT,
-    );
+    widgets::column_text(ui, id_rect, &part.id, mono(11.0), color::TEXT_FAINT);
 
     let label = match &part.source {
         Some(created_at) => human_time(created_at),
