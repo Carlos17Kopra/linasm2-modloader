@@ -662,18 +662,8 @@ fn run_save_command_with(state: &AppState, cmd: SaveCommand, steam_running: impl
                 bail!(t!("cli.save.no_backups"));
             }
             let entry = resolve_backup_selection(&list, index, at.as_deref())?;
-            let files = saves::read_files(entry)?;
-            let documents = catalogue::documents(&files)?;
-            let parts = catalogue::parts(&documents);
-            if parts.is_empty() {
-                println!("{}", t!("cli.save.parts.none"));
-            }
-            for part in &parts {
-                let name = summary::group_name(part.group);
-                match summary::summarize(part, &documents) {
-                    Some(figure) => println!("{}  {name}  {figure}", part.id),
-                    None => println!("{}  {name}", part.id),
-                }
+            for line in part_lines(entry)? {
+                println!("{line}");
             }
         }
         SaveCommand::Restore { index, at, force } => {
@@ -870,6 +860,37 @@ fn resolve_backup_selection<'a>(
             Ok(&list[position])
         }
     }
+}
+
+/// What `save parts` has to say about one backup, line by line.
+///
+/// Separate from the printing so that it can be read by something
+/// other than a person: a `println!` inside a match arm says nothing a
+/// test can check, and the ids and figures here are the whole point of
+/// the command.
+fn part_lines(entry: &BackupEntry) -> Result<Vec<String>> {
+    // `read_files` reads what the archive holds and checks it against
+    // nothing; the manifest is what says the bytes are still the ones
+    // that were backed up. Without this, a damaged backup would print
+    // a part list that looks perfectly ordinary — and `compose`, which
+    // does verify, would then refuse the very ids it just offered.
+    saves::verify(entry)?;
+    let files = saves::read_files(entry)?;
+    let documents = catalogue::documents(&files)?;
+    let parts = catalogue::parts(&documents);
+    if parts.is_empty() {
+        return Ok(vec![t!("cli.save.parts.none")]);
+    }
+    Ok(parts
+        .iter()
+        .map(|part| {
+            let name = summary::group_name(part.group);
+            match summary::summarize(part, &documents) {
+                Some(figure) => format!("{}  {name}  {figure}", part.id),
+                None => format!("{}  {name}", part.id),
+            }
+        })
+        .collect())
 }
 
 /// Splits `--part <id>=<timestamp>` into its two halves.
@@ -1361,6 +1382,235 @@ mod tests {
             index: None,
             at: None,
         })));
+    }
+
+    /// A savegame directory holding one class level, in the `config`
+    /// layout the game reads and the catalogue looks in.
+    fn savegame_dir(tmp: &std::path::Path, label: &str, level: u64) -> PathBuf {
+        let save = tmp.join(format!("savegames-{label}"));
+        std::fs::create_dir_all(save.join("config")).unwrap();
+        let json = format!(
+            r#"{{"UserProgression":{{"systemVersion":700,"UserMastery":{{"masteryStates":{{"PVE_TANK":{{"json_version":3,"currentLevel":{level}}}}}}}}}}}"#
+        );
+        std::fs::write(
+            save.join("config/user_progression.cfg"),
+            sm2_core::savedata::ssf1::encode(json.as_bytes()),
+        )
+        .unwrap();
+        save
+    }
+
+    /// One such savegame, backed up under `label`. Returns the
+    /// `created_at` it got, because that is what `--base` and `--part`
+    /// name a backup by.
+    fn savegame_backup(tmp: &std::path::Path, state: &AppState, label: &str, level: u64) -> String {
+        let save = savegame_dir(tmp, label, level);
+        saves::backup(&save, &state.backups_dir(), Some(label)).unwrap().created_at
+    }
+
+    /// The same, but left outside the backup directory: an archive that
+    /// no manifest in the backup directory describes.
+    fn savegame_archive(tmp: &std::path::Path, label: &str, level: u64) -> PathBuf {
+        let save = savegame_dir(tmp, label, level);
+        let staging = tmp.join(format!("staging-{label}"));
+        saves::backup(&save, &staging, None).unwrap().archive
+    }
+
+    /// Two backups a second apart, differing in one class level.
+    ///
+    /// Deliberately without `#[cfg(unix)]`: `parts` and `compose` work
+    /// on the backup directory and never resolve `save_dir`, so not one
+    /// of the three fixture reasons `CLAUDE.md` lists applies to them.
+    fn fixture_with_two_savegame_backups(tmp: &std::path::Path) -> (AppState, String, String) {
+        let state = test_fixture(tmp);
+        let base = savegame_backup(tmp, &state, "base", 5);
+        // `created_at` has one-second resolution and is the only handle
+        // `--base` and `--part` have; two backups within one second
+        // could not be told apart by either.
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        let source = savegame_backup(tmp, &state, "source", 42);
+        (state, base, source)
+    }
+
+    fn backup_at<'a>(list: &'a [BackupEntry], at: &str) -> &'a BackupEntry {
+        list.iter().find(|entry| entry.created_at == at).expect("the fixture wrote this backup")
+    }
+
+    /// The level a backup's savegame holds, read back out of the
+    /// archive the command wrote.
+    fn level_in(entry: &BackupEntry) -> String {
+        let files = saves::read_files(entry).unwrap();
+        let json =
+            sm2_core::savedata::ssf1::decode(&files["config/user_progression.cfg"]).unwrap();
+        String::from_utf8(json).unwrap()
+    }
+
+    #[test]
+    fn save_compose_writes_a_backup_holding_the_part_from_the_named_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (state, base_at, source_at) = fixture_with_two_savegame_backups(tmp.path());
+
+        run_save_command_with(
+            &state,
+            SaveCommand::Compose {
+                base: base_at.clone(),
+                parts: vec![format!("class_level:PVE_TANK={source_at}")],
+                tag: Some("composed".to_string()),
+            },
+            || false,
+        )
+        .unwrap();
+
+        let list = saves::list_backups(&state.backups_dir()).unwrap();
+        assert_eq!(list.len(), 3, "the two sources are untouched and one was added");
+        let composed =
+            list.iter().find(|entry| entry.label.as_deref() == Some("composed")).unwrap();
+
+        assert!(level_in(composed).contains(r#""currentLevel":42"#), "{}", level_in(composed));
+
+        // And the manifest names the right backup on each side, which
+        // is what would break if the two halves of a replacement were
+        // ever swapped.
+        let recorded = saves::composition_of(composed).unwrap().unwrap();
+        assert_eq!(recorded.base, base_at);
+        assert_eq!(recorded.parts["class_level:PVE_TANK"], source_at);
+    }
+
+    /// The control: with no replacement at all the result is the backup
+    /// `--base` named and not simply the newest one.
+    #[test]
+    fn save_compose_takes_everything_from_the_backup_named_as_the_base() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (state, base_at, _source_at) = fixture_with_two_savegame_backups(tmp.path());
+
+        run_save_command_with(
+            &state,
+            SaveCommand::Compose {
+                base: base_at.clone(),
+                parts: Vec::new(),
+                tag: Some("copy".to_string()),
+            },
+            || false,
+        )
+        .unwrap();
+
+        let list = saves::list_backups(&state.backups_dir()).unwrap();
+        let composed = list.iter().find(|entry| entry.label.as_deref() == Some("copy")).unwrap();
+        assert!(level_in(composed).contains(r#""currentLevel":5"#), "{}", level_in(composed));
+    }
+
+    #[test]
+    fn save_compose_refuses_the_same_part_from_two_backups_and_writes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (state, base_at, source_at) = fixture_with_two_savegame_backups(tmp.path());
+        let before = saves::list_backups(&state.backups_dir()).unwrap().len();
+
+        let error = run_save_command_with(
+            &state,
+            SaveCommand::Compose {
+                base: base_at.clone(),
+                parts: vec![
+                    format!("class_level:PVE_TANK={source_at}"),
+                    format!("class_level:PVE_TANK={base_at}"),
+                ],
+                tag: None,
+            },
+            || false,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("class_level:PVE_TANK"), "{error}");
+        assert_eq!(saves::list_backups(&state.backups_dir()).unwrap().len(), before);
+    }
+
+    #[test]
+    fn save_compose_reports_an_unknown_timestamp_instead_of_composing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (state, base_at, _source_at) = fixture_with_two_savegame_backups(tmp.path());
+        let before = saves::list_backups(&state.backups_dir()).unwrap().len();
+
+        let error = run_save_command_with(
+            &state,
+            SaveCommand::Compose {
+                base: base_at,
+                parts: vec!["class_level:PVE_TANK=2099-01-01T00:00:00Z".to_string()],
+                tag: None,
+            },
+            || false,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("2099-01-01T00:00:00Z"), "{error}");
+        assert_eq!(saves::list_backups(&state.backups_dir()).unwrap().len(), before);
+    }
+
+    /// Two things at once, and they need each other: the damaged backup
+    /// is the *newest*, so `--index 2` and `--at <base>` must reach the
+    /// other one — and they can only be shown to have reached it
+    /// because reading the damaged one fails. A `save parts` that did
+    /// not verify would read the swapped archive happily and print a
+    /// part list belonging to a savegame nobody backed up.
+    #[test]
+    fn save_parts_verifies_the_backup_it_was_pointed_at() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (state, base_at, source_at) = fixture_with_two_savegame_backups(tmp.path());
+
+        // A perfectly valid ZIP with a perfectly valid savegame in it —
+        // only not the one this backup's manifest describes.
+        let list = saves::list_backups(&state.backups_dir()).unwrap();
+        let stranger = savegame_archive(tmp.path(), "stranger", 99);
+        std::fs::copy(&stranger, &backup_at(&list, &source_at).archive).unwrap();
+
+        let error =
+            run_save_command_with(&state, SaveCommand::Parts { index: None, at: None }, || false)
+                .unwrap_err();
+        assert!(!error.to_string().is_empty());
+
+        run_save_command_with(&state, SaveCommand::Parts { index: Some(2), at: None }, || false)
+            .unwrap();
+        run_save_command_with(
+            &state,
+            SaveCommand::Parts { index: None, at: Some(base_at) },
+            || false,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn save_parts_reports_no_backups_rather_than_an_empty_list() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = test_fixture(tmp.path());
+
+        assert!(run_save_command_with(
+            &state,
+            SaveCommand::Parts { index: None, at: None },
+            || false
+        )
+        .is_err());
+    }
+
+    /// What the command says, rather than only that it said something:
+    /// the ids and the figures come out of the backup that was chosen,
+    /// which is the half of `save parts` a `println!` in a match arm
+    /// keeps to itself.
+    #[test]
+    fn save_parts_speaks_the_catalogue_for_the_chosen_backup() {
+        let _guard = language_test_lock();
+        i18n::set_language(Language::English);
+        let tmp = tempfile::tempdir().unwrap();
+        let (state, _base_at, source_at) = fixture_with_two_savegame_backups(tmp.path());
+        let list = saves::list_backups(&state.backups_dir()).unwrap();
+
+        let lines = part_lines(backup_at(&list, &source_at)).unwrap();
+
+        assert!(
+            lines.iter().any(|line| line.starts_with("class_level:PVE_TANK")),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("Class level") && line.contains("level 42")),
+            "{lines:?}"
+        );
     }
 
     #[test]
