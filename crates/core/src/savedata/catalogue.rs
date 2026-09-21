@@ -123,6 +123,16 @@ pub fn system_key(document: &Value) -> Option<&str> {
     object.keys().next().map(String::as_str)
 }
 
+/// The `systemVersion` a file's system object carries, if it carries
+/// one.
+///
+/// Public because the interface compares a source's version against
+/// the base's to mark a part that comes from an older build — the same
+/// number `merge` raises when it writes one.
+pub fn system_version(documents: &Documents, file: &str) -> Option<u64> {
+    Selector::Whole.get(documents.get(file)?)?.get("systemVersion")?.as_u64()
+}
+
 impl Selector {
     /// The value this selector points at, or `None` when it is absent —
     /// which is the normal answer for a backup from an older build, not
@@ -563,5 +573,29 @@ mod tests {
         files.insert("config/economy.cfg".to_string(), b"not a savegame file".to_vec());
 
         assert!(documents(&files).is_err());
+    }
+
+    #[test]
+    fn system_version_reads_the_version_of_one_file() {
+        let documents: Documents = BTreeMap::from([(
+            "config/economy.cfg".to_string(),
+            json!({"Economy": {"systemVersion": 890, "credits": 12}}),
+        )]);
+
+        assert_eq!(system_version(&documents, "config/economy.cfg"), Some(890));
+    }
+
+    /// A file an older build wrote may carry no version at all, and a file
+    /// that is not in this backup is not a defect either — both yield
+    /// nothing rather than a zero, which a caller would read as "ancient".
+    #[test]
+    fn system_version_yields_nothing_for_a_missing_file_or_version() {
+        let documents: Documents = BTreeMap::from([(
+            "config/economy.cfg".to_string(),
+            json!({"Economy": {"credits": 12}}),
+        )]);
+
+        assert_eq!(system_version(&documents, "config/economy.cfg"), None);
+        assert_eq!(system_version(&documents, "config/nothing.cfg"), None);
     }
 }

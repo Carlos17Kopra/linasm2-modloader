@@ -8,7 +8,7 @@
 //! result.
 
 use crate::error::{Error, Result};
-use crate::savedata::catalogue::{Documents, Part, Selector};
+use crate::savedata::catalogue::{self, Documents, Part, Selector};
 use serde_json::Value;
 
 /// The schema version a node carries, if it carries one.
@@ -104,7 +104,7 @@ pub(crate) fn apply(base: &mut Documents, part: &Part, source: &Documents) -> Re
     // Read before the write, and from both sides: a whole-file part
     // takes the system object with it, counter included, so afterwards
     // there is nothing left to compare the source against.
-    let highest = system_version(base, part.file).max(system_version(source, part.file));
+    let highest = catalogue::system_version(base, part.file).max(catalogue::system_version(source, part.file));
 
     let base_document = base.get_mut(part.file).expect("checked above");
     if !part.selector.set(base_document, incoming) {
@@ -115,12 +115,6 @@ pub(crate) fn apply(base: &mut Documents, part: &Part, source: &Documents) -> Re
         raise_system_version(base, part.file, version);
     }
     Ok(())
-}
-
-/// The `systemVersion` a file's system object carries, if it carries
-/// one.
-fn system_version(documents: &Documents, file: &str) -> Option<u64> {
-    Selector::Whole.get(documents.get(file)?)?.get("systemVersion")?.as_u64()
 }
 
 /// Lifts a file's `systemVersion` to `version`.
