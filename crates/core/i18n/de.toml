@@ -641,6 +641,9 @@ profile_notice_hint = "Profil „{name}“ – mit Anwenden zurückstellen."
 update_available = "Version {version} ist verfügbar."
 update_check_failed = "Update-Prüfung fehlgeschlagen: {detail}"
 update_installed = "{version} installiert – bitte den Launcher neu starten."
+compose_done = "Zusammengestelltes Backup {created_at} erstellt."
+compose_failed = "Zusammenstellen fehlgeschlagen: {detail}"
+compose_running = "Backup wird zusammengestellt …"
 
 [savedata.summary]
 level = "Stufe {level}"

@@ -336,6 +336,8 @@ pub struct App {
     steam_users: Vec<String>,
     /// The state behind the "compose a save" tab.
     compose: compose::ComposeUi,
+    /// Which half of the savegame page is showing.
+    saves_tab: compose::SavesTab,
 
     drag: Option<Drag>,
     task: Option<tasks::Running>,
@@ -383,6 +385,7 @@ impl App {
             saves_blocked: None,
             steam_users: Vec::new(),
             compose: compose::ComposeUi::default(),
+            saves_tab: compose::SavesTab::default(),
             drag: None,
             task: None,
             update: update::UpdateUi::default(),

@@ -640,6 +640,9 @@ profile_notice_hint = "Profile \"{name}\" – defer with Apply."
 update_available = "Version {version} is available."
 update_check_failed = "Update check failed: {detail}"
 update_installed = "{version} installed – please restart the launcher."
+compose_done = "Composed backup {created_at} created."
+compose_failed = "Composing failed: {detail}"
+compose_running = "Composing the backup …"
 
 [savedata.summary]
 level = "level {level}"

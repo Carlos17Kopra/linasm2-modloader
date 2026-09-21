@@ -12,10 +12,12 @@
 //! activation, ordering and import while a job is running: a change made in
 //! the meantime would be overwritten by the state coming back.
 
+use super::compose::SavesTab;
 use super::{App, Notice, Section};
 use sm2_core::library::Library;
 use sm2_core::pak_config::PakConfig;
 use sm2_core::paths::GamePaths;
+use sm2_core::savedata::compose;
 use sm2_core::saves::{self, BackupEntry};
 use sm2_core::import;
 use sm2_core::t;
@@ -85,6 +87,8 @@ enum Outcome {
     /// started meanwhile may have replaced what is known there, and the
     /// message has to name the version that was actually installed.
     Updated { version: Version, result: Result<(), String> },
+    /// A backup composed from several others.
+    Composed(Result<BackupEntry, String>),
 }
 
 /// Starts a thread and returns the handle to it.
@@ -239,6 +243,19 @@ impl App {
                 // sentence would say the same thing twice.
                 Err(error) => self.set_warning(error),
             },
+            Outcome::Composed(Ok(entry)) => {
+                self.refresh_backups();
+                // The result belongs in the list, which is also where it
+                // is restored from — so the tab that made it steps aside.
+                self.saves_tab = SavesTab::Backups;
+                self.set_status(t!("gui.message.compose_done", created_at = entry.created_at));
+            }
+            Outcome::Composed(Err(error)) => {
+                // The composed state stays as it is: the message names
+                // the one disputed part or source, and changing it and
+                // pressing again is the obvious next move.
+                self.set_warning(t!("gui.message.compose_failed", detail = error));
+            }
         }
     }
 
@@ -301,6 +318,33 @@ impl App {
             let result = saves::backup(&save_dir, &backups, label.as_deref())
                 .map_err(|e| e.to_string());
             Outcome::BackedUp(result)
+        }));
+    }
+
+    /// Writes the composition the compose tab describes.
+    ///
+    /// Unlike `start_backup` this needs no save directory: it reads
+    /// backups and writes a backup, and never touches the game's own
+    /// directory. That is why the tab stays usable while the savegame
+    /// functions are locked.
+    pub(super) fn start_compose(&mut self) {
+        let Some(base_at) = self.compose.base.clone() else { return };
+        let Some(base) = self.backups.iter().find(|e| e.created_at == base_at).cloned() else {
+            return;
+        };
+        let Some(backups_dir) = self.backups_dir() else { return };
+        let replacements = self.compose.replacements(&self.backups);
+        let label = self.compose.label.trim().to_owned();
+        let label = (!label.is_empty()).then_some(label);
+        let ctx = self.egui_ctx.clone();
+
+        self.set_busy(t!("gui.message.compose_running"));
+        self.task = Some(spawn(ctx, false, move |_cancel, progress| {
+            report(progress, 0.3, t!("gui.message.reading_hashing_saves"));
+            let result =
+                compose::compose(&base, &replacements, &backups_dir, label.as_deref())
+                    .map_err(|e| e.to_string());
+            Outcome::Composed(result)
         }));
     }
 
@@ -645,6 +689,25 @@ mod tests {
 
         assert!(working.starts_with(temp.path()), "the working copy must live in the temp folder");
         assert!(original.exists(), "the user's original file must not be touched");
+    }
+
+    /// The two sentences the composition ends in, in both languages —
+    /// the outcome arm picks one of them and nothing else checks the
+    /// wording.
+    #[test]
+    fn the_composition_result_reads_correctly_in_both_languages() {
+        let _held = language_test_lock();
+        set_language(Language::English);
+        assert_eq!(
+            t!("gui.message.compose_done", created_at = "2026-09-21_120000"),
+            "Composed backup 2026-09-21_120000 created."
+        );
+        set_language(Language::German);
+        assert_eq!(
+            t!("gui.message.compose_failed", detail = "keine Basis"),
+            "Zusammenstellen fehlgeschlagen: keine Basis"
+        );
+        set_language(Language::English);
     }
 
     #[test]
