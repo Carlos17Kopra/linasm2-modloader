@@ -270,6 +270,7 @@ retail_exe_not_found = "Retail.exe nicht gefunden – Spielverzeichnis prüfen"
 umu_run_not_found = "umu-run nicht im PATH gefunden – für den Start ohne Steam wird umu-launcher benötigt (https://github.com/Open-Wine-Components/umu-launcher)"
 unmergeable_part = "'{part}' lässt sich nicht übernehmen: die Basis führt Schemaversion {base}, die Quelle {source}. Ein Spiel-Update hat diese Daten geändert."
 part_missing_in_source = "Das für '{part}' gewählte Backup enthält diesen Bestandteil nicht."
+part_missing_in_base = "Das Basis-Backup enthält '{part}' nicht. Bitte ein anderes Basis-Backup wählen – das Backup, aus dem der Bestandteil kommt, ist nicht die Ursache."
 unknown_part = "'{part}' ist kein Bestandteil, den dieses Backup anbietet."
 ambiguous_part = "'{part}' kommt in diesem Backup mehrfach vor, damit ist nicht eindeutig, welcher gemeint ist. Dieser Bestandteil lässt sich nicht zusammenstellen."
 

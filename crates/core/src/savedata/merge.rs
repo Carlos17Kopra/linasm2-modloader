@@ -44,6 +44,15 @@ fn schema_version(node: &Value) -> Option<u64> {
 /// it came from. What still has to be true of it is that it does not
 /// claim to be older than the composition around it — and that is what
 /// `systemVersion` below guards.
+///
+/// The invariant the base-side refusals rest on: `compose` resolves
+/// every part through `catalogue::part_by_id` against the base's *own*
+/// documents, and `get` and `set` share one walk, so a part that
+/// resolved for reading resolves for writing. They are therefore
+/// unreachable from the one caller there is. They stay because `apply`
+/// takes any part with any two document sets — and because a defect in
+/// the base reported against the source sends the reader off to swap
+/// backups that were never at fault.
 pub(crate) fn apply(base: &mut Documents, part: &Part, source: &Documents) -> Result<()> {
     let source_document = source
         .get(part.file)
@@ -56,11 +65,11 @@ pub(crate) fn apply(base: &mut Documents, part: &Part, source: &Documents) -> Re
 
     let base_document = base
         .get(part.file)
-        .ok_or_else(|| Error::PartMissingInSource { part: part.id.clone() })?;
+        .ok_or_else(|| Error::PartMissingInBase { part: part.id.clone() })?;
     let present = part
         .selector
         .get(base_document)
-        .ok_or_else(|| Error::PartMissingInSource { part: part.id.clone() })?;
+        .ok_or_else(|| Error::PartMissingInBase { part: part.id.clone() })?;
 
     if schema_version(present) != schema_version(&incoming) {
         return Err(Error::UnmergeablePart {
@@ -77,7 +86,7 @@ pub(crate) fn apply(base: &mut Documents, part: &Part, source: &Documents) -> Re
 
     let base_document = base.get_mut(part.file).expect("checked above");
     if !part.selector.set(base_document, incoming) {
-        return Err(Error::PartMissingInSource { part: part.id.clone() });
+        return Err(Error::PartMissingInBase { part: part.id.clone() });
     }
 
     if let Some(version) = highest {
@@ -200,6 +209,40 @@ mod tests {
         assert!(matches!(
             apply(&mut base, &part, &source).unwrap_err(),
             Error::PartMissingInSource { .. }
+        ));
+    }
+
+    /// The same absence on the other side is a different report. A user
+    /// told the *source* is at fault goes on swapping source backups
+    /// that were never the problem, so the two sides cannot share a
+    /// variant.
+    #[test]
+    fn a_part_the_base_does_not_hold_blames_the_base_and_not_the_source() {
+        let mut base = progression(700, 5, 3);
+        let source = progression(701, 42, 3);
+        let part = part_by_id(&source, "class_level:PVE_TANK").unwrap();
+        base.remove("config/user_progression.cfg");
+
+        assert!(matches!(
+            apply(&mut base, &part, &source).unwrap_err(),
+            Error::PartMissingInBase { .. }
+        ));
+    }
+
+    #[test]
+    fn a_node_the_base_file_does_not_hold_blames_the_base_as_well() {
+        let mut base = progression(700, 5, 3);
+        let source = progression(701, 42, 3);
+        let part = part_by_id(&source, "class_level:PVE_TANK").unwrap();
+        base.get_mut("config/user_progression.cfg").unwrap()["UserProgression"]["UserMastery"]
+            ["masteryStates"]
+            .as_object_mut()
+            .unwrap()
+            .remove("PVE_TANK");
+
+        assert!(matches!(
+            apply(&mut base, &part, &source).unwrap_err(),
+            Error::PartMissingInBase { .. }
         ));
     }
 

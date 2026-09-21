@@ -222,12 +222,22 @@ fn discover(documents: &Documents) -> Vec<Part> {
             continue;
         };
         match group.kind {
-            GroupKind::WholeFile => parts.push(Part {
-                id: group.id.to_string(),
-                group: group.id,
-                file: group.file,
-                selector: Selector::Whole,
-            }),
+            GroupKind::WholeFile => {
+                // Not offered unless the selector can actually resolve
+                // it: `Selector::Whole` needs a root of exactly one
+                // key, and a part that cannot be resolved would reach
+                // `merge` as a defect of whichever backup happened to
+                // be read first.
+                if system_key(document).is_none() {
+                    continue;
+                }
+                parts.push(Part {
+                    id: group.id.to_string(),
+                    group: group.id,
+                    file: group.file,
+                    selector: Selector::Whole,
+                });
+            }
             GroupKind::Members { container } => {
                 let Some(object) = document.pointer(container).and_then(Value::as_object) else {
                     continue;
@@ -420,6 +430,27 @@ mod tests {
         assert!(matches!(
             part_by_id(&documents, "loadout:STORY_TITUS").unwrap_err(),
             Error::AmbiguousPart { .. }
+        ));
+    }
+
+    /// A whole-file part selects the root's single system object, so a
+    /// root that is not one object cannot be resolved on either side.
+    /// Offering it regardless pushed the refusal down into `merge`,
+    /// which knows nothing about which backup the odd shape came from
+    /// and could only guess — so the check belongs here, where the part
+    /// is offered.
+    #[test]
+    fn a_whole_file_part_is_not_offered_for_a_root_that_is_not_one_object() {
+        let mut documents = documents_fixture();
+        documents.insert(
+            "config/economy.cfg".to_string(),
+            json!({"Economy": {"systemVersion": 700}, "Stranger": {}}),
+        );
+
+        assert!(!parts(&documents).iter().any(|part| part.id == "economy"));
+        assert!(matches!(
+            part_by_id(&documents, "economy").unwrap_err(),
+            Error::UnknownPart { .. }
         ));
     }
 

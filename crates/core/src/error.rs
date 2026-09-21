@@ -30,6 +30,11 @@ pub enum Error {
     UnmergeablePart { part: String, base: String, source: String },
     /// A part the backup it should come from does not hold.
     PartMissingInSource { part: String },
+    /// A part the base backup does not hold. Its own variant because
+    /// the two absences send the reader to different backups, and being
+    /// sent to the wrong one costs an afternoon of swapping sources
+    /// that were never at fault.
+    PartMissingInBase { part: String },
     /// A part id that this backup does not offer.
     UnknownPart { part: String },
     /// A part id that this backup offers more than once, because two
@@ -393,6 +398,9 @@ impl std::fmt::Display for Error {
             ),
             Error::PartMissingInSource { part } => {
                 i18n::format("error.part_missing_in_source", &[("part", part.clone())])
+            }
+            Error::PartMissingInBase { part } => {
+                i18n::format("error.part_missing_in_base", &[("part", part.clone())])
             }
             Error::UnknownPart { part } => {
                 i18n::format("error.unknown_part", &[("part", part.clone())])
