@@ -34,6 +34,66 @@ const FOOTER_HEIGHT: f32 = 40.0;
 const WARNING_HEIGHT: f32 = 24.0;
 /// The dropdown field inside a table cell.
 const FIELD_HEIGHT: f32 = 26.0;
+/// What the error banner adds to the height of its own text.
+const BANNER_PADDING: f32 = 22.0;
+
+/// Where the pieces of the page go.
+struct Placement {
+    base: Rect,
+    /// The error banner, when a read has failed.
+    banner: Option<Rect>,
+    /// The table's card.
+    card: Rect,
+    /// The mixed-version line, when any part comes from an older build.
+    warning: Option<Rect>,
+    footer: Rect,
+}
+
+/// Divides the tab's space between the table and everything that is not
+/// the table.
+///
+/// The one thing this guarantees is that the card never reaches the
+/// footer. The footer is drawn first and holds the only control on this
+/// page that writes anything; egui hands a click to whichever widget
+/// registered last, so a card drawn over the footer swallows the click
+/// on "create backup" and the button does nothing. The card therefore
+/// takes what is left between the banner and the footer and shrinks to
+/// nothing when a short window leaves nothing — it is the table that
+/// loses room, never the button that goes missing. `show` clips the
+/// table to the card as well, because a card can end up smaller than
+/// what the table draws into it.
+///
+/// `banner` is the banner's height, which has to be measured before
+/// this runs because how its sentence wraps decides how much room is
+/// left over.
+fn place(outer: Rect, banner: Option<f32>, warning: bool) -> Placement {
+    let base = Rect::from_min_size(outer.min, Vec2::new(outer.width(), BASE_CARD_HEIGHT));
+    let mut top = base.bottom() + metric::CONTENT_GAP;
+    let banner = banner.map(|height| {
+        let rect =
+            Rect::from_min_size(Pos2::new(outer.left(), top), Vec2::new(outer.width(), height));
+        top = rect.bottom() + metric::CONTENT_GAP;
+        rect
+    });
+
+    let footer =
+        Rect::from_min_max(Pos2::new(outer.left(), outer.bottom() - FOOTER_HEIGHT), outer.max);
+    let mut bottom = footer.top();
+    let warning = warning.then(|| {
+        bottom -= WARNING_HEIGHT;
+        Rect::from_min_size(
+            Pos2::new(outer.left(), bottom),
+            Vec2::new(outer.width(), WARNING_HEIGHT),
+        )
+    });
+
+    let card_bottom = bottom - metric::CONTENT_GAP;
+    let card = Rect::from_min_max(
+        Pos2::new(outer.left(), top.min(card_bottom)),
+        Pos2::new(outer.right(), card_bottom),
+    );
+    Placement { base, banner, card, warning, footer }
+}
 
 pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     // Not `app.saves_blocked.is_none() && ...`, which is what the
@@ -54,43 +114,36 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
     let mut anchor: Option<Rect> = None;
 
     let outer = ui.available_rect_before_wrap();
-    let mut top = outer.top();
-
-    let base_rect = Rect::from_min_size(
-        Pos2::new(outer.left(), top),
-        Vec2::new(outer.width(), BASE_CARD_HEIGHT),
+    // Both are needed before anything is placed: the banner's height
+    // depends on how its sentence wraps, and the warning line takes a
+    // strip off the bottom only when there is one.
+    let banner = app.compose.error.as_ref().map(|error| banner_text(ui, outer.width(), error));
+    let warning = app.compose.version_warning(&app.compose.parts);
+    let places = place(
+        outer,
+        banner.as_ref().map(|galley| galley.size().y + BANNER_PADDING),
+        warning.is_some(),
     );
-    base_card(app, ui, base_rect, usable, actions, &mut anchor);
-    top = base_rect.bottom() + metric::CONTENT_GAP;
 
-    if let Some(error) = &app.compose.error {
-        top = error_banner(ui, outer, top, error) + metric::CONTENT_GAP;
+    base_card(app, ui, places.base, usable, actions, &mut anchor);
+    if let (Some(rect), Some(galley)) = (places.banner, banner) {
+        error_banner(ui, rect, galley);
     }
-
-    let mut bottom = outer.bottom() - FOOTER_HEIGHT;
-    footer(
-        app,
-        ui,
-        Rect::from_min_max(Pos2::new(outer.left(), bottom), outer.max),
-        usable,
-        actions,
-    );
-    if let Some(warning) = app.compose.version_warning(&app.compose.parts) {
-        bottom -= WARNING_HEIGHT;
-        let line = Rect::from_min_size(
-            Pos2::new(outer.left(), bottom),
-            Vec2::new(outer.width(), WARNING_HEIGHT),
-        );
-        warning_line(ui, line, &warning);
+    footer(app, ui, places.footer, usable, actions);
+    if let (Some(rect), Some(warning)) = (places.warning, warning) {
+        warning_line(ui, rect, &warning);
     }
-
-    // The card takes what is left. A window shrunk below the table's
-    // own minimum keeps a readable rest rather than an inverted rect.
-    let card = Rect::from_min_max(
-        Pos2::new(outer.left(), top),
-        Pos2::new(outer.right(), (bottom - metric::CONTENT_GAP).max(top + 140.0)),
-    );
-    table(app, ui, card, usable, actions, &mut anchor);
+    // Clipped to the card, not merely placed in it. `place` keeps the
+    // card off the footer, but the card can end up shorter than the
+    // toolbar and the column head it holds, and egui lets a widget
+    // overflow the rect it was given. A clip rect is what actually
+    // stops it: `Ui::interact` registers every widget with
+    // `interact_rect = clip_rect ∩ rect`, so what is clipped away is
+    // not clickable either, and the footer below keeps its clicks.
+    ui.scope_builder(UiBuilder::new().max_rect(places.card), |ui| {
+        ui.shrink_clip_rect(places.card);
+        table(app, ui, places.card, usable, actions, &mut anchor);
+    });
 
     if let Some(anchor) = anchor {
         picker_menu(app, ui, anchor, actions);
@@ -172,16 +225,18 @@ fn base_card(
     }
 }
 
+/// The banner's sentence, laid out at the width it will be drawn at.
+///
+/// Separate from the drawing because its height decides where the table
+/// starts, and `place` has to know that before anything is drawn.
+fn banner_text(ui: &Ui, width: f32, message: &str) -> std::sync::Arc<egui::Galley> {
+    let text_width = width - 13.0 - 11.0 - 10.0 - 13.0;
+    ui.painter().layout(message.to_owned(), sans(12.0), color::TEXT, text_width)
+}
+
 /// A failed read, above the table until the user acts on it. The box is
 /// `saves_page::blocked_banner`'s, without its buttons.
-fn error_banner(ui: &mut Ui, outer: Rect, top: f32, message: &str) -> f32 {
-    let text_width = outer.width() - 13.0 - 11.0 - 10.0 - 13.0;
-    let galley = ui.painter().layout(message.to_owned(), sans(12.0), color::TEXT, text_width);
-    let rect = Rect::from_min_size(
-        Pos2::new(outer.left(), top),
-        Vec2::new(outer.width(), galley.size().y + 22.0),
-    );
-
+fn error_banner(ui: &Ui, rect: Rect, galley: std::sync::Arc<egui::Galley>) {
     let painter = ui.painter();
     let radius = CornerRadius::same(8);
     painter.rect_filled(rect, radius, egui::Color32::from_rgb(0x17, 0x1a, 0x21));
@@ -202,7 +257,6 @@ fn error_banner(ui: &mut Ui, outer: Rect, top: f32, message: &str) -> f32 {
         galley,
         color::TEXT,
     );
-    rect.bottom()
 }
 
 /// The card with the filter, the toggle, the column head and the rows.
@@ -774,9 +828,59 @@ fn footer(app: &App, ui: &mut Ui, rect: Rect, usable: bool, actions: &mut Vec<Ac
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::app_state::language_test_lock;
     use sm2_core::i18n::{set_language, Language};
     use sm2_core::t;
+
+    /// Roughly what the tab is left with in a window at the documented
+    /// minimum of 860×560 (`gui::run`) once the top bar, the status
+    /// bar, the side bar, the page title, the tab strip, the
+    /// explanatory line and the `saves_blocked` banner — which the
+    /// design explicitly allows on this tab — have had their share.
+    fn smallest_window() -> Rect {
+        Rect::from_min_size(Pos2::new(0.0, 0.0), Vec2::new(792.0, 250.0))
+    }
+
+    /// The footer holds the only control on this page that writes
+    /// anything, and egui gives a click to whichever widget registered
+    /// last — so a card reaching down into the footer swallows the
+    /// click on "create backup" and the button silently does nothing.
+    #[test]
+    fn the_table_never_reaches_the_footer() {
+        let outer = smallest_window();
+
+        for banner in [None, Some(44.0)] {
+            for warning in [false, true] {
+                let places = place(outer, banner, warning);
+
+                assert!(
+                    places.card.bottom() <= places.footer.top(),
+                    "card {:?} overlaps the footer {:?} (banner {banner:?}, warning {warning})",
+                    places.card,
+                    places.footer,
+                );
+                assert!(
+                    places.card.top() <= places.card.bottom(),
+                    "the card must not come out inverted"
+                );
+            }
+        }
+    }
+
+    /// The footer keeps its full height whatever else is on the page:
+    /// it is the table that gives way, not the button.
+    #[test]
+    fn the_footer_keeps_its_height_in_a_window_too_short_for_everything() {
+        let places = place(
+            Rect::from_min_size(Pos2::new(0.0, 0.0), Vec2::new(792.0, 130.0)),
+            Some(44.0),
+            true,
+        );
+
+        assert_eq!(places.footer.height(), FOOTER_HEIGHT);
+        assert!(places.warning.is_some_and(|line| line.bottom() <= places.footer.top()));
+    }
 
     /// The tab strip and the explanatory line under it, in both
     /// languages — the two pieces of copy that say what this tab is
