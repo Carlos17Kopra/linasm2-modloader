@@ -27,6 +27,7 @@
 
 mod commands;
 mod compose;
+mod compose_page;
 mod dialogs;
 mod format;
 mod icons;
@@ -1214,9 +1215,21 @@ impl App {
 /// A heading and its explanatory text above a card — profiles and savegames
 /// use the same shape.
 fn page_heading(ui: &mut egui::Ui, title: &str, description: &str, max_width: f32) {
+    page_title(ui, title);
+    page_body(ui, description, max_width);
+}
+
+/// The title line of a page, on its own — the savegame page puts its tab
+/// strip between the title and the line below it, and which line that is
+/// depends on the tab.
+fn page_title(ui: &mut egui::Ui, title: &str) {
     ui.label(
         egui::RichText::new(title).font(theme::medium(15.0)).color(theme::color::TEXT_STRONG),
     );
+}
+
+/// The explanatory line under a page's title, and the gap to the content.
+fn page_body(ui: &mut egui::Ui, description: &str, max_width: f32) {
     ui.add_space(4.0);
     let width = max_width.min(ui.available_width());
     let galley = ui.painter().layout(

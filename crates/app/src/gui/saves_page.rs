@@ -1,5 +1,6 @@
 //! The "Savegames" section: making, verifying and restoring backups.
 
+use super::compose::SavesTab;
 use super::format::{human_size, human_time};
 use super::theme::{color, medium, metric, mono, sans};
 use super::widgets::{self, ButtonStyle, Column, Icon};
@@ -15,16 +16,24 @@ const BACKUP_COLUMNS: [Column; 4] = [
 ];
 
 pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
-    super::page_heading(
-        ui,
-        &t!("gui.saves.heading"),
-        &t!("gui.saves.heading_body"),
-        680.0,
-    );
+    super::page_title(ui, &t!("gui.saves.heading"));
+    ui.add_space(9.0);
+    tab_strip(app, ui, actions);
+    let body = match app.saves_tab {
+        SavesTab::Backups => t!("gui.saves.heading_body"),
+        SavesTab::Compose => t!("gui.compose.intro"),
+    };
+    super::page_body(ui, &body, 680.0);
 
+    // Above both tabs, not only this one: restoring stays blocked while
+    // the Steam user profile is ambiguous, whichever tab is showing.
     if app.saves_blocked.is_some() {
         blocked_banner(app, ui, actions);
         ui.add_space(metric::CONTENT_GAP);
+    }
+
+    if app.saves_tab == SavesTab::Compose {
+        return super::compose_page::show(app, ui, actions);
     }
 
     let outer = ui.available_rect_before_wrap();
@@ -112,6 +121,33 @@ pub fn show(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
                 row(app, ui, index, actions);
             }
         });
+    });
+}
+
+/// The two halves of the savegame page.
+///
+/// The active one keeps the accent border a ghost button otherwise only
+/// shows under the pointer — the design's way of saying "you are here",
+/// and the reason these are buttons rather than a widget of their own.
+fn tab_strip(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
+    let tabs = [
+        (SavesTab::Backups, t!("gui.compose.tab_backups")),
+        (SavesTab::Compose, t!("gui.compose.tab")),
+    ];
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        for (tab, label) in &tabs {
+            let mut style = ButtonStyle::ghost().font(medium(12.5));
+            if app.saves_tab == *tab {
+                style.background = color::SELECTED;
+                style.border = Some(color::ACCENT);
+                style.border_hovered = Some(color::ACCENT);
+                style.foreground = color::TEXT_STRONG;
+            }
+            if widgets::button(ui, &style, None, label, true).clicked() {
+                actions.push(Action::ShowSavesTab(*tab));
+            }
+        }
     });
 }
 
@@ -330,7 +366,7 @@ fn context_menu(app: &App, response: &egui::Response, index: usize, actions: &mu
 
 /// The size of the archive on disk. It is nowhere in the manifest — the
 /// file knows it itself.
-fn archive_size(entry: &sm2_core::saves::BackupEntry) -> String {
+pub(super) fn archive_size(entry: &sm2_core::saves::BackupEntry) -> String {
     std::fs::metadata(&entry.archive)
         .map_or_else(|_| t!("gui.saves.no_value"), |m| human_size(m.len()))
 }
