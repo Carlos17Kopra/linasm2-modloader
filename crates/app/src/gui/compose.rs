@@ -69,6 +69,42 @@ pub(super) struct Loaded {
     pub(super) result: Result<Documents, String>,
 }
 
+/// One line of the part table.
+pub(super) enum Row {
+    Group(GroupRow),
+    Part(PartRow),
+}
+
+/// The head of a group that holds more than one part.
+pub(super) struct GroupRow {
+    pub(super) group: &'static str,
+    pub(super) total: usize,
+    pub(super) replaced: usize,
+    pub(super) source: GroupSource,
+    pub(super) open: bool,
+}
+
+/// What a group header's dropdown reads.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum GroupSource {
+    /// Every part comes from the base.
+    Base,
+    /// Every part comes from this one backup.
+    One(String),
+    /// The parts come from more than one backup.
+    Mixed,
+}
+
+pub(super) struct PartRow {
+    pub(super) id: String,
+    pub(super) group: &'static str,
+    pub(super) file: &'static str,
+    /// The backup this part comes from, or `None` for the base.
+    pub(super) source: Option<String>,
+    /// Drawn below a group header rather than as a group of its own.
+    pub(super) indented: bool,
+}
+
 impl ComposeUi {
     /// Sets the base and, when it actually changes, drops every chosen
     /// source with it — see the test for why.
@@ -96,6 +132,84 @@ impl ComposeUi {
                 Some((part.clone(), entry.clone()))
             })
             .collect()
+    }
+
+    /// Is the table currently narrowed down?
+    ///
+    /// While it is, a group with a surviving part is drawn open whatever
+    /// `open_groups` says — and `open_groups` is left alone, so clearing
+    /// the filter puts the table back the way the user left it.
+    fn narrowed(&self) -> bool {
+        !self.part_filter.trim().is_empty() || self.only_replaced
+    }
+
+    fn shown(&self, part: &Part) -> bool {
+        let needle = self.part_filter.trim().to_lowercase();
+        let matches = needle.is_empty() || part.id.to_lowercase().contains(&needle);
+        matches && (!self.only_replaced || self.sources.contains_key(&part.id))
+    }
+
+    /// The table, in the catalogue's own order: `parts` comes out of
+    /// `catalogue::parts`, which walks `GROUPS`, so grouping by runs of
+    /// equal `group` keeps the order the rest of the program uses.
+    pub(super) fn rows(&self, parts: &[Part]) -> Vec<Row> {
+        let mut rows = Vec::new();
+        let mut index = 0;
+        while index < parts.len() {
+            let group = parts[index].group;
+            let end = parts[index..].iter().take_while(|p| p.group == group).count() + index;
+            let members = &parts[index..end];
+            index = end;
+
+            let visible: Vec<&Part> = members.iter().filter(|part| self.shown(part)).collect();
+            if visible.is_empty() {
+                continue;
+            }
+
+            // One part is one row. A collapsible section holding a
+            // single line is noise.
+            if members.len() == 1 {
+                rows.push(Row::Part(self.part_row(&members[0], false)));
+                continue;
+            }
+
+            let open = self.open_groups.contains(group) || self.narrowed();
+            rows.push(Row::Group(GroupRow {
+                group,
+                total: members.len(),
+                replaced: members.iter().filter(|p| self.sources.contains_key(&p.id)).count(),
+                source: self.group_source(members),
+                open,
+            }));
+            if open {
+                rows.extend(visible.into_iter().map(|part| Row::Part(self.part_row(part, true))));
+            }
+        }
+        rows
+    }
+
+    fn part_row(&self, part: &Part, indented: bool) -> PartRow {
+        PartRow {
+            id: part.id.clone(),
+            group: part.group,
+            file: part.file,
+            source: self.sources.get(&part.id).cloned(),
+            indented,
+        }
+    }
+
+    fn group_source(&self, members: &[Part]) -> GroupSource {
+        let mut seen: BTreeSet<Option<&String>> = BTreeSet::new();
+        for part in members {
+            seen.insert(self.sources.get(&part.id));
+        }
+        match seen.len() {
+            1 => match seen.into_iter().next().flatten() {
+                Some(created_at) => GroupSource::One(created_at.clone()),
+                None => GroupSource::Base,
+            },
+            _ => GroupSource::Mixed,
+        }
     }
 }
 
@@ -184,5 +298,139 @@ mod tests {
         ui.set_base("2026-09-20_100000".to_string());
 
         assert_eq!(ui.sources.len(), 1);
+    }
+
+    use sm2_core::savedata::catalogue::Selector;
+
+    /// Two parts of one multi-part group and one single-part group —
+    /// the two shapes the table has to draw differently.
+    pub(crate) fn sample_parts() -> Vec<Part> {
+        vec![
+            Part {
+                id: "class_level:PVE_TANK".to_string(),
+                group: "class_level",
+                file: "config/user_progression.cfg",
+                selector: Selector::Member {
+                    container: "/UserProgression/UserMastery/masteryStates",
+                    key: "PVE_TANK".to_string(),
+                },
+            },
+            Part {
+                id: "class_level:PVE_SNIPER".to_string(),
+                group: "class_level",
+                file: "config/user_progression.cfg",
+                selector: Selector::Member {
+                    container: "/UserProgression/UserMastery/masteryStates",
+                    key: "PVE_SNIPER".to_string(),
+                },
+            },
+            Part {
+                id: "economy".to_string(),
+                group: "economy",
+                file: "config/economy.cfg",
+                selector: Selector::Whole,
+            },
+        ]
+    }
+
+    fn ui_with_base() -> ComposeUi {
+        let mut ui = ComposeUi::default();
+        ui.set_base("2026-09-20_100000".to_string());
+        ui
+    }
+
+    #[test]
+    fn a_collapsed_group_shows_its_header_and_none_of_its_parts() {
+        let ui = ui_with_base();
+
+        let rows = ui.rows(&sample_parts());
+
+        // The class_level header, then economy as a plain row.
+        assert_eq!(rows.len(), 2);
+        let Row::Group(header) = &rows[0] else { panic!("first row is the group header") };
+        assert_eq!(header.group, "class_level");
+        assert_eq!(header.total, 2);
+        assert!(!header.open);
+        let Row::Part(part) = &rows[1] else { panic!("a single-part group is drawn as a row") };
+        assert_eq!(part.id, "economy");
+        assert!(!part.indented);
+    }
+
+    #[test]
+    fn an_open_group_shows_its_parts_below_the_header() {
+        let mut ui = ui_with_base();
+        ui.open_groups.insert("class_level");
+
+        let rows = ui.rows(&sample_parts());
+
+        assert_eq!(rows.len(), 4);
+        assert!(matches!(&rows[0], Row::Group(header) if header.open));
+        assert!(matches!(&rows[1], Row::Part(part) if part.indented));
+    }
+
+    #[test]
+    fn a_header_counts_the_parts_of_its_group_that_are_replaced() {
+        let mut ui = ui_with_base();
+        ui.sources
+            .insert("class_level:PVE_TANK".to_string(), "2026-09-19_080000".to_string());
+
+        let rows = ui.rows(&sample_parts());
+
+        let Row::Group(header) = &rows[0] else { panic!("first row is the group header") };
+        assert_eq!(header.replaced, 1);
+        assert_eq!(header.source, GroupSource::Mixed);
+    }
+
+    #[test]
+    fn a_header_names_the_one_source_all_its_parts_share() {
+        let mut ui = ui_with_base();
+        for id in ["class_level:PVE_TANK", "class_level:PVE_SNIPER"] {
+            ui.sources.insert(id.to_string(), "2026-09-19_080000".to_string());
+        }
+
+        let rows = ui.rows(&sample_parts());
+
+        let Row::Group(header) = &rows[0] else { panic!("first row is the group header") };
+        assert_eq!(header.source, GroupSource::One("2026-09-19_080000".to_string()));
+    }
+
+    /// Without this a filter that matches only parts inside collapsed
+    /// groups looks like a filter that does nothing.
+    #[test]
+    fn a_filter_draws_a_matching_group_open_without_changing_what_is_collapsed() {
+        let mut ui = ui_with_base();
+        ui.part_filter = "SNIPER".to_string();
+
+        let rows = ui.rows(&sample_parts());
+
+        assert_eq!(rows.len(), 2);
+        assert!(matches!(&rows[0], Row::Group(header) if header.open && header.total == 2));
+        assert!(matches!(&rows[1], Row::Part(part) if part.id == "class_level:PVE_SNIPER"));
+        assert!(ui.open_groups.is_empty(), "the collapsed state is remembered, not overwritten");
+    }
+
+    #[test]
+    fn a_group_without_a_matching_part_disappears_entirely() {
+        let mut ui = ui_with_base();
+        ui.part_filter = "economy".to_string();
+
+        let rows = ui.rows(&sample_parts());
+
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(&rows[0], Row::Part(part) if part.id == "economy"));
+    }
+
+    #[test]
+    fn only_replaced_hides_every_part_that_comes_from_the_base() {
+        let mut ui = ui_with_base();
+        ui.only_replaced = true;
+        ui.sources
+            .insert("class_level:PVE_TANK".to_string(), "2026-09-19_080000".to_string());
+
+        let rows = ui.rows(&sample_parts());
+
+        assert_eq!(rows.len(), 2);
+        assert!(matches!(&rows[0], Row::Group(header) if header.open));
+        assert!(matches!(&rows[1], Row::Part(part) if part.id == "class_level:PVE_TANK"));
     }
 }
