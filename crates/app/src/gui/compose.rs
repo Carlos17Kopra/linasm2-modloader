@@ -14,16 +14,24 @@ use std::sync::mpsc;
 use std::sync::Arc;
 
 /// Which half of the savegame page is showing.
+///
+/// `pub(crate)`, not `pub(super)`: it rides inside `Action::ShowSavesTab`,
+/// and a variant's field cannot be less visible than the public enum that
+/// carries it — `cargo clippy` catches the mismatch as `private_interfaces`
+/// otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum SavesTab {
+pub(crate) enum SavesTab {
     #[default]
     Backups,
     Compose,
 }
 
 /// Which dropdown is open, and what a pick in it means.
+///
+/// `pub(crate)` for the same reason as `SavesTab` above: it rides inside
+/// `Action::OpenComposePicker`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Picker {
+pub(crate) enum Picker {
     /// The base backup.
     Base,
     /// The source of one part.
@@ -339,6 +347,30 @@ impl ComposeUi {
         }
     }
 
+    /// The source of one part. Choosing the base itself is how a part
+    /// goes back to the base, so it removes rather than inserts.
+    pub(super) fn set_source(&mut self, part: String, backup: String) {
+        if self.base.as_deref() == Some(backup.as_str()) {
+            self.sources.remove(&part);
+        } else {
+            self.sources.insert(part, backup);
+        }
+        self.picker = None;
+        self.picker_filter.clear();
+    }
+
+    /// The source of every part of one group at once — "all my weapons
+    /// from the September backup" is what a group dropdown is for.
+    pub(super) fn set_group_source(&mut self, group: &'static str, backup: String) {
+        let ids: Vec<String> =
+            self.parts.iter().filter(|p| p.group == group).map(|p| p.id.clone()).collect();
+        for id in ids {
+            self.set_source(id, backup.clone());
+        }
+        self.picker = None;
+        self.picker_filter.clear();
+    }
+
     fn accept(&mut self, loaded: Loaded) {
         self.loading = None;
         match loaded.result {
@@ -366,7 +398,7 @@ impl ComposeUi {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::app_state::language_test_lock;
     use sm2_core::i18n::{set_language, Language};
