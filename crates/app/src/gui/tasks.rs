@@ -329,11 +329,23 @@ impl App {
     /// functions are locked.
     pub(super) fn start_compose(&mut self) {
         let Some(base_at) = self.compose.base.clone() else { return };
+        // Another window may have deleted a backup since the tab was
+        // filled in, and `refresh_backups` does not reconcile the
+        // composition. Both refusals below are therefore about the same
+        // moment — and both say so rather than writing something the
+        // table does not show: a missing base used to leave the enabled
+        // button a silent no-op, a missing source used to be replaced
+        // by the base's own part under a success message.
         let Some(base) = self.backups.iter().find(|e| e.created_at == base_at).cloned() else {
+            self.set_warning(t!("gui.message.compose_base_gone"));
             return;
         };
-        let Some(backups_dir) = self.backups_dir() else { return };
         let replacements = self.compose.replacements(&self.backups);
+        if replacements.len() != self.compose.sources.len() {
+            self.set_warning(t!("gui.message.compose_source_gone"));
+            return;
+        }
+        let Some(backups_dir) = self.backups_dir() else { return };
         let label = self.compose.label.trim().to_owned();
         let label = (!label.is_empty()).then_some(label);
         let ctx = self.egui_ctx.clone();
@@ -708,6 +720,61 @@ mod tests {
             "Zusammenstellen fehlgeschlagen: keine Basis"
         );
         set_language(Language::English);
+    }
+
+    /// A backup that exists only as a timestamp — enough for
+    /// `start_compose`, which looks up nothing but `created_at` before
+    /// it refuses.
+    fn entry(created_at: &str) -> BackupEntry {
+        BackupEntry {
+            created_at: created_at.to_string(),
+            label: None,
+            archive: PathBuf::from(format!("/nowhere/{created_at}.zip")),
+            manifest: PathBuf::from(format!("/nowhere/{created_at}.json")),
+        }
+    }
+
+    /// The base deleted in the Backups tab while the composition was
+    /// being assembled. The button stays enabled, so the click has to
+    /// say something — it used to start no task and report nothing.
+    #[test]
+    fn a_composition_whose_base_is_gone_is_refused_out_loud() {
+        let _held = language_test_lock();
+        set_language(Language::English);
+        let mut app = App::blank(egui::Context::default());
+        app.backups = vec![entry("2026-09-19_080000")];
+        app.compose.base = Some("2026-09-20_100000".to_string());
+
+        app.start_compose();
+
+        assert!(app.task.is_none(), "nothing may be written");
+        assert_eq!(app.status, "The base backup no longer exists. Nothing was composed.");
+        assert!(app.status_is_warning);
+    }
+
+    /// A source deleted while the composition was being assembled.
+    /// `replacements` drops it, so the part would come from the base
+    /// while the row still showed it as replaced — the one place in
+    /// this tab where the user could see one thing and get another.
+    #[test]
+    fn a_composition_whose_source_is_gone_is_refused_out_loud() {
+        let _held = language_test_lock();
+        set_language(Language::English);
+        let mut app = App::blank(egui::Context::default());
+        app.backups = vec![entry("2026-09-20_100000")];
+        app.compose.base = Some("2026-09-20_100000".to_string());
+        app.compose
+            .sources
+            .insert("class_level:PVE_TANK".to_string(), "2026-09-19_080000".to_string());
+
+        app.start_compose();
+
+        assert!(app.task.is_none(), "nothing may be written");
+        assert_eq!(
+            app.status,
+            "A backup one part was to come from no longer exists. Nothing was composed."
+        );
+        assert!(app.status_is_warning);
     }
 
     #[test]

@@ -667,6 +667,8 @@ update_installed = "{version} installed – please restart the launcher."
 compose_done = "Composed backup {created_at} created."
 compose_failed = "Composing failed: {detail}"
 compose_running = "Composing the backup …"
+compose_base_gone = "The base backup no longer exists. Nothing was composed."
+compose_source_gone = "A backup one part was to come from no longer exists. Nothing was composed."
 
 [savedata.summary]
 level = "level {level}"

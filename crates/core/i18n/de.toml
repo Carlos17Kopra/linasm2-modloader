@@ -668,6 +668,8 @@ update_installed = "{version} installiert – bitte den Launcher neu starten."
 compose_done = "Zusammengestelltes Backup {created_at} erstellt."
 compose_failed = "Zusammenstellen fehlgeschlagen: {detail}"
 compose_running = "Backup wird zusammengestellt …"
+compose_base_gone = "Das Basis-Backup gibt es nicht mehr. Es wurde nichts zusammengestellt."
+compose_source_gone = "Ein Backup, aus dem ein Bestandteil stammen sollte, gibt es nicht mehr. Es wurde nichts zusammengestellt."
 
 [savedata.summary]
 level = "Stufe {level}"
