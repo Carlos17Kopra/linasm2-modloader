@@ -141,6 +141,22 @@ impl ComposeUi {
             None => Vec::new(),
         };
         self.base = Some(created_at);
+        self.prune_decoded();
+    }
+
+    /// Lets go of every decoded backup that neither the base nor a
+    /// chosen source names any more.
+    ///
+    /// One of them is a few megabytes of JSON, and the design this was
+    /// built to budgets for one base and the one to three sources a
+    /// composition uses — not for everything a session ever looked at.
+    /// Called wherever that set shrinks, and never before whatever is
+    /// needed out of a departing entry has been taken (`set_base`
+    /// refills the part list first).
+    fn prune_decoded(&mut self) {
+        let named: BTreeSet<String> =
+            self.sources.values().cloned().chain(self.base.clone()).collect();
+        self.decoded.retain(|created_at, _| named.contains(created_at));
     }
 
     /// The chosen sources as `compose::compose` wants them.
@@ -388,6 +404,7 @@ impl ComposeUi {
         } else {
             self.sources.insert(part, backup);
         }
+        self.prune_decoded();
         self.picker = None;
         self.picker_filter.clear();
     }
@@ -427,6 +444,10 @@ impl ComposeUi {
                 self.error = Some(t!("gui.compose.read_failed", detail = detail));
             }
         }
+        // A read that was started for a source the user has meanwhile
+        // put back on the base arrives all the same, and would settle
+        // in `decoded` with nothing pointing at it.
+        self.prune_decoded();
     }
 }
 
@@ -847,6 +868,41 @@ pub(crate) mod tests {
 
     /// While the base is being decoded there is no part list yet, so
     /// the filter cannot be what the table is empty for.
+    /// A decoded backup is several megabytes of JSON and nothing else
+    /// ever lets one go: browsing across a dozen would otherwise hold
+    /// all twelve until the process exits.
+    #[test]
+    fn a_backup_nothing_points_at_any_more_is_released() {
+        let mut ui = ui_with_base();
+        ui.decoded.insert("2026-09-20_100000".to_string(), Arc::new(Documents::new()));
+        ui.decoded.insert("2026-09-19_080000".to_string(), Arc::new(Documents::new()));
+        ui.sources
+            .insert("class_level:PVE_TANK".to_string(), "2026-09-19_080000".to_string());
+
+        ui.set_source("class_level:PVE_TANK".to_string(), "2026-09-18_070000".to_string());
+
+        assert!(!ui.decoded.contains_key("2026-09-19_080000"), "the source swapped away is gone");
+        assert!(ui.decoded.contains_key("2026-09-20_100000"), "the base stays");
+    }
+
+    /// The prune must not take the entry `set_base` has just refilled
+    /// the part list from — the two run in the same call.
+    #[test]
+    fn changing_the_base_releases_the_old_one_and_keeps_the_new_one() {
+        let mut ui = ui_with_base();
+        ui.decoded.insert("2026-09-20_100000".to_string(), Arc::new(Documents::new()));
+        ui.decoded.insert(
+            "2026-09-19_080000".to_string(),
+            Arc::new(documents_at("config/economy.cfg", "Economy", 900)),
+        );
+
+        ui.set_base("2026-09-19_080000".to_string());
+
+        assert!(!ui.decoded.contains_key("2026-09-20_100000"), "the old base is gone");
+        assert!(ui.decoded.contains_key("2026-09-19_080000"), "the new base stays");
+        assert_eq!(ui.parts.len(), 1, "and its part list survived the prune");
+    }
+
     #[test]
     fn an_empty_table_says_the_base_is_being_read_while_it_is() {
         let _held = language_test_lock();
