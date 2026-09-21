@@ -24,10 +24,26 @@ fn schema_version(node: &Value) -> Option<u64> {
 /// anything raising it afterwards would already be comparing the
 /// source's value with itself.
 ///
-/// The schema versions have to match. `json_version` sits on the node
-/// itself, so two backups from different game builds can disagree about
-/// one part while agreeing about every other — which is why this is
-/// decided per part and not per file.
+/// The schema versions have to match, and `json_version` sits on the
+/// node the selector points at — so two backups from different game
+/// builds can disagree about one part while agreeing about every other,
+/// which is why this is decided per part and not per file.
+///
+/// What that check does not cover is the whole-file parts. Their node
+/// is the file's system object, and no system object carries a
+/// `json_version`: in the saves this was built from, all thirteen
+/// catalogued files keep the field on their leaves and the system
+/// object holds nothing but `systemVersion` and the payload. Both sides
+/// therefore answer `None`, the versions "match", and the part goes
+/// through unexamined. Inventing a comparison the data cannot support
+/// would be worse than saying so.
+///
+/// It is tolerable because a whole-file part cannot be half-merged: the
+/// file arrives entire from one save, nothing of the base's is left
+/// inside it, and it is as internally consistent as it was in the save
+/// it came from. What still has to be true of it is that it does not
+/// claim to be older than the composition around it — and that is what
+/// `systemVersion` below guards.
 pub(crate) fn apply(base: &mut Documents, part: &Part, source: &Documents) -> Result<()> {
     let source_document = source
         .get(part.file)
@@ -152,6 +168,26 @@ mod tests {
 
         let states = &base["config/user_progression.cfg"]["UserProgression"]["UserMastery"]["masteryStates"];
         assert_eq!(states["PVE_TANK"]["currentLevel"], json!(5), "base was changed anyway");
+    }
+
+    /// What the schema guard does *not* cover, pinned so that nobody
+    /// reads `apply`'s refusal as cover it does not give. A whole-file
+    /// part selects the file's system object, which carries no
+    /// `json_version` in any save this was built from — both sides
+    /// answer `None`, and the part goes through unexamined. The reason
+    /// that is acceptable is written down at `apply`.
+    #[test]
+    fn a_whole_file_part_is_not_examined_by_the_schema_check_at_all() {
+        let mut base = economy(900, 5);
+        let source = economy(900, 42);
+        let part = part_by_id(&base, "economy").unwrap();
+
+        assert_eq!(schema_version(part.selector.get(&base["config/economy.cfg"]).unwrap()), None);
+        assert_eq!(schema_version(part.selector.get(&source["config/economy.cfg"]).unwrap()), None);
+
+        apply(&mut base, &part, &source).unwrap();
+
+        assert_eq!(base["config/economy.cfg"]["Economy"]["credits"], json!(42));
     }
 
     #[test]
