@@ -45,7 +45,13 @@ before this was designed, because two of them decided the architecture:
 
 `Section::Saves` keeps one page. `saves_page::show` gains the tab strip
 from the mockup — "Backups" and "Save zusammenstellen" — and dispatches
-to itself or to a new module `crates/app/src/gui/compose_page.rs`.
+to itself or to `crates/app/src/gui/compose_page.rs`.
+
+Two new modules, split the way the rest of the interface is split:
+`gui/compose.rs` holds the state and every decision that can be made
+without a screen — which rows are visible, which parts are replaced,
+what the footer says — and is where the tests live. `gui/compose_page.rs`
+draws it and holds no logic worth testing.
 
 The tab is usable while `saves_blocked` is set. Composing never touches
 the game's save directory: it reads backups and writes a backup. The
@@ -60,8 +66,14 @@ From top to bottom, as the mockup has it:
    be taken from other backups, the result is a new backup and the live
    savegames are untouched until it is restored.
 2. The base picker — a dropdown listing every backup by timestamp and
-   label — with the base's size and game version beside it, and a
-   "reset everything to the base" button.
+   label — with the base's size and the number of parts it offers
+   beside it, and a "reset everything to the base" button.
+
+   The mockup puts a game version there. A backup does not have one:
+   every `.cfg` carries its own `systemVersion`, and a save written
+   across a game update can hold several. The version comparison
+   therefore happens per part, against the same file in the base, which
+   is also exactly what `merge` raises.
 3. The part table with its filter field, a "only replaced" toggle and a
    count.
 4. The mixed-version warning, when a chosen source has a different game
