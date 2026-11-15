@@ -43,10 +43,20 @@ fn named_nodes(selector: &Selector, document: &Value) -> usize {
 /// anything raising it afterwards would already be comparing the
 /// source's value with itself.
 ///
-/// The schema versions have to match, and `json_version` sits on the
-/// node the selector points at — so two backups from different game
-/// builds can disagree about one part while agreeing about every other,
-/// which is why this is decided per part and not per file.
+/// `json_version` sits on the node the selector points at — so two
+/// backups from different game builds can disagree about one part while
+/// agreeing about every other, which is why this is decided per part and
+/// not per file.
+///
+/// The source may be older than the base, never newer. An older node is
+/// the case a game update leaves behind — a backup from before it merged
+/// into a save written after — and it goes in untouched, its own number
+/// included: a per-node version only makes sense if the game upgrades
+/// each node on load, and that number is what tells it to. Raising it
+/// here would claim a conversion nobody performed. This rests on the
+/// game doing that upgrade, which the data suggests and nothing here can
+/// prove. A newer node is refused because no build downgrades, and a
+/// node without a number on either side has no "older" to rely on.
 ///
 /// What that check does not cover is the whole-file parts. Their node
 /// is the file's system object, and no system object carries a
@@ -93,11 +103,13 @@ pub(crate) fn apply(base: &mut Documents, part: &Part, source: &Documents) -> Re
         .get(base_document)
         .ok_or_else(|| Error::PartMissingInBase { part: part.id.clone() })?;
 
-    if schema_version(present) != schema_version(&incoming) {
+    let (base_schema, source_schema) = (schema_version(present), schema_version(&incoming));
+    let source_is_older = matches!((base_schema, source_schema), (Some(b), Some(s)) if s < b);
+    if base_schema != source_schema && !source_is_older {
         return Err(Error::UnmergeablePart {
             part: part.id.clone(),
-            base: schema_version(present).map_or_else(|| "-".to_string(), |v| v.to_string()),
-            source: schema_version(&incoming).map_or_else(|| "-".to_string(), |v| v.to_string()),
+            base: base_schema.map_or_else(|| "-".to_string(), |v| v.to_string()),
+            source: source_schema.map_or_else(|| "-".to_string(), |v| v.to_string()),
         });
     }
 
@@ -204,6 +216,41 @@ mod tests {
 
         let states = &base["config/user_progression.cfg"]["UserProgression"]["UserMastery"]["masteryStates"];
         assert_eq!(states["PVE_TANK"]["currentLevel"], json!(5), "base was changed anyway");
+    }
+
+    /// The direction a game update produces: an old backup merged into
+    /// a save the new build has already written. The node keeps its own
+    /// `json_version` — that number is what tells the game the node
+    /// still needs upgrading, and raising it here would claim a
+    /// conversion nobody performed.
+    #[test]
+    fn an_older_schema_in_the_source_is_taken_over_with_its_own_version() {
+        let mut base = progression(700, 5, 5);
+        let source = progression(701, 42, 4);
+        let part = part_by_id(&base, "class_level:PVE_TANK").unwrap();
+
+        apply(&mut base, &part, &source).unwrap();
+
+        let states = &base["config/user_progression.cfg"]["UserProgression"]["UserMastery"]["masteryStates"];
+        assert_eq!(states["PVE_TANK"]["currentLevel"], json!(42));
+        assert_eq!(states["PVE_TANK"]["json_version"], json!(4));
+        assert_eq!(states["PVE_SOLDIER"]["json_version"], json!(5), "the neighbour moved");
+    }
+
+    /// Without a number on one side there is no "older" to rely on.
+    #[test]
+    fn a_source_without_a_schema_version_is_refused_against_a_versioned_base() {
+        let mut base = progression(700, 5, 5);
+        let mut source = progression(701, 42, 4);
+        source.get_mut("config/user_progression.cfg").unwrap()["UserProgression"]["UserMastery"]
+            ["masteryStates"]["PVE_TANK"]
+            .as_object_mut()
+            .unwrap()
+            .remove("json_version");
+        let part = part_by_id(&base, "class_level:PVE_TANK").unwrap();
+
+        let error = apply(&mut base, &part, &source).unwrap_err();
+        assert!(matches!(error, Error::UnmergeablePart { .. }), "got {error:?}");
     }
 
     /// What the schema guard does *not* cover, pinned so that nobody
